@@ -120,7 +120,8 @@ exit 1
     }
 
     Write-UpdateStep '服务器重建 Sub2API 并执行健康检查'
-    $remoteScript | & ssh.exe @SshBaseArguments $SshDestination "sh -s -- '$ImageTag' '$RemoteArchive'"
+    # PowerShell 向原生 SSH 管道写入时会使用 CRLF；远端执行前移除 CR，避免 Linux sh 将其识别为非法参数。
+    $remoteScript | & ssh.exe @SshBaseArguments $SshDestination "tr -d '\r' | sh -s -- '$ImageTag' '$RemoteArchive'"
     if ($LASTEXITCODE -ne 0) {
         throw "服务器部署或健康检查失败，退出码：$LASTEXITCODE"
     }
