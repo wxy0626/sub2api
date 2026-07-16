@@ -216,4 +216,33 @@ describe('AccountTestModal', () => {
       mode: 'compact'
     })
   })
+
+  it('OpenAI 测试模型仅保留指定的四个模型', async () => {
+    getAvailableModels.mockResolvedValue([
+      { id: 'gpt-5.6-sol', display_name: 'GPT-5.6 Sol' },
+      { id: 'gpt-5.6-terra', display_name: 'GPT-5.6 Terra' },
+      { id: 'gpt-5.6-luna', display_name: 'GPT-5.6 Luna' },
+      { id: 'gpt-image-2', display_name: 'GPT Image 2' },
+      { id: 'gpt-5.4', display_name: 'GPT-5.4' },
+      { id: 'gpt-image-1', display_name: 'GPT Image 1' }
+    ])
+
+    const wrapper = mountModal({
+      id: 42,
+      name: 'OpenAI OAuth',
+      platform: 'openai',
+      type: 'oauth',
+      status: 'active'
+    })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+
+    const modelIDs = (wrapper.vm as any).availableModels.map((model: { id: string }) => model.id)
+    expect(modelIDs).toEqual([
+      'gpt-5.6-sol',
+      'gpt-5.6-terra',
+      'gpt-5.6-luna',
+      'gpt-image-2'
+    ])
+  })
 })
