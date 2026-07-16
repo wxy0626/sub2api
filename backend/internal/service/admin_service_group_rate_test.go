@@ -17,6 +17,10 @@ type userGroupRateRepoStubForGroupRate struct {
 	getByGroupIDData map[int64][]UserGroupRateEntry
 	getByGroupIDErr  error
 
+	syncedUserID    int64
+	syncedUserRates map[int64]*float64
+	syncUserErr     error
+
 	deletedGroupIDs  []int64
 	deleteByGroupErr error
 
@@ -48,8 +52,10 @@ func (s *userGroupRateRepoStubForGroupRate) GetByGroupID(_ context.Context, grou
 	return s.getByGroupIDData[groupID], nil
 }
 
-func (s *userGroupRateRepoStubForGroupRate) SyncUserGroupRates(_ context.Context, _ int64, _ map[int64]*float64) error {
-	panic("unexpected SyncUserGroupRates call")
+func (s *userGroupRateRepoStubForGroupRate) SyncUserGroupRates(_ context.Context, userID int64, rates map[int64]*float64) error {
+	s.syncedUserID = userID
+	s.syncedUserRates = rates
+	return s.syncUserErr
 }
 
 func (s *userGroupRateRepoStubForGroupRate) SyncGroupRateMultipliers(_ context.Context, groupID int64, entries []GroupRateMultiplierInput) error {
@@ -169,6 +175,7 @@ func TestAdminService_BatchSetGroupRateMultipliers(t *testing.T) {
 		entries := []GroupRateMultiplierInput{
 			{UserID: 1, RateMultiplier: 1.5},
 			{UserID: 2, RateMultiplier: 0.8},
+			{UserID: 3, RateMultiplier: 0},
 		}
 		err := svc.BatchSetGroupRateMultipliers(context.Background(), 10, entries)
 		require.NoError(t, err)
@@ -195,6 +202,27 @@ func TestAdminService_BatchSetGroupRateMultipliers(t *testing.T) {
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "sync failed")
 	})
+}
+
+// TestAdminService_UpdateUser_AllowsZeroGroupRate 确保管理员可将用户专属分组倍率设置为零。
+func TestAdminService_UpdateUser_AllowsZeroGroupRate(t *testing.T) {
+	// 用户仓储用于验证用户更新和专属倍率同步均可完成。
+	userRepo := &userRepoStub{user: &User{ID: 42, Email: "user@example.com", Role: RoleUser}}
+	// 专属倍率仓储记录服务层最终提交的倍率。
+	rateRepo := &userGroupRateRepoStubForGroupRate{}
+	svc := &adminServiceImpl{userRepo: userRepo, userGroupRateRepo: rateRepo}
+	// 零倍率是有效配置，表示该用户在此分组下不产生费用。
+	zeroRate := 0.0
+
+	updated, err := svc.UpdateUser(context.Background(), 42, &UpdateUserInput{
+		GroupRates: map[int64]*float64{7: &zeroRate},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, updated)
+	require.Len(t, userRepo.updated, 1)
+	require.Equal(t, int64(42), rateRepo.syncedUserID)
+	require.Equal(t, 0.0, *rateRepo.syncedUserRates[7])
 }
 
 func TestAdminService_BatchSetGroupRPMOverrides(t *testing.T) {

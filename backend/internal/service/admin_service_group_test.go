@@ -141,6 +141,45 @@ func TestAdminService_ListGroups_PassesSortParams(t *testing.T) {
 	}, repo.listWithFiltersParams)
 }
 
+// TestAdminService_GroupRateMultiplierAllowsZero 验证分组默认倍率创建和更新均支持零倍率。
+func TestAdminService_GroupRateMultiplierAllowsZero(t *testing.T) {
+	t.Run("create", func(t *testing.T) {
+		repo := &groupRepoStubForAdmin{}
+		svc := &adminServiceImpl{groupRepo: repo}
+
+		group, err := svc.CreateGroup(context.Background(), &CreateGroupInput{
+			Name:           "free-group",
+			RateMultiplier: 0,
+		})
+
+		require.NoError(t, err)
+		require.Equal(t, 0.0, group.RateMultiplier)
+		require.NotNil(t, repo.created)
+		require.Equal(t, 0.0, repo.created.RateMultiplier)
+	})
+
+	t.Run("update", func(t *testing.T) {
+		repo := &groupRepoStubForAdmin{getByID: &Group{
+			ID:             1,
+			Name:           "paid-group",
+			Platform:       PlatformOpenAI,
+			Status:         StatusActive,
+			RateMultiplier: 1,
+		}}
+		svc := &adminServiceImpl{groupRepo: repo}
+		zero := 0.0
+
+		group, err := svc.UpdateGroup(context.Background(), 1, &UpdateGroupInput{
+			RateMultiplier: &zero,
+		})
+
+		require.NoError(t, err)
+		require.Equal(t, 0.0, group.RateMultiplier)
+		require.NotNil(t, repo.updated)
+		require.Equal(t, 0.0, repo.updated.RateMultiplier)
+	})
+}
+
 // TestAdminService_CreateGroup_WithImagePricing 测试创建分组时 ImagePrice 字段正确传递
 func TestAdminService_CreateGroup_WithImagePricing(t *testing.T) {
 	repo := &groupRepoStubForAdmin{}

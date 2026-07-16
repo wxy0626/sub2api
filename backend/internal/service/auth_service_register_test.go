@@ -430,6 +430,20 @@ func TestAuthService_SendVerifyCode_EmailSuffixNotAllowed(t *testing.T) {
 	require.Equal(t, "2", appErr.Metadata["allowed_suffix_count"])
 }
 
+// TestAuthService_SendVerifyCodeAsync_RejectsMissingSMTP 验证异步验证码接口不会在 SMTP 缺失时错误返回成功。
+func TestAuthService_SendVerifyCodeAsync_RejectsMissingSMTP(t *testing.T) {
+	repo := &userRepoStub{}
+	cache := &emailCacheStub{}
+	service := newAuthService(repo, map[string]string{
+		SettingKeyRegistrationEnabled: "true",
+	}, cache, nil)
+
+	result, err := service.SendVerifyCodeAsync(context.Background(), "user@test.com")
+
+	require.Nil(t, result)
+	require.ErrorIs(t, err, ErrEmailNotConfigured)
+}
+
 func TestAuthService_Register_CreateError(t *testing.T) {
 	repo := &userRepoStub{createErr: errors.New("create failed")}
 	service := newAuthService(repo, map[string]string{
