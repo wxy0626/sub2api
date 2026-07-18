@@ -94,18 +94,21 @@
             {{ t('admin.channelMonitor.form.useMyKey') }}
           </button>
         </div>
-        <div v-if="selectedMyKey" class="mt-2 grid gap-2 text-xs sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
-          <span class="min-w-0 truncate font-medium text-gray-700 dark:text-gray-200">{{ selectedMyKey.name }}</span>
-          <span class="min-w-0 truncate font-mono text-gray-500 dark:text-gray-400">{{ maskApiKey(selectedMyKey.key) }}</span>
-          <GroupBadge
-            v-if="selectedMyKey.group"
-            :name="selectedMyKey.group.name"
-            :platform="selectedMyKey.group.platform"
-            :subscription-type="selectedMyKey.group.subscription_type"
-            :rate-multiplier="selectedMyKey.group.rate_multiplier"
-            :user-rate-multiplier="userGroupRates[selectedMyKey.group.id]"
-          />
-          <span v-else class="text-gray-400">—</span>
+        <div v-if="selectedMyKey" class="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
+          <span class="whitespace-nowrap">名称：<span class="font-medium text-gray-700 dark:text-gray-200">{{ selectedMyKey.name }}</span></span>
+          <span class="whitespace-nowrap">密钥：<span class="font-mono">{{ maskApiKey(selectedMyKey.key) }}</span></span>
+          <span class="flex min-w-0 items-center gap-1">
+            分组：
+            <GroupBadge
+              v-if="selectedMyKey.group"
+              :name="selectedMyKey.group.name"
+              :platform="selectedMyKey.group.platform"
+              :subscription-type="selectedMyKey.group.subscription_type"
+              :rate-multiplier="selectedMyKey.group.rate_multiplier"
+              :user-rate-multiplier="userGroupRates[selectedMyKey.group.id]"
+            />
+            <span v-else class="text-gray-400">—</span>
+          </span>
         </div>
         <p v-else-if="editing && editing.api_key_masked" class="mt-1 text-xs text-gray-400">{{ editing.api_key_masked }}</p>
       </div>
