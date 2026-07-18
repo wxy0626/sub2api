@@ -51,6 +51,22 @@ function makeAccount(overrides: Partial<Account>): Account {
 }
 
 describe('AccountStatusIndicator', () => {
+  it('状态右侧刷新按钮派发立即检测事件，并在检测中禁用', async () => {
+    const account = makeAccount({})
+    const wrapper = mount(AccountStatusIndicator, {
+      props: { account },
+      global: { stubs: { Icon: true } }
+    })
+
+    const button = wrapper.get('[data-testid="account-status-quick-test"]')
+    expect(button.attributes('aria-label')).toBe('admin.accounts.runTestNow')
+    await button.trigger('click')
+    expect(wrapper.emitted('quick-test')?.[0]?.[0]).toStrictEqual(account)
+
+    await wrapper.setProps({ testing: true })
+    expect(button.attributes('disabled')).toBeDefined()
+  })
+
   it('Grok 账号额度限流时显示自动恢复时间而非临时不可调度', () => {
     const wrapper = mount(AccountStatusIndicator, {
       props: {

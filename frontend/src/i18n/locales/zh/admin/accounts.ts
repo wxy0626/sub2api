@@ -239,6 +239,7 @@ export default {
         thresholdPlaceholder: '输入百分比',
       },
       testConnection: '测试连接',
+      runTestNow: '立即检测',
       reAuthorize: '重新授权',
       refreshToken: '刷新令牌',
       noAccountsYet: '暂无账号',
@@ -451,9 +452,12 @@ export default {
         disableScheduling: '批量停止调度',
         resetStatus: '批量重置状态',
         refreshToken: '批量刷新令牌',
+        test: '批量测试',
         probeUpstreamBilling: '探测上游倍率',
         resetStatusSuccess: '已成功重置 {count} 个账号状态',
         refreshTokenSuccess: '已成功刷新 {count} 个账号令牌',
+        testSuccess: '已完成 {count} 个账号测试',
+        testPartial: '账号测试完成：成功 {success} 个，失败 {failed} 个。首个错误：{error}',
         partialSuccess: '操作部分完成：{success} 成功，{failed} 失败'
       },
       bulkEdit: {

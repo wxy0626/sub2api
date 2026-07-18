@@ -177,6 +177,7 @@
           @delete="handleBulkDelete"
           @reset-status="handleBulkResetStatus"
           @refresh-token="handleBulkRefreshToken"
+          @test="handleBulkTest"
           @probe-upstream-billing="handleBulkProbeUpstreamBilling"
           @edit-selected="openBulkEditSelected"
           @edit-filtered="openBulkEditFiltered"
@@ -281,7 +282,12 @@
           </template>
           <template #cell-status="{ row }">
             <div class="flex items-center gap-1.5">
-              <AccountStatusIndicator :account="row" @show-temp-unsched="handleShowTempUnsched" />
+              <AccountStatusIndicator
+                :account="row"
+                :testing="testingAccountIds.has(row.id)"
+                @show-temp-unsched="handleShowTempUnsched"
+                @quick-test="handleQuickTest"
+              />
             </div>
           </template>
           <template #cell-schedulable="{ row }">
@@ -431,7 +437,7 @@
     <CreateAccountModal :show="showCreate" :proxies="proxies" :groups="groups" @close="showCreate = false" @created="reload" />
     <EditAccountModal :show="showEdit" :account="edAcc" :proxies="proxies" :groups="groups" @close="showEdit = false" @updated="handleAccountUpdated" />
     <ReAuthAccountModal :show="showReAuth" :account="reAuthAcc" @close="closeReAuthModal" @reauthorized="handleAccountUpdated" />
-    <AccountTestModal :show="showTest" :account="testingAcc" @close="closeTestModal" />
+    <AccountTestModal :show="showTest" :account="testingAcc" @close="closeTestModal" @testing-changed="handleTestStateChange" />
     <AccountStatsModal :show="showStats" :account="statsAcc" @close="closeStatsModal" />
     <ScheduledTestsPanel :show="showSchedulePanel" :account-id="scheduleAcc?.id ?? null" :model-options="scheduleModelOptions" @close="closeSchedulePanel" />
     <AccountActionMenu :show="menu.show" :account="menu.acc" :position="menu.pos" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @schedule="handleSchedule" @duplicate="handleDuplicateAccount" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" />
@@ -569,6 +575,8 @@ const showDeleteDialog = ref(false)
 const showCreateShadowDialog = ref(false)
 const showReAuth = ref(false)
 const showTest = ref(false)
+// 保存正在连接测试的账号 ID，驱动状态列刷新图标的禁用和转圈状态。
+const testingAccountIds = reactive(new Set<number>())
 const showStats = ref(false)
 const showErrorPassthrough = ref(false)
 const showTLSFingerprintProfiles = ref(false)
@@ -1487,6 +1495,33 @@ const handleBulkRefreshToken = async () => {
     appStore.showError(String(error))
   }
 }
+// 批量测试使用与状态栏刷新完全相同的 SSE 测试流程，逐个汇总最终结果。
+const handleBulkTest = async () => {
+  // 复制选择结果，避免测试期间用户切换勾选导致目标集合改变。
+  const accountIds = [...selIds.value]
+  if (accountIds.length === 0) return
+
+  accountIds.forEach(id => testingAccountIds.add(id))
+  try {
+    const results = await Promise.all(accountIds.map(async (id) => {
+      try {
+        return await adminAPI.accounts.testAccount(id)
+      } catch (error: unknown) {
+        return { success: false, message: extractApiErrorMessage(error, t('admin.accounts.testFailed')) }
+      }
+    }))
+    const failed = results.filter(result => !result.success)
+    if (failed.length > 0) {
+      const firstError = failed[0]?.message
+      appStore.showError(t('admin.accounts.bulkActions.testPartial', { success: results.length - failed.length, failed: failed.length, error: firstError }))
+    } else {
+      appStore.showSuccess(t('admin.accounts.bulkActions.testSuccess', { count: results.length }))
+    }
+  } finally {
+    accountIds.forEach(id => testingAccountIds.delete(id))
+    await reload()
+  }
+}
 const handleBulkProbeUpstreamBilling = async () => {
   const accountIDs = [...selIds.value]
   if (accountIDs.length === 0) {
@@ -1855,10 +1890,44 @@ const handleExportData = async () => {
   }
 }
 const accountExportStepUp = useStepUp()
-const closeTestModal = () => { showTest.value = false; testingAcc.value = null }
+const closeTestModal = () => {
+  if (testingAcc.value) testingAccountIds.delete(testingAcc.value.id)
+  showTest.value = false
+  testingAcc.value = null
+}
 const closeStatsModal = () => { showStats.value = false; statsAcc.value = null }
 const closeReAuthModal = () => { showReAuth.value = false; reAuthAcc.value = null }
-const handleTest = (a: Account) => { testingAcc.value = a; showTest.value = true }
+const handleTest = (a: Account) => {
+  testingAcc.value = a
+  showTest.value = true
+}
+// 状态列刷新按钮直接调用后台测试，避免打开交互式“测试账号连接”窗口。
+const handleQuickTest = async (a: Account) => {
+  if (testingAccountIds.has(a.id)) return
+  testingAccountIds.add(a.id)
+  try {
+    const result = await adminAPI.accounts.testAccount(a.id)
+    if (result.success) {
+      appStore.showSuccess(result.message || t('admin.accounts.testSuccess'))
+    } else {
+      appStore.showError(result.message || t('admin.accounts.testFailed'))
+    }
+    await reload()
+  } catch (error: unknown) {
+    appStore.showError(extractApiErrorMessage(error, t('admin.accounts.testFailed')))
+    await reload()
+  } finally {
+    testingAccountIds.delete(a.id)
+  }
+}
+const handleTestStateChange = (testing: boolean) => {
+  if (!testingAcc.value) return
+  if (testing) {
+    testingAccountIds.add(testingAcc.value.id)
+  } else {
+    testingAccountIds.delete(testingAcc.value.id)
+  }
+}
 const handleViewStats = (a: Account) => { statsAcc.value = a; showStats.value = true }
 const handleSchedule = async (a: Account) => {
   scheduleAcc.value = a

@@ -274,6 +274,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'close'): void
+  /** 通知外部立即检测的运行状态，以便同步图标加载态。 */
+  (e: 'testing-changed', testing: boolean): void
 }>()
 
 const terminalRef = ref<HTMLElement | null>(null)
@@ -415,6 +417,7 @@ const startTest = async () => {
 
   resetState()
   status.value = 'connecting'
+  emit('testing-changed', true)
   addLine(t('admin.accounts.startingTestForAccount', { name: props.account.name }), 'text-blue-400')
   addLine(t('admin.accounts.testAccountTypeLabel', { type: props.account.type }), 'text-gray-400')
   addLine('', 'text-gray-300')
@@ -485,6 +488,8 @@ const startTest = async () => {
     const msg = normalizeDisplayErrorMessage(error instanceof Error ? error.message : '')
     errorMessage.value = msg
     addLine(`错误：${msg}`, 'text-red-400')
+  } finally {
+    emit('testing-changed', false)
   }
 }
 

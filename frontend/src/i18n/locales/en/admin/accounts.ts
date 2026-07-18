@@ -326,6 +326,7 @@ export default {
         thresholdPlaceholder: 'Enter percentage',
       },
       testConnection: 'Test Connection',
+      runTestNow: 'Run Test Now',
       reAuthorize: 'Re-Authorize',
       refreshToken: 'Refresh Token',
       noAccountsYet: 'No accounts yet',
@@ -347,9 +348,12 @@ export default {
         disableScheduling: 'Disable Scheduling',
         resetStatus: 'Reset Status',
         refreshToken: 'Refresh Token',
+        test: 'Batch Test',
         probeUpstreamBilling: 'Probe Upstream Rate',
         resetStatusSuccess: 'Successfully reset {count} account(s) status',
         refreshTokenSuccess: 'Successfully refreshed {count} account(s) token',
+        testSuccess: 'Completed tests for {count} account(s)',
+        testPartial: 'Account tests completed: {success} succeeded, {failed} failed. First error: {error}',
         partialSuccess: 'Partially completed: {success} succeeded, {failed} failed'
       },
       bulkEdit: {

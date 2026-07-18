@@ -57,6 +57,18 @@
       </div>
     </div>
 
+    <button
+      type="button"
+      class="inline-flex h-6 w-6 flex-shrink-0 items-center justify-center rounded text-blue-600 transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-blue-400 dark:hover:bg-blue-900/30"
+      :disabled="testing"
+      :aria-label="t('admin.accounts.runTestNow')"
+      :title="t('admin.accounts.runTestNow')"
+      data-testid="account-status-quick-test"
+      @click="emit('quick-test', account)"
+    >
+      <Icon name="refresh" size="xs" :class="{ 'animate-spin': testing }" />
+    </button>
+
     <!-- Rate Limit Indicator (429) -->
     <div v-if="isRateLimited" class="group relative">
       <span
@@ -165,10 +177,13 @@ const { t } = useI18n()
 
 const props = defineProps<{
   account: Account
+  /** 当前账号是否正在执行连接检测。 */
+  testing?: boolean
 }>()
 
 const emit = defineEmits<{
   (e: 'show-temp-unsched', account: Account): void
+  (e: 'quick-test', account: Account): void
 }>()
 
 // Computed: is rate limited (429)
