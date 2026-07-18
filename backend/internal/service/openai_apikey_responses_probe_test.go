@@ -38,6 +38,31 @@ func TestDecideResponsesProbeSupport(t *testing.T) {
 	}
 }
 
+// TestShouldPersistResponsesProbeSupport 验证 5xx 探测结果不会覆盖已有能力标记。
+func TestShouldPersistResponsesProbeSupport(t *testing.T) {
+	// 探测状态用例：覆盖可持久化客户端错误与不可持久化服务端错误。
+	tests := []struct {
+		name   string
+		status int
+		want   bool
+	}{
+		{"客户端校验错误可持久化", 400, true},
+		{"鉴权错误可持久化", 401, true},
+		{"服务不可用保留已有结果", 503, false},
+		{"服务内部错误保留已有结果", 500, false},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			// 探测持久化决策：仅打印状态码与布尔结果，避免输出账号或密钥。
+			// 实际决策：用于对比期望持久化行为。
+			got := shouldPersistResponsesProbeSupport(testCase.status)
+			t.Logf("Responses 能力探测持久化决策: status=%d persist=%t", testCase.status, got)
+			require.Equal(t, testCase.want, got)
+		})
+	}
+}
+
 func TestResponsesProbeBodyHasFunctionCall(t *testing.T) {
 	require.True(t, responsesProbeBodyHasFunctionCall([]byte(`{"output":[{"type":"function_call"}]}`)))
 	require.True(t, responsesProbeBodyHasFunctionCall([]byte(`{"output":[{"type":"reasoning"},{"type":"function_call"}]}`)))

@@ -3,7 +3,7 @@
     <Transition name="modal">
       <div
         v-if="show"
-        class="modal-overlay"
+        :class="['modal-overlay', noBackdropBlur && 'modal-overlay-no-blur']"
         :style="zIndexStyle"
         :aria-labelledby="dialogId"
         role="dialog"
@@ -64,6 +64,7 @@ interface Props {
   closeOnClickOutside?: boolean
   showCloseButton?: boolean
   zIndex?: number
+  noBackdropBlur?: boolean
 }
 
 interface Emits {
@@ -75,7 +76,8 @@ const props = withDefaults(defineProps<Props>(), {
   closeOnEscape: true,
   closeOnClickOutside: false,
   showCloseButton: true,
-  zIndex: 50
+  zIndex: 50,
+  noBackdropBlur: false
 })
 
 const emit = defineEmits<Emits>()

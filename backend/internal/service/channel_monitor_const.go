@@ -153,6 +153,12 @@ var (
 	ErrChannelMonitorMissingPrimaryModel = infraerrors.BadRequest(
 		"CHANNEL_MONITOR_MISSING_PRIMARY_MODEL", "primary_model is required",
 	)
+	ErrChannelMonitorInvalidAccount = infraerrors.BadRequest(
+		"CHANNEL_MONITOR_INVALID_ACCOUNT", "account_id must be a positive account ID",
+	)
+	ErrChannelMonitorAccountTesterUnavailable = infraerrors.InternalServer(
+		"CHANNEL_MONITOR_ACCOUNT_TESTER_UNAVAILABLE", "account monitor tester is unavailable",
+	)
 	ErrChannelMonitorAPIKeyDecryptFailed = infraerrors.InternalServer(
 		"CHANNEL_MONITOR_KEY_DECRYPT_FAILED", "api key decryption failed; please re-edit the monitor with a fresh key",
 	)

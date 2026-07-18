@@ -72,6 +72,7 @@ const OAuthAuthorizationFlowStub = defineComponent({
     showCodexSessionImportOption: Boolean,
     showAgentIdentityOption: Boolean,
     showCodexPatOption: Boolean,
+    showProjectId: Boolean,
     initialInputMethod: String,
   },
   data: () => ({ inputMethod: 'manual' }),
@@ -211,6 +212,16 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     expect(flow.props('showAgentIdentityOption')).toBe(true)
     expect(flow.props('showCodexPatOption')).toBe(true)
     expect(flow.props('initialInputMethod')).toBe('manual')
+  })
+
+  it('allows a Google One account to provide a project ID when automatic detection fails', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'Gemini')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('Google One account')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+
+    const flow = wrapper.getComponent(OAuthAuthorizationFlowStub)
+    expect(flow.props('showProjectId')).toBe(true)
   })
 
   it.each([

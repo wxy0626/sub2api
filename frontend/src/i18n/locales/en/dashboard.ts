@@ -420,6 +420,7 @@ export default {
     },
     extraModelsHeader: 'Extra Models',
     extraModelsEmpty: 'No extra models',
+    latestDiagnostic: 'Latest check detail',
     latencyEmpty: '-',
     availabilityPrefix: 'Availability',
     dialogLatency: 'Dialog Latency',

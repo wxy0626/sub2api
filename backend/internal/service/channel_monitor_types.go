@@ -33,6 +33,8 @@ type ChannelMonitor struct {
 	Provider        string
 	APIMode         string
 	Endpoint        string
+	// AccountID 非空时表示直接检测已保存账号，不向外部 endpoint 发送 API Key。
+	AccountID       *int64
 	APIKey          string // 解密后的明文 API Key（仅在 service 内部使用，handler 层不应直接序列化返回）
 	PrimaryModel    string
 	ExtraModels     []string
@@ -77,6 +79,8 @@ type ChannelMonitorCreateParams struct {
 	Provider         string
 	APIMode          string
 	Endpoint         string
+	// AccountID 选择已有账号作为渠道监控来源；非空时忽略 Endpoint 和 APIKey。
+	AccountID        *int64
 	APIKey           string
 	PrimaryModel     string
 	ExtraModels      []string
@@ -97,6 +101,9 @@ type ChannelMonitorUpdateParams struct {
 	Provider        *string
 	APIMode         *string
 	Endpoint        *string
+	// AccountID 非空时切换为账号来源；ClearAccount=true 时切换为外部渠道来源。
+	AccountID       *int64
+	ClearAccount    bool
 	APIKey          *string // 空字符串表示不修改；非空字符串覆盖
 	PrimaryModel    *string
 	ExtraModels     *[]string
@@ -202,6 +209,7 @@ type ChannelMonitorLatest struct {
 	Status        string
 	LatencyMs     *int
 	PingLatencyMs *int
+	Message       string
 	CheckedAt     time.Time
 }
 
@@ -221,6 +229,7 @@ type ChannelMonitorAvailability struct {
 type MonitorStatusSummary struct {
 	PrimaryStatus    string // 空字符串表示无历史
 	PrimaryLatencyMs *int
+	PrimaryMessage   string // 主模型最近一次检测的诊断说明
 	Availability7d   float64 // 0-100，无历史时为 0
 	ExtraModels      []ExtraModelStatus
 }

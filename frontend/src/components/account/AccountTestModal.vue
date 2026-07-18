@@ -251,6 +251,7 @@ import { Icon } from '@/components/icons'
 import { useClipboard } from '@/composables/useClipboard'
 import { buildApiUrl } from '@/api/client'
 import { adminAPI } from '@/api/admin'
+import { normalizeDisplayErrorMessage } from '@/utils/errorMessage'
 import type { Account, ClaudeModel } from '@/types'
 
 const { t } = useI18n()
@@ -481,9 +482,9 @@ const startTest = async () => {
       return
     }
     status.value = 'error'
-    const msg = error instanceof Error ? error.message : 'Unknown error'
+    const msg = normalizeDisplayErrorMessage(error instanceof Error ? error.message : '')
     errorMessage.value = msg
-    addLine(`Error: ${msg}`, 'text-red-400')
+    addLine(`错误：${msg}`, 'text-red-400')
   }
 }
 
@@ -545,13 +546,13 @@ const handleEvent = (event: {
         status.value = 'success'
       } else {
         status.value = 'error'
-        errorMessage.value = event.error || 'Test failed'
+        errorMessage.value = normalizeDisplayErrorMessage(event.error, '账号测试失败，请稍后重试。')
       }
       break
 
     case 'error':
       status.value = 'error'
-      errorMessage.value = event.error || 'Unknown error'
+      errorMessage.value = normalizeDisplayErrorMessage(event.error, '账号测试失败，请稍后重试。')
       if (streamingContent.value) {
         addLine(streamingContent.value, 'text-green-300')
         streamingContent.value = ''

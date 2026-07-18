@@ -6,6 +6,7 @@
 import axios, { AxiosInstance, AxiosError, InternalAxiosRequestConfig, AxiosResponse } from 'axios'
 import type { ApiResponse } from '@/types'
 import { getLocale } from '@/i18n'
+import { normalizeDisplayErrorMessage } from '@/utils/errorMessage'
 import {
   ADMIN_UI_REQUEST_HEADER,
   USER_UI_REQUEST_HEADER,
@@ -113,7 +114,7 @@ apiClient.interceptors.response.use(
         return Promise.reject({
           status: response.status,
           code: apiResponse.code,
-          message: apiResponse.message || 'Unknown error',
+          message: normalizeDisplayErrorMessage(apiResponse.message, '发生未知错误，请稍后重试。'),
           reason: resp.reason,
           metadata: resp.metadata,
         })
@@ -159,7 +160,7 @@ apiClient.interceptors.response.use(
         return Promise.reject({
           status,
           code: 'OPS_DISABLED',
-          message: apiData.message || error.message,
+          message: normalizeDisplayErrorMessage(apiData.message || error.message, '当前功能不可用。'),
           url
         })
       }
@@ -176,7 +177,7 @@ apiClient.interceptors.response.use(
         return Promise.reject({
           status,
           code: apiData.code,
-          message: apiData.message || error.message,
+          message: normalizeDisplayErrorMessage(apiData.message || error.message, '操作未完成，请稍后重试。'),
           metadata: apiData.metadata,
         })
       }
@@ -206,7 +207,7 @@ apiClient.interceptors.response.use(
                   reject({
                     status,
                     code: apiData.code,
-                    message: apiData.message || apiData.detail || error.message
+                    message: normalizeDisplayErrorMessage(apiData.message || apiData.detail || error.message, '身份验证失败，请重新登录。')
                   })
                 }
               })
@@ -273,7 +274,7 @@ apiClient.interceptors.response.use(
             return Promise.reject({
               status: 401,
               code: 'TOKEN_REFRESH_FAILED',
-              message: 'Session expired. Please log in again.'
+              message: '登录状态已过期，请重新登录。'
             })
           }
         }
@@ -308,7 +309,7 @@ apiClient.interceptors.response.use(
         code: apiData.code,
         reason: apiData.reason,
         error: apiData.error,
-        message: apiData.message || apiData.detail || error.message,
+        message: normalizeDisplayErrorMessage(apiData.message || apiData.detail || error.message, '请求失败，请稍后重试。'),
         metadata: apiData.metadata,
       })
     }
@@ -316,7 +317,7 @@ apiClient.interceptors.response.use(
     // Network error
     return Promise.reject({
       status: 0,
-      message: 'Network error. Please check your connection.'
+      message: '网络连接失败，请检查网络、代理和服务状态后重试。'
     })
   }
 )

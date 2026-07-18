@@ -27,6 +27,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/tidwall/gjson"
 )
 
 // sseDataPrefix matches SSE data lines with optional whitespace after colon.
@@ -36,6 +37,8 @@ var sseDataPrefix = regexp.MustCompile(`^data:\s*`)
 const (
 	testClaudeAPIURL   = "https://api.anthropic.com/v1/messages?beta=true"
 	chatgptCodexAPIURL = "https://chatgpt.com/backend-api/codex/responses"
+	// openAIWorkspaceDeactivatedErrorMessage 是管理员界面展示的工作区停用说明。
+	openAIWorkspaceDeactivatedErrorMessage = "ChatGPT 工作区已停用（402）：该工作区已被停用"
 )
 
 // TestEvent represents a SSE event for account testing
@@ -505,6 +508,12 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	ctx := c.Request.Context()
 	mode = normalizeAccountTestMode(mode)
 
+	// 工作区测活固定使用文本模型，确保请求始终走 ChatGPT Codex Responses 链路。
+	if mode == AccountTestModeWorkspace {
+		modelID = openai.DefaultTestModel
+		prompt = ""
+	}
+
 	// Default to openai.DefaultTestModel for OpenAI testing
 	testModelID := modelID
 	if testModelID == "" {
@@ -519,7 +528,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		return s.testOpenAICompactConnection(c, account, testModelID)
 	}
 
-	// Route to image generation test if an image model is selected
+	// 工作区测活需要命中 Codex Responses；其他模式的图片模型仍走原有图片测试。
 	if isOpenAIImageModel(testModelID) {
 		imagePrompt := strings.TrimSpace(prompt)
 		if imagePrompt == "" {
@@ -650,8 +659,19 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	}
 
 	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+	if err != nil && isOAuth && isRetryableOpenAIAccountTestTransportError(err) {
+		log.Printf("OpenAI account test transport retry: account_id=%d error=%v", account.ID, err)
+		s.sendEvent(c, TestEvent{Type: "status", Text: "上游连接意外中断，正在自动重试一次"})
+
+		retryReq, retryErr := cloneOpenAIAccountTestRequest(req)
+		if retryErr != nil {
+			return s.sendErrorAndEnd(c, "请求失败：重建重试请求时发生错误")
+		}
+		resp, err = s.httpUpstream.DoWithTLS(retryReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+	}
 	if err != nil {
-		return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
+		log.Printf("OpenAI account test request failed: account_id=%d error=%v", account.ID, err)
+		return s.sendErrorAndEnd(c, openAIAccountTestTransportErrorMessage(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -675,6 +695,9 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		}
 		if resp.StatusCode == http.StatusTooManyRequests {
 			s.reconcileOpenAI429State(ctx, account, resp.Header, body)
+		}
+		if s.isOpenAIWorkspaceDeactivated(resp.StatusCode, body) {
+			return s.sendWorkspaceDeactivatedAndEnd(c, ctx, account)
 		}
 		// 401 Unauthorized: 标记账号为永久错误
 		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil {
@@ -1000,6 +1023,9 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 			errMsg := fmt.Sprintf("Authentication failed (401): %s", string(body))
 			_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
 		}
+		if s.isOpenAIWorkspaceDeactivated(resp.StatusCode, body) {
+			return s.sendWorkspaceDeactivatedAndEnd(c, ctx, account)
+		}
 		return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
 	}
 
@@ -1109,6 +1135,9 @@ func (s *AccountTestService) testGeminiAccountConnection(c *gin.Context, account
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode == http.StatusNotFound {
+			return s.sendErrorAndEnd(c, fmt.Sprintf("Model %q is not available for this account or project (upstream returned 404): %s", testModelID, string(body)))
+		}
 		return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
 	}
 
@@ -1907,6 +1936,63 @@ func (s *AccountTestService) sendErrorAndEnd(c *gin.Context, errorMsg string) er
 	log.Printf("Account test error: %s", errorMsg)
 	s.sendEvent(c, TestEvent{Type: "error", Error: errorMsg})
 	return fmt.Errorf("%s", errorMsg)
+}
+
+// isRetryableOpenAIAccountTestTransportError 判断账号测试的请求前连接中断是否可安全重试。
+func isRetryableOpenAIAccountTestTransportError(err error) bool {
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
+}
+
+// openAIAccountTestTransportErrorMessage 将常见的 OpenAI 传输错误转换为管理员可读的中文提示。
+func openAIAccountTestTransportErrorMessage(err error) string {
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return "请求失败：与 ChatGPT 上游服务的连接意外中断（EOF）"
+	}
+	return "请求失败：无法连接到上游服务，请检查代理、网络和账号配置"
+}
+
+// cloneOpenAIAccountTestRequest 为传输层重试重新创建独立且可读取的请求体。
+func cloneOpenAIAccountTestRequest(req *http.Request) (*http.Request, error) {
+	if req == nil {
+		return nil, errors.New("request is nil")
+	}
+
+	retryReq := req.Clone(req.Context())
+	if req.Body == nil || req.GetBody == nil {
+		return retryReq, nil
+	}
+
+	retryBody, err := req.GetBody()
+	if err != nil {
+		return nil, err
+	}
+	retryReq.Body = retryBody
+	return retryReq, nil
+}
+
+// isOpenAIWorkspaceDeactivated 判断上游响应是否表示 ChatGPT 工作区已被停用。
+func (s *AccountTestService) isOpenAIWorkspaceDeactivated(statusCode int, responseBody []byte) bool {
+	return statusCode == http.StatusPaymentRequired &&
+		gjson.GetBytes(responseBody, "detail.code").String() == "deactivated_workspace"
+}
+
+// sendWorkspaceDeactivatedAndEnd 记录工作区停用状态并向测试界面发送结构化事件。
+func (s *AccountTestService) sendWorkspaceDeactivatedAndEnd(c *gin.Context, ctx context.Context, account *Account) error {
+	const errorMessage = openAIWorkspaceDeactivatedErrorMessage
+
+	if s.accountRepo != nil && account != nil {
+		if err := s.accountRepo.SetError(ctx, account.ID, errorMessage); err != nil {
+			log.Printf("failed to mark deactivated workspace account as error: %v", err)
+		}
+	}
+
+	log.Printf("Account test workspace deactivated: account_id=%d", account.ID)
+	s.sendEvent(c, TestEvent{
+		Type:  "workspace_deactivated",
+		Code:  "deactivated_workspace",
+		Error: errorMessage,
+	})
+	return fmt.Errorf("%s", errorMessage)
 }
 
 // RunTestBackground executes an account test in-memory (no real HTTP client),

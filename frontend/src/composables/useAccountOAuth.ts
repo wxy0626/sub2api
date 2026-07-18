@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
+import { normalizeDisplayErrorMessage } from '@/utils/errorMessage'
 
 export type AddMethod = 'oauth' | 'setup-token'
 export type AuthInputMethod = 'manual' | 'cookie' | 'refresh_token' | 'mobile_refresh_token' | 'session_token' | 'access_token' | 'codex_session' | 'agent_identity' | 'codex_pat' | 'sso_cookie'
@@ -64,7 +65,7 @@ export function useAccountOAuth() {
       sessionId.value = response.session_id
       return true
     } catch (err: any) {
-      error.value = err.response?.data?.detail || 'Failed to generate auth URL'
+      error.value = normalizeDisplayErrorMessage(err.response?.data?.detail || err.message, '生成授权链接失败，请稍后重试。')
       appStore.showError(error.value)
       return false
     } finally {
@@ -100,7 +101,7 @@ export function useAccountOAuth() {
 
       return tokenInfo as TokenInfo
     } catch (err: any) {
-      error.value = err.response?.data?.detail || 'Failed to exchange auth code'
+      error.value = normalizeDisplayErrorMessage(err.response?.data?.detail || err.message, '兑换授权码失败，请稍后重试。')
       appStore.showError(error.value)
       return null
     } finally {
@@ -137,7 +138,7 @@ export function useAccountOAuth() {
 
       return tokenInfo as TokenInfo
     } catch (err: any) {
-      error.value = err.response?.data?.detail || 'Cookie authorization failed'
+      error.value = normalizeDisplayErrorMessage(err.response?.data?.detail || err.message, 'Cookie 授权失败，请检查凭据后重试。')
       return null
     } finally {
       loading.value = false

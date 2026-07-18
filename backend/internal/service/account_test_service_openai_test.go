@@ -24,6 +24,7 @@ import (
 
 type queuedHTTPUpstream struct {
 	responses []*http.Response
+	errors    []error
 	requests  []*http.Request
 	tlsFlags  []bool
 }
@@ -35,6 +36,11 @@ func (u *queuedHTTPUpstream) Do(_ *http.Request, _ string, _ int64, _ int) (*htt
 func (u *queuedHTTPUpstream) DoWithTLS(req *http.Request, _ string, _ int64, _ int, profile *tlsfingerprint.Profile) (*http.Response, error) {
 	u.requests = append(u.requests, req)
 	u.tlsFlags = append(u.tlsFlags, profile != nil)
+	if len(u.errors) > 0 {
+		err := u.errors[0]
+		u.errors = u.errors[1:]
+		return nil, err
+	}
 	if len(u.responses) == 0 {
 		return nil, fmt.Errorf("no mocked response")
 	}
@@ -248,6 +254,37 @@ func TestAccountTestService_OpenAIStreamEOFBeforeCompletedFails(t *testing.T) {
 	require.NotContains(t, recorder.Body.String(), `"success":true`)
 }
 
+func TestAccountTestService_OpenAIOAuthRetriesEOFBeforeReceivingResponse(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+
+	resp := newJSONResponse(http.StatusOK, "")
+	resp.Body = io.NopCloser(strings.NewReader(`data: {"type":"response.completed"}
+
+`))
+	upstream := &queuedHTTPUpstream{
+		errors:    []error{io.EOF},
+		responses: []*http.Response{resp},
+	}
+	svc := &AccountTestService{httpUpstream: upstream}
+	account := &Account{
+		ID:          91,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Concurrency: 1,
+		Credentials: map[string]any{"access_token": "test-token"},
+	}
+
+	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4", "", "")
+	require.NoError(t, err)
+	require.Len(t, upstream.requests, 2)
+	retryBody, readErr := io.ReadAll(upstream.requests[1].Body)
+	require.NoError(t, readErr)
+	require.Equal(t, "gpt-5.4", gjson.GetBytes(retryBody, "model").String())
+	require.Contains(t, recorder.Body.String(), "正在自动重试一次")
+	require.Contains(t, recorder.Body.String(), `"success":true`)
+}
+
 func TestAccountTestService_OpenAI429PersistsSnapshotAndRateLimitState(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := newTestContext()
@@ -422,6 +459,37 @@ func TestAccountTestService_OpenAI401SetsPermanentErrorOnly(t *testing.T) {
 	require.Zero(t, repo.rateLimitedID)
 	require.Zero(t, repo.clearedErrorID)
 	require.Nil(t, account.RateLimitResetAt)
+}
+
+func TestAccountTestService_OpenAIWorkspaceProbeMarksDeactivatedWorkspace(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+
+	repo := &openAIAccountTestRepo{}
+	upstream := &queuedHTTPUpstream{responses: []*http.Response{
+		newJSONResponse(http.StatusPaymentRequired, `{"detail":{"code":"deactivated_workspace"}}`),
+	}}
+	svc := &AccountTestService{accountRepo: repo, httpUpstream: upstream}
+	account := &Account{
+		ID:          82,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Concurrency: 1,
+		Credentials: map[string]any{"access_token": "test-token"},
+	}
+
+	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4", "", AccountTestModeWorkspace)
+	require.Error(t, err)
+	require.Len(t, upstream.requests, 1)
+	// 工作区测活必须复用用户实际报错的 ChatGPT Codex Responses 端点。
+	require.Equal(t, chatgptCodexAPIURL, upstream.requests[0].URL.String())
+	requestBody, readErr := io.ReadAll(upstream.requests[0].Body)
+	require.NoError(t, readErr)
+	require.Equal(t, "gpt-5.4", gjson.GetBytes(requestBody, "model").String())
+	require.Equal(t, account.ID, repo.setErrorID)
+	require.Equal(t, openAIWorkspaceDeactivatedErrorMessage, repo.setErrorMsg)
+	require.Contains(t, recorder.Body.String(), `"type":"workspace_deactivated"`)
+	require.Contains(t, recorder.Body.String(), `"code":"deactivated_workspace"`)
 }
 
 func TestAccountTestService_OpenAIAPIKeyResponsesUnsupportedUsesChatCompletionsPath(t *testing.T) {

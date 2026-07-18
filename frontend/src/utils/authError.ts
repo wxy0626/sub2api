@@ -21,5 +21,6 @@ export function buildAuthErrorMessage(
 ): string {
   const { fallback } = options
   const message = extractErrorMessage(error)
-  return message || fallback
+  return normalizeDisplayErrorMessage(message, fallback)
 }
+import { normalizeDisplayErrorMessage } from './errorMessage'

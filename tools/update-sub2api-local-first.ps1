@@ -16,7 +16,10 @@ param(
     [string]$SshKeyPath = (Join-Path $env:USERPROFILE '.ssh\sub2api_proxy_tunnel'),
 
     # Docker 镜像标签：本地和服务器必须始终使用同一个标签。
-    [string]$ImageTag = 'sub2api:test-model-whitelist'
+    [string]$ImageTag = 'sub2api:test-model-whitelist',
+
+    # 应用展示版本：显式传给 Docker，避免本地源码 VERSION 文件导致版本号回退。
+    [string]$Version = '0.1.160'
 )
 
 Set-StrictMode -Version Latest
@@ -139,6 +142,9 @@ try {
     if (-not ($ImageTag -match '^[A-Za-z0-9][A-Za-z0-9._/-]*(?::[A-Za-z0-9_][A-Za-z0-9_.-]*)?$')) {
         throw "镜像标签格式不合法：$ImageTag"
     }
+    if (-not ($Version -match '^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$')) {
+        throw "应用版本格式不合法：$Version"
+    }
 
     if ($UpdateSource) {
         $workingTreeState = git status --porcelain
@@ -154,7 +160,7 @@ try {
     }
     Invoke-NativeCommand '执行前端类型检查' { corepack $pnpmVersion --dir frontend run typecheck }
     Invoke-NativeCommand "构建定制镜像 $ImageTag" {
-        docker build --build-arg COMMIT=local-test-model-whitelist --tag $ImageTag .
+        docker build --build-arg VERSION=$Version --build-arg COMMIT=local-test-model-whitelist --tag $ImageTag .
     }
 
     $env:SUB2API_IMAGE = $ImageTag
