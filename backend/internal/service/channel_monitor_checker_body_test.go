@@ -310,6 +310,13 @@ func TestRunCheckForModel_OpenAIResponses_DefaultRequest(t *testing.T) {
 	if h.lastBody["stream"] != false {
 		t.Errorf("responses body should set stream=false, got %v", h.lastBody["stream"])
 	}
+	if h.lastBody["max_output_tokens"] != float64(monitorResponsesChallengeMaxOutputTokens) {
+		t.Errorf("responses body should reserve %d output tokens, got %v", monitorResponsesChallengeMaxOutputTokens, h.lastBody["max_output_tokens"])
+	}
+	reasoning, _ := h.lastBody["reasoning"].(map[string]any)
+	if reasoning["effort"] != "low" {
+		t.Errorf("responses body should request low reasoning effort, got %v", reasoning)
+	}
 	if h.lastHeaders.Get("Authorization") != "Bearer sk-openai" {
 		t.Errorf("expected bearer auth header, got %q", h.lastHeaders.Get("Authorization"))
 	}

@@ -93,6 +93,9 @@ const (
 	monitorAnthropicAPIVersion = "2023-06-01"
 	// monitorChallengeMaxTokens 单次 challenge 请求的 max_tokens（足够回答个位数算术）。
 	monitorChallengeMaxTokens = 50
+	// monitorResponsesChallengeMaxOutputTokens 为 Responses 健康检查预留推理与最终答案的输出额度。
+	// 推理模型在 50 token 上限下可能只返回 reasoning，导致最终文本为空而误报 challenge 失败。
+	monitorResponsesChallengeMaxOutputTokens = 256
 
 	// monitorRunOneBuffer runOne 的总超时缓冲（除请求超时与 ping 超时外的额外裕量）。
 	monitorRunOneBuffer = 10 * time.Second

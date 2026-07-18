@@ -238,8 +238,10 @@ var providerOpenAIResponsesAdapter = providerAdapter{
 			"model":             model,
 			"instructions":      "You are a channel health-check endpoint. Answer the arithmetic challenge exactly and briefly.",
 			"input":             prompt,
-			"max_output_tokens": monitorChallengeMaxTokens,
-			"stream":            false,
+			"max_output_tokens": monitorResponsesChallengeMaxOutputTokens,
+			// 监控只需一个简短确定答案，避免推理模型把所有输出额度用于内部推理。
+			"reasoning": map[string]string{"effort": "low"},
+			"stream":    false,
 		})
 	},
 	buildHeaders: func(apiKey string) map[string]string {
