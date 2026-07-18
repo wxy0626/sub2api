@@ -288,11 +288,12 @@ const loadingModels = ref(false)
 let abortController: AbortController | null = null
 const generatedImages = ref<PreviewImage[]>([])
 const previewImageUrl = ref('')
-const testMode = ref<'default' | 'compact'>('default')
+const testMode = ref<'default' | 'compact' | 'workspace'>('default')
 const isOpenAIAccount = computed(() => props.account?.platform === 'openai')
 const openAITestModeOptions = computed(() => [
   { value: 'default', label: t('admin.accounts.openai.testModeDefault') },
-  { value: 'compact', label: t('admin.accounts.openai.testModeCompact') }
+  { value: 'compact', label: t('admin.accounts.openai.testModeCompact') },
+  { value: 'workspace', label: t('admin.accounts.openai.testModeWorkspace') }
 ])
 // OpenAI 账号测试弹窗仅展示用户指定的模型，不影响实际 API 可调用模型。
 const openAITestModelIDs = new Set([
@@ -438,13 +439,16 @@ const startTest = async () => {
     const requestBody: {
       model_id: string
       prompt: string
-      mode?: 'default' | 'compact'
+      mode?: 'default' | 'compact' | 'workspace'
     } = {
       model_id: selectedModelId.value,
       prompt: supportsImageTest.value ? testPrompt.value.trim() : ''
     }
     if (isOpenAIAccount.value) {
       requestBody.mode = testMode.value
+      if (testMode.value === 'workspace') {
+        addLine(t('admin.accounts.workspaceProbeStarted'), 'text-cyan-300')
+      }
     }
 
     // Use the configured API base; EventSource does not support POST.
@@ -502,9 +506,9 @@ const startTest = async () => {
       return
     }
     status.value = 'error'
-    const msg = error instanceof Error ? error.message : 'Unknown error'
+    const msg = normalizeAccountTestErrorMessage(error instanceof Error ? error.message : '')
     errorMessage.value = msg
-    addLine(`Error: ${msg}`, 'text-red-400')
+    addLine(`错误：${msg}`, 'text-red-400')
   }
 }
 
@@ -514,6 +518,7 @@ const handleEvent = (event: {
   model?: string
   success?: boolean
   error?: string
+  code?: string
   image_url?: string
   mime_type?: string
 }) => {
@@ -552,8 +557,14 @@ const handleEvent = (event: {
 
     case 'status':
       if (event.text) {
-        addLine(event.text, 'text-cyan-300')
+        addLine(normalizeAccountTestStatusMessage(event.text), 'text-cyan-300')
       }
+      break
+
+    case 'workspace_deactivated':
+      status.value = 'error'
+      errorMessage.value = t('admin.accounts.workspaceDeactivated')
+      addLine(t('admin.accounts.workspaceDeactivated'), 'text-red-400')
       break
 
     case 'test_complete':
@@ -566,19 +577,57 @@ const handleEvent = (event: {
         status.value = 'success'
       } else {
         status.value = 'error'
-        errorMessage.value = event.error || 'Test failed'
+        errorMessage.value = normalizeAccountTestErrorMessage(event.error)
       }
       break
 
     case 'error':
       status.value = 'error'
-      errorMessage.value = event.error || 'Unknown error'
+      errorMessage.value = normalizeAccountTestErrorMessage(event.error)
       if (streamingContent.value) {
         addLine(streamingContent.value, 'text-green-300')
         streamingContent.value = ''
       }
       break
   }
+}
+
+// normalizeAccountTestErrorMessage 兼容旧服务返回的英文账号测试错误，统一在界面显示中文。
+const normalizeAccountTestErrorMessage = (rawMessage?: string): string => {
+  const message = rawMessage?.trim() || ''
+  const normalizedMessage = message.toLowerCase()
+
+  if (
+    normalizedMessage.includes('deactivated_workspace') ||
+    normalizedMessage.includes('workspace deactivated') ||
+    normalizedMessage.includes('workspace has been deactivated')
+  ) {
+    return t('admin.accounts.workspaceDeactivated')
+  }
+  if (normalizedMessage.includes('backend-api/codex/responses') && normalizedMessage.includes('eof')) {
+    return t('admin.accounts.openaiConnectionEOF')
+  }
+  if (normalizedMessage.includes('request failed')) {
+    return t('admin.accounts.upstreamConnectionFailed')
+  }
+  if (normalizedMessage.includes('authentication failed')) {
+    return t('admin.accounts.authenticationFailed')
+  }
+  if (normalizedMessage.includes('api returned')) {
+    return t('admin.accounts.upstreamApiFailed')
+  }
+  if (/[A-Za-z]/.test(message)) {
+    return t('admin.accounts.testErrorDetailsInLogs')
+  }
+  return message || t('admin.accounts.testFailed')
+}
+
+// normalizeAccountTestStatusMessage 将旧服务的英文状态信息转换为当前界面语言。
+const normalizeAccountTestStatusMessage = (rawMessage: string): string => {
+  if (rawMessage.toLowerCase().includes('upstream connection closed unexpectedly')) {
+    return t('admin.accounts.upstreamRetrying')
+  }
+  return rawMessage
 }
 
 const copyOutput = () => {

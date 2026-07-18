@@ -275,6 +275,39 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 	return result
 }
 
+// normalizeOpenAIAPIKeyResponsesStringInput 将 API Key 的 Responses 字符串输入转换为消息数组。
+// 部分 OpenAI 兼容上游只接受数组形态；转换后的格式同时符合 OpenAI Responses API 的输入规范。
+func normalizeOpenAIAPIKeyResponsesStringInput(reqBody map[string]any) bool {
+	if reqBody == nil {
+		return false
+	}
+
+	// 原始输入：只在 input 明确是字符串时转换，数组和其他类型保持客户端原样。
+	inputText, ok := reqBody["input"].(string)
+	if !ok {
+		return false
+	}
+
+	if strings.TrimSpace(inputText) == "" {
+		reqBody["input"] = []any{}
+		return true
+	}
+
+	reqBody["input"] = []any{
+		map[string]any{
+			"type":    "message",
+			"role":    "user",
+			"content": []any{
+				map[string]any{
+					"type": "input_text",
+					"text": inputText,
+				},
+			},
+		},
+	}
+	return true
+}
+
 func normalizeCodexToolChoice(reqBody map[string]any) bool {
 	choice, ok := reqBody["tool_choice"]
 	if !ok || choice == nil {

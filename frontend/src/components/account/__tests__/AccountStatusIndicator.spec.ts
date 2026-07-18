@@ -76,6 +76,41 @@ describe('AccountStatusIndicator', () => {
     expect(wrapper.text()).not.toContain('admin.accounts.status.tempUnschedulable')
   })
 
+  it('历史英文工作区停用错误在状态提示中显示为中文', () => {
+    const wrapper = mount(AccountStatusIndicator, {
+      props: {
+        account: makeAccount({
+          platform: 'openai',
+          status: 'error',
+          error_message: 'Workspace deactivated (402): workspace has been deactivated'
+        })
+      },
+      global: {
+        stubs: { Icon: true }
+      }
+    })
+
+    expect(wrapper.text()).toContain('admin.accounts.workspaceDeactivated')
+    expect(wrapper.text()).not.toContain('Workspace deactivated')
+  })
+
+  it('其他历史英文账号错误显示为中文概述', () => {
+    const wrapper = mount(AccountStatusIndicator, {
+      props: {
+        account: makeAccount({
+          status: 'error',
+          error_message: 'Authentication failed (401): invalid credentials'
+        })
+      },
+      global: {
+        stubs: { Icon: true }
+      }
+    })
+
+    expect(wrapper.text()).toContain('admin.accounts.accountErrorDetailsInLogs')
+    expect(wrapper.text()).not.toContain('Authentication failed')
+  })
+
   it('模型限流 + overages 启用 + 无 AICredits key → 显示 ⚡ (credits_active)', () => {
     const wrapper = mount(AccountStatusIndicator, {
       props: {

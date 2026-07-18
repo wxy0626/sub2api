@@ -2624,6 +2624,7 @@ import {
   getPresetMappingsByPlatform,
   commonErrorCodes,
   buildModelMappingObject,
+  getDefaultModelWhitelist,
   splitModelMappingObject,
   isValidWildcardPattern
 } from '@/composables/useModelWhitelist'
@@ -3155,9 +3156,12 @@ const normalizePoolModeRetryCount = (value: number) => {
   return normalized
 }
 
+// loadModelRestrictionFromMapping 从账号映射恢复编辑状态；无 OpenAI 白名单时采用 GPT-5.5 最小默认集。
 const loadModelRestrictionFromMapping = (rawMapping?: Record<string, unknown>) => {
   const parsed = splitModelMappingObject(rawMapping)
-  allowedModels.value = parsed.allowedModels
+  allowedModels.value = parsed.allowedModels.length > 0 || parsed.modelMappings.length > 0
+    ? parsed.allowedModels
+    : getDefaultModelWhitelist(props.account?.platform || '')
   modelMappings.value = parsed.modelMappings
   modelRestrictionMode.value =
     parsed.modelMappings.length > 0 && parsed.allowedModels.length === 0

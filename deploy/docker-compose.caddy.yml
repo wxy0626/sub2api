@@ -1,0 +1,25 @@
+# Sub2API HTTPS 入口：与现有 docker-compose.yml 一起启动。
+services:
+  caddy:
+    image: caddy:2.10-alpine
+    container_name: sub2api-caddy
+    restart: unless-stopped
+    ports:
+      # 对外提供 HTTP，用于自动跳转 HTTPS 和证书校验。
+      - "80:80"
+      # 对外提供 HTTPS API 与管理界面。
+      - "443:443"
+      # 为支持 HTTP/3 保留 UDP HTTPS 端口。
+      - "443:443/udp"
+    volumes:
+      # 域名、反向代理和 TLS 配置。
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # 证书与 ACME 账户持久化，重建容器后无需重新签发。
+      - ./caddy_data:/data
+      # Caddy 运行时配置持久化。
+      - ./caddy_config:/config
+      # 访问日志持久化。
+      - ./caddy_logs:/var/log/caddy
+    depends_on:
+      sub2api:
+        condition: service_healthy

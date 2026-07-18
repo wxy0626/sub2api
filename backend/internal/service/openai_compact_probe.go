@@ -12,12 +12,16 @@ const (
 	AccountTestModeDefault = "default"
 	// AccountTestModeCompact drives the /responses/compact compact-probe test.
 	AccountTestModeCompact = "compact"
+	// AccountTestModeWorkspace 使用最小 Responses 请求检测 ChatGPT 工作区是否已被停用。
+	AccountTestModeWorkspace = "workspace"
 )
 
 func normalizeAccountTestMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case AccountTestModeCompact:
 		return AccountTestModeCompact
+	case AccountTestModeWorkspace:
+		return AccountTestModeWorkspace
 	default:
 		return AccountTestModeDefault
 	}

@@ -3,6 +3,7 @@
     :show="show"
     :title="t('admin.channelMonitor.form.selectKeyTitle')"
     width="wide"
+    :no-backdrop-blur="true"
     @close="$emit('close')"
   >
     <div class="space-y-3">

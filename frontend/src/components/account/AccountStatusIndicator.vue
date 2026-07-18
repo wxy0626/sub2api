@@ -48,7 +48,7 @@
         class="invisible absolute left-0 top-full z-[100] mt-1.5 min-w-[200px] max-w-[300px] rounded-lg bg-gray-800 px-3 py-2 text-xs text-white opacity-0 shadow-xl transition-all duration-200 group-hover/error:visible group-hover/error:opacity-100 dark:bg-gray-900"
       >
         <div class="whitespace-pre-wrap break-words leading-relaxed text-gray-300">
-          {{ account.error_message }}
+          {{ displayErrorMessage }}
         </div>
         <!-- 上方小三角 -->
         <div
@@ -287,6 +287,25 @@ const isTempUnschedulable = computed(() => {
 // Computed: has error status
 const hasError = computed(() => {
   return props.account.status === 'error'
+})
+
+// displayErrorMessage 将历史版本保存的英文工作区停用错误转换为当前界面语言。
+const displayErrorMessage = computed(() => {
+  const rawMessage = props.account.error_message || ''
+  const normalizedMessage = rawMessage.toLowerCase()
+
+  if (
+    normalizedMessage.includes('deactivated_workspace') ||
+    normalizedMessage.includes('workspace deactivated') ||
+    normalizedMessage.includes('workspace has been deactivated')
+  ) {
+    return t('admin.accounts.workspaceDeactivated')
+  }
+  if (/[A-Za-z]/.test(rawMessage)) {
+    return t('admin.accounts.accountErrorDetailsInLogs')
+  }
+
+  return rawMessage
 })
 
 const isQuotaExceeded = computed(() => {

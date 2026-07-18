@@ -5,6 +5,7 @@ import Select from '@/components/common/Select.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { opsAPI, type OpsOpenAITokenStatsResponse, type OpsOpenAITokenStatsTimeRange } from '@/api/admin/ops'
 import { formatNumber } from '@/utils/format'
+import { normalizeDisplayErrorMessage } from '@/utils/errorMessage'
 
 interface Props {
   platformFilter?: string
@@ -105,7 +106,7 @@ async function loadData() {
   } catch (err: any) {
     console.error('[OpsOpenAITokenStatsCard] Failed to load data', err)
     response.value = null
-    errorMessage.value = err?.message || t('admin.ops.openaiTokenStats.failedToLoad')
+    errorMessage.value = normalizeDisplayErrorMessage(err?.message, t('admin.ops.openaiTokenStats.failedToLoad'))
   } finally {
     loading.value = false
   }

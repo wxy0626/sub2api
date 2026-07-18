@@ -217,6 +217,37 @@ describe('AccountTestModal', () => {
     })
   })
 
+  it('OpenAI 工作区测活会发送 workspace 模式并显示停用结果', async () => {
+    getAvailableModels.mockResolvedValue([
+      { id: 'gpt-5.4', display_name: 'GPT-5.4' }
+    ])
+    global.fetch = vi.fn().mockResolvedValue(
+      createStreamResponse([
+        'data: {"type":"workspace_deactivated","code":"deactivated_workspace"}\n'
+      ])
+    ) as any
+
+    const wrapper = mountModal({
+      id: 43,
+      name: 'OpenAI Workspace',
+      platform: 'openai',
+      type: 'oauth',
+      status: 'active'
+    })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+
+    ;(wrapper.vm as any).selectedModelId = 'gpt-5.4'
+    ;(wrapper.vm as any).testMode = 'workspace'
+    await (wrapper.vm as any).startTest()
+    await flushPromises()
+
+    const [, request] = (global.fetch as any).mock.calls[0]
+    expect(JSON.parse(request.body)).toMatchObject({ mode: 'workspace' })
+    expect((wrapper.vm as any).status).toBe('error')
+    expect(wrapper.text()).toContain('admin.accounts.workspaceDeactivated')
+  })
+
   it('OpenAI 测试模型仅保留指定的四个模型', async () => {
     getAvailableModels.mockResolvedValue([
       { id: 'gpt-5.6-sol', display_name: 'GPT-5.6 Sol' },
@@ -244,5 +275,63 @@ describe('AccountTestModal', () => {
       'gpt-5.6-luna',
       'gpt-image-2'
     ])
+    expect((wrapper.vm as any).selectedModelId).toBe('gpt-5.6-luna')
+  })
+
+  it('将旧服务返回的英文 EOF 错误转换为中文提示', async () => {
+    getAvailableModels.mockResolvedValue([
+      { id: 'gpt-5.6-luna', display_name: 'GPT-5.6 Luna' }
+    ])
+    global.fetch = vi.fn().mockResolvedValue(
+      createStreamResponse([
+        `data: ${JSON.stringify({
+          type: 'error',
+          error: 'Request failed: Post "https://chatgpt.com/backend-api/codex/responses": EOF'
+        })}\n`
+      ])
+    ) as any
+
+    const wrapper = mountModal({
+      id: 44,
+      name: 'OpenAI OAuth',
+      platform: 'openai',
+      type: 'oauth',
+      status: 'active'
+    })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+
+    await (wrapper.vm as any).startTest()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('admin.accounts.openaiConnectionEOF')
+    expect(wrapper.text()).not.toContain('Request failed: Post')
+  })
+
+  it('将未知英文账号测试错误转换为中文概述', async () => {
+    getAvailableModels.mockResolvedValue([
+      { id: 'gpt-5.6-luna', display_name: 'GPT-5.6 Luna' }
+    ])
+    global.fetch = vi.fn().mockResolvedValue(
+      createStreamResponse([
+        `data: ${JSON.stringify({ type: 'error', error: 'Unexpected upstream gateway failure' })}\n`
+      ])
+    ) as any
+
+    const wrapper = mountModal({
+      id: 45,
+      name: 'OpenAI OAuth',
+      platform: 'openai',
+      type: 'oauth',
+      status: 'active'
+    })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+
+    await (wrapper.vm as any).startTest()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('admin.accounts.testErrorDetailsInLogs')
+    expect(wrapper.text()).not.toContain('Unexpected upstream gateway failure')
   })
 })
