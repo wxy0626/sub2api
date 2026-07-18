@@ -43,6 +43,7 @@ type channelMonitorCreateRequest struct {
 	APIMode          string            `json:"api_mode" binding:"omitempty,oneof=chat_completions responses"`
 	Endpoint         string            `json:"endpoint" binding:"max=500"`
 	AccountID        *int64            `json:"account_id"`
+	APIKeyID         *int64            `json:"api_key_id"`
 	APIKey           string            `json:"api_key" binding:"max=2000"`
 	PrimaryModel     string            `json:"primary_model" binding:"max=200"`
 	ExtraModels      []string          `json:"extra_models"`
@@ -61,8 +62,10 @@ type channelMonitorUpdateRequest struct {
 	Provider         *string            `json:"provider" binding:"omitempty,oneof=openai anthropic gemini grok"`
 	APIMode          *string            `json:"api_mode" binding:"omitempty,oneof=chat_completions responses"`
 	Endpoint         *string            `json:"endpoint" binding:"omitempty,max=500"`
-	AccountID        *int64            `json:"account_id"`
-	ClearAccount     bool              `json:"clear_account"`
+	AccountID        *int64             `json:"account_id"`
+	ClearAccount     bool               `json:"clear_account"`
+	APIKeyID         *int64             `json:"api_key_id"`
+	ClearAPIKeyID    bool               `json:"clear_api_key_id"`
 	APIKey           *string            `json:"api_key" binding:"omitempty,max=2000"`
 	PrimaryModel     *string            `json:"primary_model" binding:"omitempty,max=200"`
 	ExtraModels      *[]string          `json:"extra_models"`
@@ -84,6 +87,7 @@ type channelMonitorResponse struct {
 	APIMode             string                               `json:"api_mode"`
 	Endpoint            string                               `json:"endpoint"`
 	AccountID           *int64                               `json:"account_id"`
+	APIKeyID            *int64                               `json:"api_key_id"`
 	SourceType          string                               `json:"source_type"`
 	APIKeyMasked        string                               `json:"api_key_masked"`
 	APIKeyDecryptFailed bool                                 `json:"api_key_decrypt_failed"`
@@ -155,6 +159,7 @@ func channelMonitorToResponse(m *service.ChannelMonitor) *channelMonitorResponse
 		APIMode:             m.APIMode,
 		Endpoint:            m.Endpoint,
 		AccountID:           m.AccountID,
+		APIKeyID:            m.APIKeyID,
 		SourceType:          channelMonitorSourceType(m),
 		APIKeyMasked:        channelMonitorAPIKeyMasked(m),
 		APIKeyDecryptFailed: m.APIKeyDecryptFailed,
@@ -341,6 +346,7 @@ func (h *ChannelMonitorHandler) Create(c *gin.Context) {
 		APIMode:          req.APIMode,
 		Endpoint:         req.Endpoint,
 		AccountID:        req.AccountID,
+		APIKeyID:         req.APIKeyID,
 		APIKey:           req.APIKey,
 		PrimaryModel:     req.PrimaryModel,
 		ExtraModels:      req.ExtraModels,
@@ -437,6 +443,8 @@ func (h *ChannelMonitorHandler) Update(c *gin.Context) {
 		Endpoint:         req.Endpoint,
 		AccountID:        req.AccountID,
 		ClearAccount:     req.ClearAccount,
+		APIKeyID:         req.APIKeyID,
+		ClearAPIKeyID:    req.ClearAPIKeyID,
 		APIKey:           req.APIKey,
 		PrimaryModel:     req.PrimaryModel,
 		ExtraModels:      req.ExtraModels,
