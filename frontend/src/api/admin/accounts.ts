@@ -3,7 +3,7 @@
  * Handles AI platform account management for administrators
  */
 
-import { apiClient } from '../client'
+import { apiClient, buildApiUrl } from '../client'
 import type {
   Account,
   CreateAccountRequest,
@@ -230,17 +230,77 @@ export async function toggleStatus(id: number, status: 'active' | 'inactive'): P
  * @param id - Account ID
  * @returns Test result
  */
-export async function testAccount(id: number): Promise<{
+export interface AccountTestResult {
   success: boolean
   message: string
   latency_ms?: number
-}> {
-  const { data } = await apiClient.post<{
-    success: boolean
-    message: string
-    latency_ms?: number
-  }>(`/admin/accounts/${id}/test`)
-  return data
+}
+
+interface AccountTestSSEEvent {
+  type?: string
+  success?: boolean
+  error?: string
+}
+
+/**
+ * 执行账号检测并解析后端 SSE 测试流的最终结果。
+ * 账号测试接口始终返回 SSE，不能作为普通 JSON 接口读取。
+ */
+export async function testAccount(id: number): Promise<AccountTestResult> {
+  // 记录前端侧耗时，供状态栏和批量操作的成功消息使用。
+  const startedAt = performance.now()
+  const response = await fetch(buildApiUrl(`/admin/accounts/${id}/test`), {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${localStorage.getItem('auth_token') || ''}`,
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream'
+    },
+    credentials: 'include',
+    body: '{}'
+  })
+
+  const responseBody = await response.text()
+  if (!response.ok) {
+    throw new Error(extractAccountTestHTTPError(responseBody, response.status))
+  }
+
+  // 标记后端是否已明确发送测试完成事件。
+  let completed = false
+  // 保存 SSE 中的真实失败原因，优先展示给管理员。
+  let failedMessage = ''
+  for (const rawLine of responseBody.split(/\r?\n/)) {
+    const line = rawLine.trim()
+    if (!line.startsWith('data:')) continue
+
+    try {
+      const event = JSON.parse(line.slice(5).trim()) as AccountTestSSEEvent
+      if (event.type === 'error' || event.type === 'workspace_deactivated') {
+        failedMessage = event.error || '账号测试失败，请稍后重试。'
+      }
+      if (event.type === 'test_complete') {
+        completed = true
+        if (!event.success) failedMessage = event.error || '账号测试失败，请稍后重试。'
+      }
+    } catch {
+      // 单个非 JSON SSE 帧不影响已接收的其他测试结果。
+    }
+  }
+
+  const latencyMs = Math.round(performance.now() - startedAt)
+  if (failedMessage) return { success: false, message: failedMessage, latency_ms: latencyMs }
+  if (!completed) return { success: false, message: '账号测试未返回完成状态，请重试。', latency_ms: latencyMs }
+  return { success: true, message: '账号测试成功', latency_ms: latencyMs }
+}
+
+// extractAccountTestHTTPError 提取非 2xx 测试响应中可展示的错误详情。
+function extractAccountTestHTTPError(responseBody: string, status: number): string {
+  try {
+    const payload = JSON.parse(responseBody) as { message?: string; error?: string }
+    return payload.message || payload.error || `账号测试请求失败（HTTP ${status}）`
+  } catch {
+    return responseBody.trim() || `账号测试请求失败（HTTP ${status}）`
+  }
 }
 
 /**
