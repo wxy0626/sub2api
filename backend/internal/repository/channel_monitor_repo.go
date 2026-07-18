@@ -740,6 +740,8 @@ func entToServiceMonitor(row *dbent.ChannelMonitor) *service.ChannelMonitor {
 	delete(headers, service.ChannelMonitorDuplicateOperationIDMetadataKey)
 	accountID := parseChannelMonitorAccountID(headers[service.ChannelMonitorAccountIDMetadataKey])
 	delete(headers, service.ChannelMonitorAccountIDMetadataKey)
+	apiKeyID := parseChannelMonitorAccountID(headers[service.ChannelMonitorAPIKeyIDMetadataKey])
+	delete(headers, service.ChannelMonitorAPIKeyIDMetadataKey)
 	out := &service.ChannelMonitor{
 		ID:                   row.ID,
 		Name:                 row.Name,
@@ -747,6 +749,7 @@ func entToServiceMonitor(row *dbent.ChannelMonitor) *service.ChannelMonitor {
 		APIMode:              defaultAPIModeRepo(row.APIMode),
 		Endpoint:             row.Endpoint,
 		AccountID:            accountID,
+		APIKeyID:             apiKeyID,
 		APIKey:               row.APIKeyEncrypted, // 仍为密文，service 层负责解密
 		PrimaryModel:         row.PrimaryModel,
 		ExtraModels:          extras,
@@ -774,9 +777,9 @@ func channelMonitorHeadersForPersistence(m *service.ChannelMonitor) map[string]s
 	if m == nil {
 		return map[string]string{}
 	}
-	headers := make(map[string]string, len(m.ExtraHeaders)+2)
+	headers := make(map[string]string, len(m.ExtraHeaders)+3)
 	for key, value := range m.ExtraHeaders {
-		if key == service.ChannelMonitorDuplicateOperationIDMetadataKey || key == service.ChannelMonitorAccountIDMetadataKey {
+		if key == service.ChannelMonitorDuplicateOperationIDMetadataKey || key == service.ChannelMonitorAccountIDMetadataKey || key == service.ChannelMonitorAPIKeyIDMetadataKey {
 			continue
 		}
 		headers[key] = value
@@ -786,6 +789,9 @@ func channelMonitorHeadersForPersistence(m *service.ChannelMonitor) map[string]s
 	}
 	if m.AccountID != nil && *m.AccountID > 0 {
 		headers[service.ChannelMonitorAccountIDMetadataKey] = strconv.FormatInt(*m.AccountID, 10)
+	}
+	if m.APIKeyID != nil && *m.APIKeyID > 0 {
+		headers[service.ChannelMonitorAPIKeyIDMetadataKey] = strconv.FormatInt(*m.APIKeyID, 10)
 	}
 	return headers
 }

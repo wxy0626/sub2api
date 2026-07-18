@@ -19,6 +19,8 @@ export interface ChannelMonitor {
   endpoint: string
   /** 已有账号来源时指定被检测账号。 */
   account_id?: number | null
+  /** 通过“使用我的 Key”选择的 API Key ID，用于编辑界面展示。 */
+  api_key_id?: number | null
   source_type?: MonitorSourceType
   api_key_masked: string
   /**
@@ -83,6 +85,8 @@ export interface CreateParams {
   api_mode?: APIMode
   endpoint: string
   account_id?: number | null
+  /** 通过“使用我的 Key”选择的 API Key ID，仅用于编辑界面展示。 */
+  api_key_id?: number | null
   api_key: string
   primary_model: string
   extra_models?: string[]
@@ -100,6 +104,8 @@ export interface CreateParams {
 export type UpdateParams = Partial<CreateParams> & {
   /** 切换回第三方 API 时清除已保存的账号来源。 */
   clear_account?: boolean
+  /** 手动填写 API Key 时清除原有的“我的 Key”关联。 */
+  clear_api_key_id?: boolean
   clear_template?: boolean
 }
 

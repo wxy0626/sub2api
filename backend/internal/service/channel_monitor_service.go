@@ -83,6 +83,8 @@ const ChannelMonitorDuplicateOperationIDMetadataKey = "sub2api:duplicate_operati
 const (
 	// ChannelMonitorAccountIDMetadataKey 保存账号来源，避免为可选功能增加表迁移。
 	ChannelMonitorAccountIDMetadataKey = "sub2api:account_id"
+	// ChannelMonitorAPIKeyIDMetadataKey 保存“使用我的 Key”选择的 Key ID，供编辑表单展示。
+	ChannelMonitorAPIKeyIDMetadataKey = "sub2api:api_key_id"
 	// channelMonitorAccountEndpoint 满足旧表 endpoint 非空约束，运行时不会访问它。
 	channelMonitorAccountEndpoint = "https://account-monitor.sub2api.invalid"
 	// channelMonitorAccountAPIKeyMarker 仅满足旧表密文字段约束，绝不发送到上游。
@@ -160,6 +162,7 @@ func (s *ChannelMonitorService) Create(ctx context.Context, p ChannelMonitorCrea
 		APIMode:          defaultAPIMode(p.APIMode),
 		Endpoint:         monitorEndpointForCreate(p),
 		AccountID:        cloneInt64Pointer(p.AccountID),
+		APIKeyID:         cloneInt64Pointer(p.APIKeyID),
 		APIKey:           encrypted, // 注意：传入 repository 时该字段为密文
 		PrimaryModel:     normalizeMonitorPrimaryModel(p.Provider, p.PrimaryModel),
 		ExtraModels:      normalizeModels(p.ExtraModels),
@@ -738,6 +741,15 @@ func applyMonitorUpdate(existing *ChannelMonitor, p ChannelMonitorUpdateParams) 
 	}
 	if p.ClearAccount {
 		existing.AccountID = nil
+	}
+	if p.ClearAPIKeyID {
+		existing.APIKeyID = nil
+	} else if p.APIKeyID != nil {
+		if *p.APIKeyID <= 0 {
+			return ErrChannelMonitorMissingAPIKey
+		}
+		id := *p.APIKeyID
+		existing.APIKeyID = &id
 	}
 	if p.AccountID != nil {
 		if *p.AccountID <= 0 {

@@ -606,12 +606,16 @@ function loadFromMonitor(m: ChannelMonitor) {
 // 同时拉取模板列表（cache 过的话一次性返回）。
 watch(
   () => [props.show, props.monitor] as const,
-  ([show, m]) => {
+  async ([show, m]) => {
     if (!show) return
     void loadTemplates()
     void loadMonitorAccounts()
     if (m) loadFromMonitor(m)
     else resetForm()
+    if (m?.api_key_id) {
+      await loadMyActiveKeys()
+      selectedMyKey.value = myActiveKeys.value.find((key) => key.id === m.api_key_id) ?? null
+    }
   },
   { immediate: true },
 )
@@ -632,6 +636,11 @@ function validateEndpointForSubmit(): boolean {
 
 async function openMyKeyPicker() {
   showKeyPicker.value = true
+  await loadMyActiveKeys()
+}
+
+// loadMyActiveKeys 加载可供渠道监控使用的 Key，并在编辑已有监控时恢复 Key 摘要。
+async function loadMyActiveKeys() {
   if (myActiveKeys.value.length > 0) return
   myKeysLoading.value = true
   try {
@@ -667,6 +676,7 @@ function buildPayload(): CreateParams {
     api_mode: form.provider === PROVIDER_OPENAI ? form.api_mode : API_MODE_CHAT_COMPLETIONS,
     endpoint: form.source_type === 'external' ? form.endpoint.trim() : '',
     account_id: form.source_type === 'account' ? form.account_id : undefined,
+    api_key_id: form.source_type === 'external' ? selectedMyKey.value?.id : undefined,
     api_key: form.source_type === 'external' ? form.api_key.trim() : '',
     primary_model: form.primary_model.trim(),
     extra_models: form.extra_models,
@@ -708,6 +718,8 @@ async function handleSubmit() {
       const req: UpdateParams = { ...rest }
       // 编辑已有账号来源的监控时，切回第三方 API 必须显式清除后端保存的 account_id。
       if (form.source_type === 'external') req.clear_account = true
+      // 手动输入 API Key 时删除此前的“使用我的 Key”关联，防止摘要与密钥不一致。
+      if (form.source_type === 'external' && !selectedMyKey.value) req.clear_api_key_id = true
       // Only send api_key if user typed a new value
       if (api_key) req.api_key = api_key
       // template_id=null 用 clear_template=true 明确告诉后端清空（pointer 语义）
