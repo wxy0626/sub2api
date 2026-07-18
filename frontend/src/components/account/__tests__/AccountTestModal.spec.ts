@@ -148,6 +148,35 @@ describe('AccountTestModal', () => {
     })
   })
 
+  it('测试模型列表包含 Luna 时默认选择 Luna', async () => {
+    getAvailableModelsMock.mockResolvedValue([
+      { id: 'gpt-image-2', display_name: 'GPT Image 2' },
+      { id: 'gpt-5.6-sol', display_name: 'GPT-5.6 Sol' },
+      { id: 'gpt-5.6-luna', display_name: 'GPT-5.6 Luna' },
+      { id: 'gpt-5.6-terra', display_name: 'GPT-5.6 Terra' }
+    ])
+
+    const wrapper = mount(AccountTestModal, {
+      props: {
+        show: false,
+        account: { ...buildAccount(), platform: 'antigravity' }
+      },
+      global: {
+        stubs: {
+          BaseDialog: BaseDialogStub,
+          Select: SelectStub,
+          TextArea: TextAreaStub,
+          Icon: true
+        }
+      }
+    })
+
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+
+    expect((wrapper.vm as any).selectedModelId).toBe('gpt-5.6-luna')
+  })
+
   it('renders Chat Completions path status from test SSE', async () => {
     const encoder = new TextEncoder()
     const chunks = [

@@ -301,6 +301,8 @@ const openAITestModelIDs = new Set([
   'gpt-5.6-luna',
   'gpt-image-2'
 ])
+// 账号连接测试的统一默认模型：模型列表提供 Luna 时优先选用。
+const defaultTestModelID = 'gpt-5.6-luna'
 const prioritizedGeminiModels = ['gemini-3.1-flash-image', 'gemini-2.5-flash-image', 'gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-3-flash-preview', 'gemini-3-pro-preview', 'gemini-2.0-flash']
 const supportsGeminiImageTest = computed(() => {
   const modelID = selectedModelId.value.toLowerCase()
@@ -365,7 +367,10 @@ const loadAvailableModels = async () => {
       : filteredModels
     // Default selection by platform
     if (availableModels.value.length > 0) {
-      if (props.account.platform === 'gemini') {
+      const lunaModel = availableModels.value.find((model) => model.id === defaultTestModelID)
+      if (lunaModel) {
+        selectedModelId.value = lunaModel.id
+      } else if (props.account.platform === 'gemini') {
         selectedModelId.value = availableModels.value[0].id
       } else {
         // Try to select Sonnet as default, otherwise use first model

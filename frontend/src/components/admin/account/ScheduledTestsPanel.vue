@@ -12,7 +12,7 @@
           {{ t('admin.scheduledTests.title') }}
         </p>
         <button
-          @click="showAddForm = !showAddForm"
+          @click="toggleAddForm"
           class="btn btn-primary flex items-center gap-1.5 text-sm"
         >
           <Icon name="plus" size="sm" :stroke-width="2" />
@@ -519,12 +519,25 @@ const newPlan = reactive({
   auto_recover: false
 })
 
+// 新增账号池测试计划的统一默认模型：存在 Luna 时优先预填。
+const defaultTestModelID = 'gpt-5.6-luna'
+
+const resolveDefaultTestModelID = () => {
+  const lunaOption = props.modelOptions.find((option) => option.value === defaultTestModelID)
+  return String(lunaOption?.value ?? props.modelOptions[0]?.value ?? '')
+}
+
 const resetNewPlan = () => {
-  newPlan.model_id = ''
+  newPlan.model_id = resolveDefaultTestModelID()
   newPlan.cron_expression = ''
   newPlan.max_results = '100'
   newPlan.enabled = true
   newPlan.auto_recover = false
+}
+
+const toggleAddForm = () => {
+  showAddForm.value = !showAddForm.value
+  if (showAddForm.value) resetNewPlan()
 }
 
 // Load plans when dialog opens
