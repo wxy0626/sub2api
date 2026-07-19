@@ -627,7 +627,12 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	if isOAuth {
 		upstreamTestModelID = normalizeOpenAIModelForUpstream(credentialAccount, testModelID)
 	}
-	payload := createOpenAITestPayload(upstreamTestModelID, isOAuth)
+	// API Key 连通性测试使用轻量探测负载，避免无关的 Codex 指令拖慢首个输出。
+	payload := createOpenAIAccountTestPayload(upstreamTestModelID, isOAuth, credentialAccount.Type == AccountTypeAPIKey)
+	// API Key 测试请求必须复用真实转发的 Responses 输入兼容规则，避免上游仅接受数组时把可用账号误判为不可用。
+	if credentialAccount.Type == AccountTypeAPIKey {
+		normalizeOpenAIAPIKeyResponsesStringInput(payload)
+	}
 	payloadBytes, _ := json.Marshal(payload)
 
 	// Send test_start event once. A task-invalid Agent Identity response may
@@ -742,8 +747,8 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
 	}
 
-	// Process SSE stream
-	return s.processOpenAIStream(c, resp.Body)
+	// API Key 探测在收到首个有效文本后即可确认模型可用，不等待上游完成整段生成。
+	return s.processOpenAIStream(c, resp.Body, credentialAccount.Type == AccountTypeAPIKey)
 }
 
 // testGrokAccountConnection tests a Grok OAuth or API-key account through xAI's Responses API.
@@ -854,7 +859,7 @@ func (s *AccountTestService) testGrokAccountConnection(c *gin.Context, account *
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Grok Responses API returned %d: %s", resp.StatusCode, string(body)))
 	}
 
-	return s.processOpenAIStream(c, resp.Body)
+	return s.processOpenAIStream(c, resp.Body, false)
 }
 
 // testOpenAIChatCompletionsConnection tests an OpenAI-compatible APIKey account
@@ -917,7 +922,8 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Chat Completions API (/v1/chat/completions) returned %d: %s", resp.StatusCode, string(body)))
 	}
 
-	return s.processOpenAIChatCompletionsStream(c, resp.Body)
+	// Chat Completions 连通性测试同样以首个有效文本作为成功条件。
+	return s.processOpenAIChatCompletionsStream(c, resp.Body, true)
 }
 
 // testOpenAICompactConnection probes /responses/compact and persists the
@@ -1490,7 +1496,7 @@ func (s *AccountTestService) processGeminiStream(c *gin.Context, body io.Reader)
 	}
 }
 
-// createOpenAITestPayload creates a test payload for OpenAI Responses API
+// createOpenAITestPayload 创建 ChatGPT OAuth 与用量查询使用的完整 Responses 请求体。
 func createOpenAITestPayload(modelID string, isOAuth bool) map[string]any {
 	payload := map[string]any{
 		"model": modelID,
@@ -1517,6 +1523,21 @@ func createOpenAITestPayload(modelID string, isOAuth bool) map[string]any {
 	payload["instructions"] = openai.DefaultInstructions
 
 	return payload
+}
+
+// createOpenAIAccountTestPayload 创建账号连通性探测请求体。
+// API Key 探测不携带业务转发所需的长指令，并限制输出为一个 token，降低上游排队与收尾耗时。
+func createOpenAIAccountTestPayload(modelID string, isOAuth bool, lightweightProbe bool) map[string]any {
+	if !lightweightProbe {
+		return createOpenAITestPayload(modelID, isOAuth)
+	}
+
+	return map[string]any{
+		"model":             modelID,
+		"input":             "hi",
+		"stream":            true,
+		"max_output_tokens": 1,
+	}
 }
 
 func createOpenAIChatCompletionsTestPayload(modelID string, prompt string) map[string]any {
@@ -1593,7 +1614,7 @@ func (s *AccountTestService) processClaudeStream(c *gin.Context, body io.Reader)
 
 // processOpenAIChatCompletionsStream processes SSE chunks from the
 // OpenAI-compatible Chat Completions API.
-func (s *AccountTestService) processOpenAIChatCompletionsStream(c *gin.Context, body io.Reader) error {
+func (s *AccountTestService) processOpenAIChatCompletionsStream(c *gin.Context, body io.Reader, completeOnFirstText bool) error {
 	reader := bufio.NewReader(body)
 	seenJSON := false
 	seenFinish := false
@@ -1653,11 +1674,21 @@ func (s *AccountTestService) processOpenAIChatCompletionsStream(c *gin.Context, 
 			if delta, ok := choice["delta"].(map[string]any); ok {
 				if text, ok := delta["content"].(string); ok && text != "" {
 					s.sendEvent(c, TestEvent{Type: "content", Text: text})
+					if completeOnFirstText {
+						s.sendEvent(c, TestEvent{Type: "status", Text: "已收到首个模型输出，连接验证成功"})
+						s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+						return nil
+					}
 				}
 			}
 			if message, ok := choice["message"].(map[string]any); ok {
 				if text, ok := message["content"].(string); ok && text != "" {
 					s.sendEvent(c, TestEvent{Type: "content", Text: text})
+					if completeOnFirstText {
+						s.sendEvent(c, TestEvent{Type: "status", Text: "已收到首个模型输出，连接验证成功"})
+						s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+						return nil
+					}
 				}
 			}
 			if finishReason, ok := choice["finish_reason"].(string); ok && finishReason != "" {
@@ -1668,7 +1699,7 @@ func (s *AccountTestService) processOpenAIChatCompletionsStream(c *gin.Context, 
 }
 
 // processOpenAIStream processes the SSE stream from OpenAI Responses API
-func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader) error {
+func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader, completeOnFirstText bool) error {
 	reader := bufio.NewReader(body)
 	seenCompleted := false
 
@@ -1711,6 +1742,11 @@ func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader)
 			// OpenAI Responses API uses "delta" field for text content
 			if delta, ok := data["delta"].(string); ok && delta != "" {
 				s.sendEvent(c, TestEvent{Type: "content", Text: delta})
+				if completeOnFirstText {
+					s.sendEvent(c, TestEvent{Type: "status", Text: "已收到首个模型输出，连接验证成功"})
+					s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+					return nil
+				}
 			}
 		case "response.completed", "response.done":
 			s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})

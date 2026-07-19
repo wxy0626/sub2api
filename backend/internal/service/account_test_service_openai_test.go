@@ -614,7 +614,7 @@ func TestAccountTestService_OpenAIAPIKeyResponsesUnsupportedUsesChatCompletionsP
 	require.False(t, gjson.GetBytes(upstream.lastBody, "input").Exists())
 	body := recorder.Body.String()
 	require.Contains(t, body, "pong")
-	require.Contains(t, body, "已通过 /v1/chat/completions 验证")
+	require.Contains(t, body, "已收到首个模型输出，连接验证成功")
 	require.Contains(t, body, `"success":true`)
 	require.NotContains(t, body, "当前测试接口仅支持 Responses API 路径")
 }
@@ -651,10 +651,47 @@ func TestAccountTestService_OpenAIAPIKeyForcedResponsesTestIgnoresCapability(t *
 	require.Equal(t, "text/event-stream", upstream.lastReq.Header.Get("Accept"))
 	require.Equal(t, "gpt-5.6-luna", gjson.GetBytes(upstream.lastBody, "model").String())
 	require.True(t, gjson.GetBytes(upstream.lastBody, "stream").Bool())
+	require.True(t, gjson.GetBytes(upstream.lastBody, "input").IsArray())
+	require.Equal(t, "message", gjson.GetBytes(upstream.lastBody, "input.0.type").String())
+	require.Equal(t, "user", gjson.GetBytes(upstream.lastBody, "input.0.role").String())
+	require.Equal(t, "input_text", gjson.GetBytes(upstream.lastBody, "input.0.content.0.type").String())
 	require.Equal(t, "hi", gjson.GetBytes(upstream.lastBody, "input.0.content.0.text").String())
+	require.Equal(t, int64(1), gjson.GetBytes(upstream.lastBody, "max_output_tokens").Int())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "instructions").Exists())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "messages").Exists())
 	require.Equal(t, false, account.Extra[openai_compat.ExtraKeyResponsesSupported])
 	require.Contains(t, recorder.Body.String(), "正在通过 /v1/responses 测试连接")
+	require.Contains(t, recorder.Body.String(), `"success":true`)
+}
+
+// TestAccountTestService_OpenAIAPIKeyProbeCompletesOnFirstText 验证轻量探测不等待上游完整收尾。
+func TestAccountTestService_OpenAIAPIKeyProbeCompletesOnFirstText(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+
+	upstream := &httpUpstreamRecorder{resp: newJSONResponse(http.StatusOK, `data: {"type":"response.output_text.delta","delta":"ok"}
+
+`)}
+	svc := &AccountTestService{
+		httpUpstream: upstream,
+		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+	}
+	account := &Account{
+		ID:          97,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-test",
+			"base_url": "https://compat-upstream.example/v1",
+		},
+		Extra: map[string]any{openai_compat.ExtraKeyResponsesSupported: true},
+	}
+
+	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.6-luna", "", AccountTestModeResponses)
+	require.NoError(t, err)
+	require.Contains(t, recorder.Body.String(), "ok")
+	require.Contains(t, recorder.Body.String(), "已收到首个模型输出，连接验证成功")
 	require.Contains(t, recorder.Body.String(), `"success":true`)
 }
 
