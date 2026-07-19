@@ -148,6 +148,7 @@ const props = defineProps<{
   platform?: string
   platforms?: string[]
   accountId?: number
+  accountType?: string
   syncCredentials?: {
     platform: string
     type: string
@@ -195,8 +196,18 @@ const latestSyncPlatformNames = computed(() =>
 )
 // canSyncLatest 控制最新支持模型同步动作是否可用。
 const canSyncLatest = computed(() => latestSyncPlatformNames.value.length > 0)
+// canSyncSavedAccountUpstream 根据已保存账号的类型，阻止前端请求后端明确不支持的同步接口。
+const canSyncSavedAccountUpstream = computed(() => {
+  const accountType = props.accountType?.trim().toLowerCase()
+
+  return !(
+    normalizedPlatforms.value.some(platform => platform.toLowerCase() === 'openai') &&
+    accountType === 'oauth'
+  )
+})
 const canSyncUpstream = computed(() => {
   if (props.accountId) {
+    if (!canSyncSavedAccountUpstream.value) return false
     if (normalizedPlatforms.value.length === 0) return true
     return normalizedPlatforms.value.some(platform => upstreamSyncPlatforms.has(platform.toLowerCase()))
   }
