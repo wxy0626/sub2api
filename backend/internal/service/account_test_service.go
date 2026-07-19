@@ -179,7 +179,8 @@ func createTestPayload(modelID string) (map[string]any, error) {
 // TestAccountConnection tests an account's connection by sending a test request
 // All account types use full Claude Code client characteristics, only auth header differs
 // modelID is optional - if empty, defaults to claude.DefaultTestModel
-// mode is optional - "compact" routes OpenAI accounts to the /responses/compact probe path
+// mode is optional - "responses" forces API Key accounts through /v1/responses once,
+// while "compact" routes OpenAI accounts to the /responses/compact probe path.
 func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int64, modelID string, prompt string, mode string) (err error) {
 	ctx := c.Request.Context()
 
@@ -551,8 +552,8 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		return s.testOpenAICompactConnection(c, account, testModelID)
 	}
 
-	// 工作区测活需要命中 Codex Responses；其他模式的图片模型仍走原有图片测试。
-	if isOpenAIImageModel(testModelID) {
+	// 强制 /responses 测试优先验证指定端点；图片模型也不改走图片专用测试。
+	if mode != AccountTestModeResponses && isOpenAIImageModel(testModelID) {
 		imagePrompt := strings.TrimSpace(prompt)
 		if imagePrompt == "" {
 			imagePrompt = defaultOpenAIImageTestPrompt
@@ -604,7 +605,8 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		if err != nil {
 			return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
 		}
-		if !openai_compat.ShouldUseResponsesAPI(account.Extra) {
+		// /responses 测试只影响本次请求，忽略 capability 缓存且不回写账号 Extra。
+		if mode != AccountTestModeResponses && !openai_compat.ShouldUseResponsesAPI(account.Extra) {
 			return s.testOpenAIChatCompletionsConnection(c, account, testModelID, prompt, normalizedBaseURL, authToken)
 		}
 		apiURL = buildOpenAIResponsesURL(normalizedBaseURL)
@@ -633,6 +635,9 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	if !agentIdentityTaskRecoveryWasTried(ctx) {
 		s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
 	}
+	if mode == AccountTestModeResponses {
+		s.sendEvent(c, TestEvent{Type: "status", Text: "正在通过 /v1/responses 测试连接"})
+	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(payloadBytes))
 	if err != nil {
@@ -642,6 +647,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 
 	// Set common headers
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
 	if credentialAccount.IsOpenAIAgentIdentity() {
 		authHeaders, authErr := buildAgentIdentityAuthenticationHeaders(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityTaskMu, credentialAccount)
 		if authErr != nil {
@@ -694,6 +700,9 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	}
 	if err != nil {
 		log.Printf("OpenAI account test request failed: account_id=%d error=%v", account.ID, err)
+		if mode == AccountTestModeResponses {
+			return s.sendErrorAndEnd(c, fmt.Sprintf("通过 /v1/responses 测试连接失败：无法连接上游服务，请检查 API Base URL、网络和 API Key。原始技术详情：%s", err.Error()))
+		}
 		return s.sendErrorAndEnd(c, openAIAccountTestTransportErrorMessage(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -726,6 +735,9 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil {
 			errMsg := fmt.Sprintf("Authentication failed (401): %s", string(body))
 			_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
+		}
+		if mode == AccountTestModeResponses {
+			return s.sendErrorAndEnd(c, fmt.Sprintf("通过 /v1/responses 测试连接失败：上游返回 HTTP %d，请检查接口兼容性、模型权限和 API Key。原始技术详情：%s", resp.StatusCode, string(body)))
 		}
 		return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
 	}

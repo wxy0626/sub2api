@@ -11,8 +11,11 @@ const {
   getAccountById,
   getAllProxies,
   getAllGroups,
+  getAvailableModels,
   probeUpstreamBillingBatch,
-  testAccount
+  testAccount,
+  showError,
+  showSuccess
 } = vi.hoisted(() => ({
   listAccounts: vi.fn(),
   listWithEtag: vi.fn(),
@@ -21,8 +24,11 @@ const {
   getAccountById: vi.fn(),
   getAllProxies: vi.fn(),
   getAllGroups: vi.fn(),
+  getAvailableModels: vi.fn(),
   probeUpstreamBillingBatch: vi.fn(),
-  testAccount: vi.fn()
+  testAccount: vi.fn(),
+  showError: vi.fn(),
+  showSuccess: vi.fn()
 }))
 
 vi.mock('@/api/admin', () => ({
@@ -36,6 +42,7 @@ vi.mock('@/api/admin', () => ({
       delete: vi.fn(),
       batchClearError: vi.fn(),
       batchRefresh: vi.fn(),
+      getAvailableModels,
       testAccount,
       probeUpstreamBillingBatch,
       toggleSchedulable: vi.fn()
@@ -51,8 +58,8 @@ vi.mock('@/api/admin', () => ({
 
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
-    showError: vi.fn(),
-    showSuccess: vi.fn(),
+    showError,
+    showSuccess,
     showInfo: vi.fn()
   })
 }))
@@ -119,8 +126,11 @@ describe('admin AccountsView bulk edit scope', () => {
     getAccountById.mockReset()
     getAllProxies.mockReset()
     getAllGroups.mockReset()
+    getAvailableModels.mockReset()
     probeUpstreamBillingBatch.mockReset()
     testAccount.mockReset()
+    showError.mockReset()
+    showSuccess.mockReset()
 
     listAccounts.mockResolvedValue({
       items: [],
@@ -139,6 +149,7 @@ describe('admin AccountsView bulk edit scope', () => {
     getAccountById.mockResolvedValue(null)
     getAllProxies.mockResolvedValue([])
     getAllGroups.mockResolvedValue([])
+    getAvailableModels.mockResolvedValue([])
     probeUpstreamBillingBatch.mockResolvedValue([])
     testAccount.mockResolvedValue({ success: true, message: '账号测试成功' })
   })
@@ -463,10 +474,12 @@ describe('admin AccountsView bulk edit scope', () => {
       type: 'oauth',
       status: 'active',
       schedulable: true,
+      extra: id === 7 ? { account_test_mode: 'responses' } : undefined,
       created_at: '2026-07-19T00:00:00Z',
       updated_at: '2026-07-19T00:00:00Z'
     })
     listAccounts.mockResolvedValue({ items: [account(7), account(11)], total: 2, page: 1, page_size: 20, pages: 1 })
+    getAvailableModels.mockResolvedValue([{ id: 'gpt-5.6-luna', display_name: 'GPT-5.6 Luna' }])
 
     let resolveFirst!: (value: { success: boolean; message: string }) => void
     let resolveSecond!: (value: { success: boolean; message: string }) => void
@@ -514,6 +527,8 @@ describe('admin AccountsView bulk edit scope', () => {
     await wrapper.get('[data-test="bulk-test"]').trigger('click')
     await wrapper.vm.$nextTick()
 
+    expect(testAccount).toHaveBeenCalledWith(7, { modelId: 'gpt-5.6-luna', mode: 'responses' })
+
     const testingIds = (wrapper.vm as any).testingAccountIds as Set<number>
     expect(testingIds).toEqual(new Set([7, 11]))
 
@@ -553,11 +568,12 @@ describe('admin AccountsView bulk edit scope', () => {
           AccountTableFilters: true,
           AccountBulkActionsBar: AccountBulkActionsBarStub,
           AccountActionMenu: {
-            emits: ['quick-test'],
-            template: '<button data-test="model-detection" @click="$emit(\'quick-test\', $attrs.account)">模型检测</button>'
+            emits: ['test'],
+            template: '<button data-test="model-test" @click="$emit(\'test\', $attrs.account)">模型测试</button>'
           },
           ImportDataModal: true,
           ReAuthAccountModal: true,
+          AccountTestModal: { template: '<div data-test="account-test-modal" />' },
           AccountStatsModal: true,
           ScheduledTestsPanel: true,
           SyncFromCrsModal: true,
@@ -583,18 +599,17 @@ describe('admin AccountsView bulk edit scope', () => {
 
     ;(wrapper.vm as any).menu.acc = account
     await wrapper.vm.$nextTick()
-    await wrapper.get('[data-test="model-detection"]').trigger('click')
+    await wrapper.get('[data-test="model-test"]').trigger('click')
     await flushPromises()
 
-    expect(testAccount).toHaveBeenCalledTimes(1)
-    expect(testAccount).toHaveBeenCalledWith(99, { modelId: 'gpt-5.6-luna', mode: 'default' })
-    expect(getAccountById).toHaveBeenCalledWith(99)
+    expect(testAccount).not.toHaveBeenCalled()
+    expect(getAccountById).not.toHaveBeenCalled()
     expect(listAccounts).not.toHaveBeenCalled()
-    expect((wrapper.vm as any).accounts[0]).toMatchObject({ id: 99, status: 'error' })
-    expect(wrapper.find('[data-test="account-test-modal"]').exists()).toBe(false)
+    expect((wrapper.vm as any).accounts[0]).toMatchObject({ id: 99, status: 'active' })
+    expect(wrapper.find('[data-test="account-test-modal"]').exists()).toBe(true)
   })
 
-  it('OpenAI 的 Luna 测试失败后才回退到默认测试', async () => {
+  it('OpenAI 的 Luna 测试失败时不回退为默认模型测试', async () => {
     const account = {
       id: 18,
       name: 'fallback-account',
@@ -602,14 +617,14 @@ describe('admin AccountsView bulk edit scope', () => {
       type: 'apikey',
       status: 'active',
       schedulable: true,
+      extra: { account_test_mode: 'responses' },
       created_at: '2026-07-19T00:00:00Z',
       updated_at: '2026-07-19T00:00:00Z'
     }
     listAccounts.mockResolvedValue({ items: [account], total: 1, page: 1, page_size: 20, pages: 1 })
     getAccountById.mockResolvedValue(account)
-    testAccount
-      .mockResolvedValueOnce({ success: false, message: 'Luna 模型不可用' })
-      .mockResolvedValueOnce({ success: true, message: '账号测试成功' })
+    getAvailableModels.mockResolvedValue([{ id: 'gpt-5.6-luna', display_name: 'GPT-5.6 Luna' }])
+    testAccount.mockResolvedValueOnce({ success: false, message: 'Luna 模型不可用' })
 
     const wrapper = mount(AccountsView, {
       global: {
@@ -648,7 +663,67 @@ describe('admin AccountsView bulk edit scope', () => {
     await flushPromises()
     await (wrapper.vm as any).handleQuickTest(account)
 
-    expect(testAccount).toHaveBeenNthCalledWith(1, 18, { modelId: 'gpt-5.6-luna', mode: 'default' })
-    expect(testAccount).toHaveBeenNthCalledWith(2, 18)
+    expect(getAvailableModels).toHaveBeenCalledTimes(1)
+    expect(getAvailableModels).toHaveBeenCalledWith(18)
+    expect(testAccount).toHaveBeenCalledTimes(1)
+    expect(testAccount).toHaveBeenCalledWith(18, { modelId: 'gpt-5.6-luna', mode: 'responses' })
+  })
+
+  it('状态栏模型检测只使用弹窗预填的单一模型，不因模型列表为空改用其他模型', async () => {
+    const account = {
+      id: 23,
+      name: 'empty-models-account',
+      platform: 'openai',
+      type: 'oauth',
+      status: 'active',
+      schedulable: true,
+      created_at: '2026-07-19T00:00:00Z',
+      updated_at: '2026-07-19T00:00:00Z'
+    }
+    listAccounts.mockResolvedValue({ items: [account], total: 1, page: 1, page_size: 20, pages: 1 })
+    getAvailableModels.mockResolvedValue([])
+    getAccountById.mockResolvedValue(account)
+
+    const wrapper = mount(AccountsView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: { template: '<div><slot name="filters" /><slot name="table" /></div>' },
+          DataTable: DataTableStub,
+          Pagination: true,
+          ConfirmDialog: true,
+          AccountTableActions: true,
+          AccountTableFilters: true,
+          AccountBulkActionsBar: AccountBulkActionsBarStub,
+          AccountActionMenu: true,
+          ImportDataModal: true,
+          ReAuthAccountModal: true,
+          AccountStatsModal: true,
+          ScheduledTestsPanel: true,
+          SyncFromCrsModal: true,
+          TempUnschedStatusModal: true,
+          ErrorPassthroughRulesModal: true,
+          TLSFingerprintProfilesModal: true,
+          CreateAccountModal: true,
+          EditAccountModal: true,
+          BulkEditAccountModal: BulkEditAccountModalStub,
+          PlatformTypeBadge: true,
+          AccountCapacityCell: true,
+          AccountStatusIndicator: true,
+          AccountTodayStatsCell: true,
+          AccountGroupsCell: true,
+          AccountUsageCell: true,
+          Icon: true
+        }
+      }
+    })
+
+    await flushPromises()
+    await (wrapper.vm as any).handleQuickTest(account)
+
+    expect(getAvailableModels).toHaveBeenCalledWith(23)
+    expect(testAccount).not.toHaveBeenCalled()
+    expect(showError).toHaveBeenCalledWith(expect.stringContaining('账号未返回可用于测试的模型'))
+    expect(showError).toHaveBeenCalledWith(expect.stringContaining('available_models is empty'))
   })
 })

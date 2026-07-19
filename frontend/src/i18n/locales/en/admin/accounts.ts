@@ -533,6 +533,7 @@ export default {
         compactLastChecked: 'Last compact probe',
         testMode: 'Test mode',
         testModeDefault: 'Default request',
+        testModeResponses: '/responses test',
         testModeCompact: 'Compact probe',
         testModeWorkspace: 'Workspace 402 check',
         modelRestrictionDisabledByPassthrough: 'Automatic passthrough is enabled: model whitelist/mapping will not take effect.',

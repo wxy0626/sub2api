@@ -619,6 +619,76 @@ func TestAccountTestService_OpenAIAPIKeyResponsesUnsupportedUsesChatCompletionsP
 	require.NotContains(t, body, "当前测试接口仅支持 Responses API 路径")
 }
 
+// TestAccountTestService_OpenAIAPIKeyForcedResponsesTestIgnoresCapability 验证手动 /responses 测试不会受 capability 缓存影响或写入 Extra。
+func TestAccountTestService_OpenAIAPIKeyForcedResponsesTestIgnoresCapability(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+
+	upstream := &httpUpstreamRecorder{resp: newJSONResponse(http.StatusOK, `data: {"type":"response.completed"}
+
+`)}
+	svc := &AccountTestService{
+		httpUpstream: upstream,
+		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+	}
+	account := &Account{
+		ID:          95,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-test",
+			"base_url": "https://compat-upstream.example/v1",
+		},
+		Extra: map[string]any{openai_compat.ExtraKeyResponsesSupported: false},
+	}
+
+	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.6-luna", "ignored prompt", AccountTestModeResponses)
+	require.NoError(t, err)
+	require.NotNil(t, upstream.lastReq)
+	require.Equal(t, "https://compat-upstream.example/v1/responses", upstream.lastReq.URL.String())
+	require.Equal(t, "Bearer sk-test", upstream.lastReq.Header.Get("Authorization"))
+	require.Equal(t, "text/event-stream", upstream.lastReq.Header.Get("Accept"))
+	require.Equal(t, "gpt-5.6-luna", gjson.GetBytes(upstream.lastBody, "model").String())
+	require.True(t, gjson.GetBytes(upstream.lastBody, "stream").Bool())
+	require.Equal(t, "hi", gjson.GetBytes(upstream.lastBody, "input.0.content.0.text").String())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "messages").Exists())
+	require.Equal(t, false, account.Extra[openai_compat.ExtraKeyResponsesSupported])
+	require.Contains(t, recorder.Body.String(), "正在通过 /v1/responses 测试连接")
+	require.Contains(t, recorder.Body.String(), `"success":true`)
+}
+
+// TestAccountTestService_OpenAIAPIKeyForcedResponsesTestKeepsUpstreamFailure 验证 /responses 测试提供中文说明且保留原始上游详情。
+func TestAccountTestService_OpenAIAPIKeyForcedResponsesTestKeepsUpstreamFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+
+	upstream := &httpUpstreamRecorder{resp: newJSONResponse(http.StatusBadRequest, `{"error":{"message":"responses not supported"}}`)}
+	svc := &AccountTestService{
+		httpUpstream: upstream,
+		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+	}
+	account := &Account{
+		ID:          96,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-test",
+			"base_url": "https://compat-upstream.example",
+		},
+		Extra: map[string]any{openai_compat.ExtraKeyResponsesSupported: false},
+	}
+
+	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.6-luna", "", AccountTestModeResponses)
+	require.Error(t, err)
+	require.Equal(t, "https://compat-upstream.example/v1/responses", upstream.lastReq.URL.String())
+	require.Contains(t, err.Error(), "通过 /v1/responses 测试连接失败")
+	require.Contains(t, err.Error(), "responses not supported")
+	require.Contains(t, recorder.Body.String(), "通过 /v1/responses 测试连接失败")
+	require.NotContains(t, recorder.Body.String(), `"success":true`)
+}
+
 func TestAccountTestService_OpenAIChatCompletionsPathReturns4xx(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, recorder := newTestContext()

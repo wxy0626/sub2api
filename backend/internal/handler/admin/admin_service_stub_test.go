@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -37,8 +38,10 @@ type stubAdminService struct {
 	getAccountResult                    *service.Account
 	updateAccountCalls                  int
 	updateAccountExtraCalls             int
-	checkMixedErr                       error
-	lastMixedCheck                      struct {
+	// lastAccountExtraUpdate 记录专用 Extra 更新，用于断言键级合并请求。
+	lastAccountExtraUpdate map[string]any
+	checkMixedErr          error
+	lastMixedCheck         struct {
 		accountID int64
 		platform  string
 		groupIDs  []int64
@@ -452,6 +455,15 @@ func (s *stubAdminService) UpdateAccount(ctx context.Context, id int64, input *s
 
 func (s *stubAdminService) UpdateAccountExtra(ctx context.Context, id int64, updates map[string]any) error {
 	s.updateAccountExtraCalls++
+	s.lastAccountExtraUpdate = maps.Clone(updates)
+	if s.getAccountResult != nil {
+		if s.getAccountResult.Extra == nil {
+			s.getAccountResult.Extra = map[string]any{}
+		}
+		for key, value := range updates {
+			s.getAccountResult.Extra[key] = value
+		}
+	}
 	return nil
 }
 
