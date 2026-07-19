@@ -20,8 +20,8 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# GitHub raw content base URL
-GITHUB_RAW_URL="https://raw.githubusercontent.com/Wei-Shaw/sub2api/main/deploy"
+# 默认 GitHub 仓库：通过管道执行脚本时没有本地 Git 仓库可供解析。
+DEFAULT_GITHUB_REPO="wxy0626/sub2api"
 
 # Print colored message
 print_info() {
@@ -40,6 +40,36 @@ print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
+# 安全解析部署文件来源：优先使用显式配置，其次使用本地 Git origin，最后回退到默认仓库。
+resolve_github_repository() {
+    local candidate="${SUB2API_GITHUB_REPO:-}"
+    local script_dir origin_url
+
+    if [ -z "${candidate}" ] && command_exists git; then
+        script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+        origin_url="$(git -C "${script_dir}" config --get remote.origin.url 2>/dev/null || true)"
+        case "${origin_url}" in
+            https://github.com/*|http://github.com/*)
+                candidate="${origin_url#*github.com/}"
+                ;;
+            git@github.com:*)
+                candidate="${origin_url#git@github.com:}"
+                ;;
+            ssh://git@github.com/*)
+                candidate="${origin_url#ssh://git@github.com/}"
+                ;;
+        esac
+    fi
+
+    candidate="${candidate%.git}"
+    candidate="${candidate%/}"
+    if [[ "${candidate}" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
+        printf '%s\n' "${candidate}"
+    else
+        printf '%s\n' "${DEFAULT_GITHUB_REPO}"
+    fi
+}
+
 # Generate random secret
 generate_secret() {
     openssl rand -hex 32
@@ -52,7 +82,13 @@ command_exists() {
 
 # Main installation function
 main() {
+    # 当前部署文件下载源，支持通过 SUB2API_GITHUB_REPO 覆盖。
+    local github_repo github_raw_url
+    github_repo="$(resolve_github_repository)"
+    github_raw_url="https://raw.githubusercontent.com/${github_repo}/main/deploy"
+
     echo ""
+    print_info "Using deployment source: https://github.com/${github_repo}"
     echo "=========================================="
     echo "  Sub2API Deployment Preparation"
     echo "=========================================="
@@ -78,9 +114,9 @@ main() {
     # Download docker-compose.local.yml and save as docker-compose.yml
     print_info "Downloading docker-compose.yml..."
     if command_exists curl; then
-        curl -sSL "${GITHUB_RAW_URL}/docker-compose.local.yml" -o docker-compose.yml
+        curl -sSL "${github_raw_url}/docker-compose.local.yml" -o docker-compose.yml
     elif command_exists wget; then
-        wget -q "${GITHUB_RAW_URL}/docker-compose.local.yml" -O docker-compose.yml
+        wget -q "${github_raw_url}/docker-compose.local.yml" -O docker-compose.yml
     else
         print_error "Neither curl nor wget is installed. Please install one of them."
         exit 1
@@ -90,9 +126,9 @@ main() {
     # Download .env.example
     print_info "Downloading .env.example..."
     if command_exists curl; then
-        curl -sSL "${GITHUB_RAW_URL}/.env.example" -o .env.example
+        curl -sSL "${github_raw_url}/.env.example" -o .env.example
     else
-        wget -q "${GITHUB_RAW_URL}/.env.example" -O .env.example
+        wget -q "${github_raw_url}/.env.example" -O .env.example
     fi
     print_success "Downloaded .env.example"
 

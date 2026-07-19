@@ -18,8 +18,8 @@ param(
     # Docker 镜像标签：本地和服务器必须始终使用同一个标签。
     [string]$ImageTag = 'sub2api:test-model-whitelist',
 
-    # 应用展示版本：显式传给 Docker，避免本地源码 VERSION 文件导致版本号回退。
-    [string]$Version = '0.1.160'
+    # 应用展示版本：未指定时根据当前提交最近可达的发布标签生成可追溯的开发版本。
+    [string]$Version
 )
 
 Set-StrictMode -Version Latest
@@ -57,6 +57,43 @@ function Invoke-NativeCommand {
     if ($LASTEXITCODE -ne 0) {
         throw "$Description 失败，退出码：$LASTEXITCODE"
     }
+}
+
+function Resolve-ApplicationVersion {
+    param(
+        [string]$RequestedVersion,
+        [string]$ProjectRoot
+    )
+
+    # 显式版本：调用方指定时优先使用，方便复现正式发布镜像。
+    if (-not [string]::IsNullOrWhiteSpace($RequestedVersion)) {
+        if ($RequestedVersion -notmatch '^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$') {
+            throw "应用版本格式不合法：$RequestedVersion。请使用如 0.1.162 或 0.1.162-dev.1.gabcdef0 的 SemVer 版本。"
+        }
+        return $RequestedVersion
+    }
+
+    # 最近发布描述：以当前提交可达的 vX.Y.Z 标签和提交距离生成版本，避免读取可能滞后的 VERSION 文件。
+    $gitDescription = & git -C $ProjectRoot describe --tags --long --match 'v[0-9]*' HEAD 2>$null
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($gitDescription)) {
+        throw '无法从当前提交解析发布标签。请确认仓库包含 vX.Y.Z 标签，或显式传入 -Version 0.1.162。'
+    }
+
+    $versionMatch = [regex]::Match($gitDescription.Trim(), '^v(?<releaseVersion>\d+\.\d+\.\d+)-(?<commitDistance>\d+)-g(?<shortCommit>[0-9a-f]+)$')
+    if (-not $versionMatch.Success) {
+        throw "当前 Git 描述格式无法识别：$gitDescription。请使用 -Version 显式指定符合 SemVer 的版本。"
+    }
+
+    # 基础发布版本：当前提交恰好位于标签时直接使用标签版本。
+    $releaseVersion = $versionMatch.Groups['releaseVersion'].Value
+    $commitDistance = [int]$versionMatch.Groups['commitDistance'].Value
+    if ($commitDistance -eq 0) {
+        return $releaseVersion
+    }
+
+    # 可追溯开发版本：保留基准标签、提交距离和短哈希，不把未发布提交伪装成正式版本。
+    $shortCommit = $versionMatch.Groups['shortCommit'].Value
+    return "$releaseVersion-dev.$commitDistance.g$shortCommit"
 }
 
 function Wait-LocalHealth {
@@ -142,10 +179,6 @@ try {
     if (-not ($ImageTag -match '^[A-Za-z0-9][A-Za-z0-9._/-]*(?::[A-Za-z0-9_][A-Za-z0-9_.-]*)?$')) {
         throw "镜像标签格式不合法：$ImageTag"
     }
-    if (-not ($Version -match '^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$')) {
-        throw "应用版本格式不合法：$Version"
-    }
-
     if ($UpdateSource) {
         $workingTreeState = git status --porcelain
         if ($workingTreeState) {
@@ -155,12 +188,16 @@ try {
         Invoke-NativeCommand '将本地定制提交变基到 origin/main' { git rebase origin/main }
     }
 
+    # 本次构建版本：在更新源码后解析，确保标签和提交距离对应实际待构建代码。
+    $resolvedVersion = Resolve-ApplicationVersion -RequestedVersion $Version -ProjectRoot $projectRoot
+    Write-UpdateStep "本次构建应用版本：$resolvedVersion"
+
     Invoke-NativeCommand '运行账号测试弹窗的定向单元测试' {
         corepack $pnpmVersion --dir frontend exec vitest run src/components/admin/account/__tests__/AccountTestModal.spec.ts
     }
     Invoke-NativeCommand '执行前端类型检查' { corepack $pnpmVersion --dir frontend run typecheck }
     Invoke-NativeCommand "构建定制镜像 $ImageTag" {
-        docker build --build-arg VERSION=$Version --build-arg COMMIT=local-test-model-whitelist --tag $ImageTag .
+        docker build --build-arg VERSION=$resolvedVersion --build-arg COMMIT=local-test-model-whitelist --tag $ImageTag .
     }
 
     $env:SUB2API_IMAGE = $ImageTag
