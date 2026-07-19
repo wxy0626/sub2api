@@ -245,7 +245,8 @@ describe('AccountTestModal', () => {
     const [, request] = (global.fetch as any).mock.calls[0]
     expect(JSON.parse(request.body)).toMatchObject({ mode: 'workspace' })
     expect((wrapper.vm as any).status).toBe('error')
-    expect(wrapper.text()).toContain('admin.accounts.workspaceDeactivated')
+    expect(wrapper.text()).toContain('ChatGPT 工作区已停用（HTTP 402）')
+    expect(wrapper.text()).toContain('deactivated_workspace')
   })
 
   it('OpenAI 测试模型仅保留指定的四个模型', async () => {
@@ -278,7 +279,7 @@ describe('AccountTestModal', () => {
     expect((wrapper.vm as any).selectedModelId).toBe('gpt-5.6-luna')
   })
 
-  it('将旧服务返回的英文 EOF 错误转换为中文提示', async () => {
+  it('将旧服务返回的英文 EOF 错误显示为中文说明与技术详情', async () => {
     getAvailableModels.mockResolvedValue([
       { id: 'gpt-5.6-luna', display_name: 'GPT-5.6 Luna' }
     ])
@@ -304,11 +305,11 @@ describe('AccountTestModal', () => {
     await (wrapper.vm as any).startTest()
     await flushPromises()
 
-    expect(wrapper.text()).toContain('admin.accounts.openaiConnectionEOF')
-    expect(wrapper.text()).not.toContain('Request failed: Post')
+    expect(wrapper.text()).toContain('与 ChatGPT 上游服务的连接意外中断（EOF）')
+    expect(wrapper.text()).toContain('Request failed: Post')
   })
 
-  it('将未知英文账号测试错误转换为中文概述', async () => {
+  it('将未知英文账号测试错误显示为中文说明与技术详情', async () => {
     getAvailableModels.mockResolvedValue([
       { id: 'gpt-5.6-luna', display_name: 'GPT-5.6 Luna' }
     ])
@@ -331,7 +332,7 @@ describe('AccountTestModal', () => {
     await (wrapper.vm as any).startTest()
     await flushPromises()
 
-    expect(wrapper.text()).toContain('admin.accounts.testErrorDetailsInLogs')
-    expect(wrapper.text()).not.toContain('Unexpected upstream gateway failure')
+    expect(wrapper.text()).toContain('上游请求失败')
+    expect(wrapper.text()).toContain('Unexpected upstream gateway failure')
   })
 })

@@ -92,7 +92,7 @@ describe('AccountStatusIndicator', () => {
     expect(wrapper.text()).not.toContain('admin.accounts.status.tempUnschedulable')
   })
 
-  it('历史英文工作区停用错误在状态提示中显示为中文', () => {
+  it('历史英文工作区停用错误显示中文说明与技术详情', () => {
     const wrapper = mount(AccountStatusIndicator, {
       props: {
         account: makeAccount({
@@ -106,11 +106,11 @@ describe('AccountStatusIndicator', () => {
       }
     })
 
-    expect(wrapper.text()).toContain('admin.accounts.workspaceDeactivated')
-    expect(wrapper.text()).not.toContain('Workspace deactivated')
+    expect(wrapper.text()).toContain('ChatGPT 工作区已停用（HTTP 402）')
+    expect(wrapper.text()).toContain('Workspace deactivated (402): workspace has been deactivated')
   })
 
-  it('其他历史英文账号错误显示为中文概述', () => {
+  it('其他历史英文账号错误显示中文说明与技术详情', () => {
     const wrapper = mount(AccountStatusIndicator, {
       props: {
         account: makeAccount({
@@ -123,8 +123,8 @@ describe('AccountStatusIndicator', () => {
       }
     })
 
-    expect(wrapper.text()).toContain('admin.accounts.accountErrorDetailsInLogs')
-    expect(wrapper.text()).not.toContain('Authentication failed')
+    expect(wrapper.text()).toContain('身份验证失败')
+    expect(wrapper.text()).toContain('Authentication failed (401): invalid credentials')
   })
 
   it('模型限流 + overages 启用 + 无 AICredits key → 显示 ⚡ (credits_active)', () => {

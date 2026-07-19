@@ -77,6 +77,8 @@ type openAIAccountTestRepo struct {
 	clearedErrorID     int64
 	setErrorID         int64
 	setErrorMsg        string
+	setSchedulableID   int64
+	setSchedulable     bool
 }
 
 func (r *openAIAccountTestRepo) UpdateExtra(_ context.Context, _ int64, updates map[string]any) error {
@@ -104,6 +106,13 @@ func (r *openAIAccountTestRepo) ClearError(_ context.Context, id int64) error {
 func (r *openAIAccountTestRepo) SetError(_ context.Context, id int64, errorMsg string) error {
 	r.setErrorID = id
 	r.setErrorMsg = errorMsg
+	return nil
+}
+
+// SetSchedulable 记录测试收尾时同步的调度开关，验证成功和失败都能即时更新。
+func (r *openAIAccountTestRepo) SetSchedulable(_ context.Context, id int64, schedulable bool) error {
+	r.setSchedulableID = id
+	r.setSchedulable = schedulable
 	return nil
 }
 
@@ -459,6 +468,73 @@ func TestAccountTestService_OpenAI401SetsPermanentErrorOnly(t *testing.T) {
 	require.Zero(t, repo.rateLimitedID)
 	require.Zero(t, repo.clearedErrorID)
 	require.Nil(t, account.RateLimitResetAt)
+}
+
+// TestAccountTestService_OpenAI403MarksTestedAccountAsError 验证任意测试失败都会更新被测账号状态，批量测试可继续处理其他账号。
+func TestAccountTestService_OpenAI403MarksTestedAccountAsError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+
+	// 额度不足是当前批量测试中需要明确落为错误状态的上游失败场景。
+	account := &Account{
+		ID:          81,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Concurrency: 1,
+		Credentials: map[string]any{"access_token": "test-token"},
+	}
+	repo := &openAIAccountTestRepo{
+		mockAccountRepoForGemini: mockAccountRepoForGemini{
+			accountsByID: map[int64]*Account{account.ID: account},
+		},
+	}
+	upstream := &queuedHTTPUpstream{responses: []*http.Response{
+		newJSONResponse(http.StatusForbidden, `{"error":{"code":"INSUFFICIENT_BALANCE","message":"Insufficient account balance"}}`),
+	}}
+	svc := &AccountTestService{accountRepo: repo, httpUpstream: upstream}
+
+	err := svc.TestAccountConnection(ctx, account.ID, "gpt-5.4", "", AccountTestModeDefault)
+
+	require.Error(t, err)
+	require.Equal(t, account.ID, repo.setErrorID)
+	require.Contains(t, repo.setErrorMsg, "API returned 403")
+	require.Contains(t, repo.setErrorMsg, "INSUFFICIENT_BALANCE")
+	require.Zero(t, repo.setSchedulableID, "测试失败由 SetError 关闭调度，不应再尝试开启")
+	require.Contains(t, recorder.Body.String(), `"type":"error"`)
+}
+
+// TestAccountTestService_OpenAISuccessEnablesScheduling 验证测试成功会清除旧错误并重新参与调度。
+func TestAccountTestService_OpenAISuccessEnablesScheduling(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := newTestContext()
+
+	account := &Account{
+		ID:          83,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Status:      StatusError,
+		Concurrency: 1,
+		Credentials: map[string]any{"access_token": "test-token"},
+	}
+	repo := &openAIAccountTestRepo{
+		mockAccountRepoForGemini: mockAccountRepoForGemini{
+			accountsByID: map[int64]*Account{account.ID: account},
+		},
+	}
+	upstream := &queuedHTTPUpstream{responses: []*http.Response{
+		newJSONResponse(http.StatusOK, `data: {"type":"response.completed"}
+
+`),
+	}}
+	svc := &AccountTestService{accountRepo: repo, httpUpstream: upstream}
+
+	err := svc.TestAccountConnection(ctx, account.ID, "gpt-5.6-luna", "", AccountTestModeDefault)
+
+	require.NoError(t, err)
+	require.Equal(t, account.ID, repo.clearedErrorID)
+	require.Equal(t, account.ID, repo.setSchedulableID)
+	require.True(t, repo.setSchedulable)
 }
 
 func TestAccountTestService_OpenAIWorkspaceProbeMarksDeactivatedWorkspace(t *testing.T) {

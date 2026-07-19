@@ -252,6 +252,7 @@ import { useClipboard } from '@/composables/useClipboard'
 import { buildApiUrl } from '@/api/client'
 import { ADMIN_UI_REQUEST_HEADER } from '@/api/adminUIRequest'
 import { adminAPI } from '@/api/admin'
+import { normalizeDisplayErrorMessage } from '@/utils/errorMessage'
 import type { Account, ClaudeModel } from '@/types'
 
 const { t } = useI18n()
@@ -563,8 +564,8 @@ const handleEvent = (event: {
 
     case 'workspace_deactivated':
       status.value = 'error'
-      errorMessage.value = t('admin.accounts.workspaceDeactivated')
-      addLine(t('admin.accounts.workspaceDeactivated'), 'text-red-400')
+      errorMessage.value = normalizeAccountTestErrorMessage(event.error || event.code || 'deactivated_workspace')
+      addLine(errorMessage.value, 'text-red-400')
       break
 
     case 'test_complete':
@@ -592,34 +593,9 @@ const handleEvent = (event: {
   }
 }
 
-// normalizeAccountTestErrorMessage 兼容旧服务返回的英文账号测试错误，统一在界面显示中文。
+// normalizeAccountTestErrorMessage 统一显示中文说明与管理员后端提供的技术详情。
 const normalizeAccountTestErrorMessage = (rawMessage?: string): string => {
-  const message = rawMessage?.trim() || ''
-  const normalizedMessage = message.toLowerCase()
-
-  if (
-    normalizedMessage.includes('deactivated_workspace') ||
-    normalizedMessage.includes('workspace deactivated') ||
-    normalizedMessage.includes('workspace has been deactivated')
-  ) {
-    return t('admin.accounts.workspaceDeactivated')
-  }
-  if (normalizedMessage.includes('backend-api/codex/responses') && normalizedMessage.includes('eof')) {
-    return t('admin.accounts.openaiConnectionEOF')
-  }
-  if (normalizedMessage.includes('request failed')) {
-    return t('admin.accounts.upstreamConnectionFailed')
-  }
-  if (normalizedMessage.includes('authentication failed')) {
-    return t('admin.accounts.authenticationFailed')
-  }
-  if (normalizedMessage.includes('api returned')) {
-    return t('admin.accounts.upstreamApiFailed')
-  }
-  if (/[A-Za-z]/.test(message)) {
-    return t('admin.accounts.testErrorDetailsInLogs')
-  }
-  return message || t('admin.accounts.testFailed')
+  return normalizeDisplayErrorMessage(rawMessage, t('admin.accounts.testFailed'))
 }
 
 // normalizeAccountTestStatusMessage 将旧服务的英文状态信息转换为当前界面语言。

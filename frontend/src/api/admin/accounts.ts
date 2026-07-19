@@ -236,6 +236,12 @@ export interface AccountTestResult {
   latency_ms?: number
 }
 
+// AccountTestOptions 描述列表即时测试使用的模型和 OpenAI 探测模式。
+export interface AccountTestOptions {
+  modelId?: string
+  mode?: 'default' | 'compact' | 'workspace'
+}
+
 interface AccountTestSSEEvent {
   type?: string
   success?: boolean
@@ -246,7 +252,7 @@ interface AccountTestSSEEvent {
  * 执行账号检测并解析后端 SSE 测试流的最终结果。
  * 账号测试接口始终返回 SSE，不能作为普通 JSON 接口读取。
  */
-export async function testAccount(id: number): Promise<AccountTestResult> {
+export async function testAccount(id: number, options: AccountTestOptions = {}): Promise<AccountTestResult> {
   // 记录前端侧耗时，供状态栏和批量操作的成功消息使用。
   const startedAt = performance.now()
   const response = await fetch(buildApiUrl(`/admin/accounts/${id}/test`), {
@@ -257,7 +263,10 @@ export async function testAccount(id: number): Promise<AccountTestResult> {
       Accept: 'text/event-stream'
     },
     credentials: 'include',
-    body: '{}'
+    body: JSON.stringify({
+      model_id: options.modelId || undefined,
+      mode: options.mode || undefined
+    })
   })
 
   const responseBody = await response.text()

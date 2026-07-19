@@ -1501,13 +1501,17 @@ const handleBulkTest = async () => {
   const accountIds = [...selIds.value]
   if (accountIds.length === 0) return
 
-  accountIds.forEach(id => testingAccountIds.add(id))
   try {
     const results = await Promise.all(accountIds.map(async (id) => {
+      const account = await resolveAccountForTest(id)
+      testingAccountIds.add(id)
       try {
-        return await adminAPI.accounts.testAccount(id)
+        return await testAccountWithOpenAIFallback(account, id)
       } catch (error: unknown) {
         return { success: false, message: extractApiErrorMessage(error, t('admin.accounts.testFailed')) }
+      } finally {
+        // 每个账号结束后立即停止该行的刷新状态，不等待其他并发测试完成。
+        testingAccountIds.delete(id)
       }
     }))
     const failed = results.filter(result => !result.success)
@@ -1518,9 +1522,44 @@ const handleBulkTest = async () => {
       appStore.showSuccess(t('admin.accounts.bulkActions.testSuccess', { count: results.length }))
     }
   } finally {
-    accountIds.forEach(id => testingAccountIds.delete(id))
     await reload()
   }
+}
+
+// getQuickTestOptions 返回 OpenAI 列表测试的首选 Luna 探测参数。
+const getQuickTestOptions = (account?: Account) => {
+  if (account?.platform !== 'openai') return undefined
+  return { modelId: 'gpt-5.6-luna', mode: 'default' as const }
+}
+
+// resolveAccountForTest 补齐跨页选中的账号信息，确保 OpenAI 批量测试也能先走 Luna。
+const resolveAccountForTest = async (accountID: number): Promise<Account | undefined> => {
+  const visibleAccount = accounts.value.find(account => account.id === accountID)
+  if (visibleAccount) return visibleAccount
+
+  try {
+    return await adminAPI.accounts.getById(accountID)
+  } catch (error) {
+    // 账号信息读取失败时仍执行原有默认测试，具体失败原因由测试接口返回。
+    console.warn('Failed to load account before fallback test:', error)
+    return undefined
+  }
+}
+
+// testAccountWithOpenAIFallback 先测试 Luna，仅 Luna 失败后才回退到后端默认测试。
+const testAccountWithOpenAIFallback = async (account: Account | undefined, accountID: number) => {
+  const lunaOptions = getQuickTestOptions(account)
+  if (!lunaOptions) return adminAPI.accounts.testAccount(accountID)
+
+  try {
+    const lunaResult = await adminAPI.accounts.testAccount(accountID, lunaOptions)
+    if (lunaResult.success) return lunaResult
+  } catch (error) {
+    // Luna 请求异常也属于失败，继续执行默认测试以判断账号是否仍可用。
+    console.warn('Luna account test failed; falling back to default test:', error)
+  }
+
+  return adminAPI.accounts.testAccount(accountID)
 }
 const handleBulkProbeUpstreamBilling = async () => {
   const accountIDs = [...selIds.value]
@@ -1805,6 +1844,17 @@ const patchAccountInList = (updatedAccount: Account) => {
   accounts.value = nextAccounts
   syncAccountRefs(mergedAccount)
 }
+
+// refreshTestedAccountInList 测试结束后只刷新目标账号，保持当前列表位置和滚动位置不变。
+const refreshTestedAccountInList = async (accountID: number) => {
+  try {
+    patchAccountInList(await adminAPI.accounts.getById(accountID))
+  } catch (error) {
+    // 测试结果已反馈给用户；单行状态读取失败不应触发表格整页重载。
+    console.error('Failed to refresh tested account row:', error)
+  }
+}
+
 const patchUpstreamBillingSnapshot = (accountID: number, snapshot: UpstreamBillingProbeSnapshot) => {
   const account = accounts.value.find(item => item.id === accountID)
   if (!account) return
@@ -1906,16 +1956,17 @@ const handleQuickTest = async (a: Account) => {
   if (testingAccountIds.has(a.id)) return
   testingAccountIds.add(a.id)
   try {
-    const result = await adminAPI.accounts.testAccount(a.id)
+    const result = await testAccountWithOpenAIFallback(a, a.id)
     if (result.success) {
       appStore.showSuccess(result.message || t('admin.accounts.testSuccess'))
     } else {
       appStore.showError(result.message || t('admin.accounts.testFailed'))
     }
-    await reload()
+    // 仅更新被测账号所在行，避免整页 reload 让虚拟表格回到首个账号。
+    await refreshTestedAccountInList(a.id)
   } catch (error: unknown) {
     appStore.showError(extractApiErrorMessage(error, t('admin.accounts.testFailed')))
-    await reload()
+    await refreshTestedAccountInList(a.id)
   } finally {
     testingAccountIds.delete(a.id)
   }
