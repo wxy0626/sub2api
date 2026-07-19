@@ -104,4 +104,26 @@ describe('ModelWhitelistSelector', () => {
       ['gpt-5.6-luna', 'gpt-image-2']
     ])
   })
+
+  it('OpenAI OAuth 账号不显示上游模型同步入口，也不会发起不受支持的请求', async () => {
+    const wrapper = mount(ModelWhitelistSelector, {
+      props: {
+        modelValue: [],
+        platform: 'openai',
+        accountId: 1,
+        accountType: 'oauth'
+      },
+      global: {
+        stubs: {
+          Icon: true,
+          ModelIcon: true
+        }
+      }
+    })
+
+    const upstreamSyncButton = wrapper.findAll('button')
+      .find(button => button.text().includes('admin.accounts.syncUpstreamModels'))
+    expect(upstreamSyncButton).toBeUndefined()
+    expect(syncUpstreamModelsMock).not.toHaveBeenCalled()
+  })
 })
