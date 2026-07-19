@@ -470,9 +470,10 @@
     <CreateAccountModal :show="showCreate" :proxies="proxies" :groups="groups" @close="showCreate = false" @created="reload" />
     <EditAccountModal :show="showEdit" :account="edAcc" :proxies="proxies" :groups="groups" @close="showEdit = false" @updated="handleAccountUpdated" />
     <ReAuthAccountModal :show="showReAuth" :account="reAuthAcc" @close="closeReAuthModal" @reauthorized="handleAccountUpdated" />
+    <AccountTestModal :show="showTest" :account="testingAcc" @close="closeTestModal" @testing-changed="handleTestStateChange" @account-updated="handleAccountTestModeUpdated" />
     <AccountStatsModal :show="showStats" :account="statsAcc" @close="closeStatsModal" />
     <ScheduledTestsPanel :show="showSchedulePanel" :account-id="scheduleAcc?.id ?? null" :model-options="scheduleModelOptions" @close="closeSchedulePanel" />
-    <AccountActionMenu :show="menu.show" :account="menu.acc" :position="menu.pos" @close="menu.show = false" @quick-test="handleQuickTest" @stats="handleViewStats" @schedule="handleSchedule" @duplicate="handleDuplicateAccount" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" />
+    <AccountActionMenu :show="menu.show" :account="menu.acc" :position="menu.pos" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @schedule="handleSchedule" @duplicate="handleDuplicateAccount" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" />
     <SyncFromCrsModal :show="showSync" @close="showSync = false" @synced="reload" />
     <ImportDataModal :show="showImportData" @close="showImportData = false" @imported="handleDataImported" />
     <BulkEditAccountModal
@@ -527,6 +528,7 @@ import AccountBulkActionsBar from '@/components/admin/account/AccountBulkActions
 import AccountActionMenu from '@/components/admin/account/AccountActionMenu.vue'
 import ImportDataModal from '@/components/admin/account/ImportDataModal.vue'
 import ReAuthAccountModal from '@/components/admin/account/ReAuthAccountModal.vue'
+import AccountTestModal from '@/components/admin/account/AccountTestModal.vue'
 import AccountStatsModal from '@/components/admin/account/AccountStatsModal.vue'
 import ScheduledTestsPanel from '@/components/admin/account/ScheduledTestsPanel.vue'
 import type { SelectOption } from '@/components/common/Select.vue'
@@ -544,6 +546,8 @@ import { buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
 import { formatDateTime, formatRelativeTime } from '@/utils/format'
 import { proxyExpiryBadgeClass, proxyExpiryLabelKey } from '@/utils/proxyExpiry'
 import { extractApiErrorMessage } from '@/utils/apiError'
+import { resolveAccountTestModelSelection } from '@/utils/accountTestModelSelection'
+import type { AccountTestMode } from '@/api/admin/accounts'
 import { sanitizeUrl } from '@/utils/url'
 import type { Account, AccountPlatform, AccountSchedulerGroupScore, AccountType, Proxy as AccountProxy, AdminGroup, WindowStats, ClaudeModel, UpstreamBillingProbeSettings, UpstreamBillingProbeSnapshot } from '@/types'
 
@@ -606,6 +610,7 @@ const showTempUnsched = ref(false)
 const showDeleteDialog = ref(false)
 const showCreateShadowDialog = ref(false)
 const showReAuth = ref(false)
+const showTest = ref(false)
 // 保存正在连接测试的账号 ID，驱动状态列刷新图标的禁用和转圈状态。
 const testingAccountIds = reactive(new Set<number>())
 const showStats = ref(false)
@@ -616,6 +621,7 @@ const tempUnschedAcc = ref<Account | null>(null)
 const deletingAcc = ref<Account | null>(null)
 const creatingShadowAcc = ref<Account | null>(null)
 const reAuthAcc = ref<Account | null>(null)
+const testingAcc = ref<Account | null>(null)
 const statsAcc = ref<Account | null>(null)
 const showSchedulePanel = ref(false)
 const scheduleAcc = ref<Account | null>(null)
@@ -1056,6 +1062,7 @@ const isAnyModalOpen = computed(() => {
     showTempUnsched.value ||
     showDeleteDialog.value ||
     showReAuth.value ||
+    showTest.value ||
     showStats.value ||
     showSchedulePanel.value ||
     showErrorPassthrough.value ||
@@ -1522,7 +1529,7 @@ const handleBulkTest = async () => {
       const account = await resolveAccountForTest(id)
       testingAccountIds.add(id)
       try {
-        return await testAccountWithOpenAIFallback(account, id)
+        return await testAccountWithSelectedModel(account, id)
       } catch (error: unknown) {
         return { success: false, message: extractApiErrorMessage(error, t('admin.accounts.testFailed')) }
       } finally {
@@ -1542,13 +1549,7 @@ const handleBulkTest = async () => {
   }
 }
 
-// getQuickTestOptions 返回 OpenAI 列表测试的首选 Luna 探测参数。
-const getQuickTestOptions = (account?: Account) => {
-  if (account?.platform !== 'openai') return undefined
-  return { modelId: 'gpt-5.6-luna', mode: 'default' as const }
-}
-
-// resolveAccountForTest 补齐跨页选中的账号信息，确保 OpenAI 批量测试也能先走 Luna。
+// resolveAccountForTest 补齐跨页选中的账号信息，确保批量测试使用正确的平台模型参数。
 const resolveAccountForTest = async (accountID: number): Promise<Account | undefined> => {
   const visibleAccount = accounts.value.find(account => account.id === accountID)
   if (visibleAccount) return visibleAccount
@@ -1556,26 +1557,37 @@ const resolveAccountForTest = async (accountID: number): Promise<Account | undef
   try {
     return await adminAPI.accounts.getById(accountID)
   } catch (error) {
-    // 账号信息读取失败时仍执行原有默认测试，具体失败原因由测试接口返回。
-    console.warn('Failed to load account before fallback test:', error)
+    // 账号信息读取失败时保留 undefined，由调用方如实报告本次测试失败。
+    console.warn('Failed to load account before selected-model test:', error)
     return undefined
   }
 }
 
-// testAccountWithOpenAIFallback 先测试 Luna，仅 Luna 失败后才回退到后端默认测试。
-const testAccountWithOpenAIFallback = async (account: Account | undefined, accountID: number) => {
-  const lunaOptions = getQuickTestOptions(account)
-  if (!lunaOptions) return adminAPI.accounts.testAccount(accountID)
-
-  try {
-    const lunaResult = await adminAPI.accounts.testAccount(accountID, lunaOptions)
-    if (lunaResult.success) return lunaResult
-  } catch (error) {
-    // Luna 请求异常也属于失败，继续执行默认测试以判断账号是否仍可用。
-    console.warn('Luna account test failed; falling back to default test:', error)
+// testAccountWithSelectedModel 读取弹窗同一预填模型并只发起一次检测，失败后不切换模型重试。
+const testAccountWithSelectedModel = async (account: Account | undefined, accountID: number) => {
+  if (!account) {
+    throw new Error('模型检测无法开始：未能读取账号信息，请刷新列表后重试。技术详情：account metadata unavailable')
   }
+  const models = await adminAPI.accounts.getAvailableModels(accountID)
+  const selection = resolveAccountTestModelSelection(account.platform, models)
+  if (!selection.modelId) {
+    throw new Error('模型检测无法开始：账号未返回可用于测试的模型，请检查账号授权、模型映射或上游权限。技术详情：available_models is empty after test-model filtering')
+  }
+  // OpenAI 即时/批量检测读取弹窗保存的模式；其他平台保持现有模型选择策略。
+  const savedMode = resolveSavedAccountTestMode(account)
+  return adminAPI.accounts.testAccount(accountID, {
+    modelId: selection.modelId,
+    ...(savedMode ? { mode: savedMode } : {})
+  })
+}
 
-  return adminAPI.accounts.testAccount(accountID)
+// resolveSavedAccountTestMode 统一读取账号保存的 OpenAI 测试模式，缺失或异常值才使用默认模式。
+const resolveSavedAccountTestMode = (account: Account): AccountTestMode | undefined => {
+  if (account.platform !== 'openai') return undefined
+  const mode = account.extra?.account_test_mode
+  return mode === 'responses' || mode === 'compact' || mode === 'workspace' || mode === 'default'
+    ? mode
+    : 'default'
 }
 const handleBulkProbeUpstreamBilling = async () => {
   const accountIDs = [...selIds.value]
@@ -1946,14 +1958,29 @@ const handleExportData = async () => {
   }
 }
 const accountExportStepUp = useStepUp()
+const closeTestModal = () => {
+  if (testingAcc.value) testingAccountIds.delete(testingAcc.value.id)
+  showTest.value = false
+  testingAcc.value = null
+}
+// handleAccountTestModeUpdated 将弹窗保存的完整账号 DTO 回写当前列表，供立即和批量检测复用。
+const handleAccountTestModeUpdated = (updatedAccount: Account) => {
+  const accountIndex = accounts.value.findIndex(account => account.id === updatedAccount.id)
+  if (accountIndex >= 0) accounts.value[accountIndex] = updatedAccount
+  if (testingAcc.value?.id === updatedAccount.id) testingAcc.value = updatedAccount
+}
 const closeStatsModal = () => { showStats.value = false; statsAcc.value = null }
 const closeReAuthModal = () => { showReAuth.value = false; reAuthAcc.value = null }
+const handleTest = (a: Account) => {
+  testingAcc.value = a
+  showTest.value = true
+}
 // 模型检测直接调用后台测试，不打开交互式测试窗口。
 const handleQuickTest = async (a: Account) => {
   if (testingAccountIds.has(a.id)) return
   testingAccountIds.add(a.id)
   try {
-    const result = await testAccountWithOpenAIFallback(a, a.id)
+    const result = await testAccountWithSelectedModel(a, a.id)
     if (result.success) {
       appStore.showSuccess(result.message || t('admin.accounts.testSuccess'))
     } else {
@@ -1966,6 +1993,14 @@ const handleQuickTest = async (a: Account) => {
     await refreshTestedAccountInList(a.id)
   } finally {
     testingAccountIds.delete(a.id)
+  }
+}
+const handleTestStateChange = (testing: boolean) => {
+  if (!testingAcc.value) return
+  if (testing) {
+    testingAccountIds.add(testingAcc.value.id)
+  } else {
+    testingAccountIds.delete(testingAcc.value.id)
   }
 }
 const handleViewStats = (a: Account) => { statsAcc.value = a; showStats.value = true }

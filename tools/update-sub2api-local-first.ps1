@@ -136,7 +136,9 @@ test -f "$image_archive"
 docker load --input "$image_archive"
 rm -f "$image_archive"
 cp "$compose_file" "$backup_file"
-sed -i -E "0,/^([[:space:]]*image:[[:space:]]*).*/s//\\1${image_tag}/" "$compose_file"
+# 不使用 sed 的捕获组反向引用：PowerShell -> SSH -> sh 的多层转义会让 \\1 变成字面文本。
+# 此 Compose 的第一个 image 始终是 sub2api 服务，直接保留四个缩进空格并替换整行。
+sed -i -E "0,/^[[:space:]]*image:/s|^[[:space:]]*image:.*|    image: ${image_tag}|" "$compose_file"
 docker compose -f "$compose_file" up -d --no-deps --force-recreate sub2api
 
 for attempt in $(seq 1 30); do

@@ -239,7 +239,16 @@ export interface AccountTestResult {
 // AccountTestOptions 描述列表即时测试使用的模型和 OpenAI 探测模式。
 export interface AccountTestOptions {
   modelId?: string
-  mode?: 'default' | 'compact' | 'workspace'
+  mode?: AccountTestMode
+}
+
+// AccountTestMode 描述 OpenAI 账号模型测试的请求路径模式。
+export type AccountTestMode = 'default' | 'responses' | 'compact' | 'workspace'
+
+/** 保存 OpenAI 账号的模型测试模式，不覆盖其他 extra 配置。 */
+export async function updateTestMode(id: number, mode: AccountTestMode): Promise<Account> {
+  const { data } = await apiClient.put<Account>(`/admin/accounts/${id}/test-mode`, { mode })
+  return data
 }
 
 interface AccountTestSSEEvent {
@@ -961,6 +970,7 @@ export const accountsAPI = {
   checkMixedChannelRisk,
   delete: deleteAccount,
   toggleStatus,
+  updateTestMode,
   testAccount,
   refreshCredentials,
   applyOAuthCredentials,

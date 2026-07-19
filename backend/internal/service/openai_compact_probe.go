@@ -10,6 +10,8 @@ import (
 const (
 	// AccountTestModeDefault drives the standard /responses connection test.
 	AccountTestModeDefault = "default"
+	// AccountTestModeResponses 强制 API Key 账号使用 /v1/responses 测试，不受账号能力缓存影响。
+	AccountTestModeResponses = "responses"
 	// AccountTestModeCompact drives the /responses/compact compact-probe test.
 	AccountTestModeCompact = "compact"
 	// AccountTestModeWorkspace 使用最小 Responses 请求检测 ChatGPT 工作区是否已被停用。
@@ -18,6 +20,8 @@ const (
 
 func normalizeAccountTestMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case AccountTestModeResponses:
+		return AccountTestModeResponses
 	case AccountTestModeCompact:
 		return AccountTestModeCompact
 	case AccountTestModeWorkspace:

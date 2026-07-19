@@ -1031,6 +1031,61 @@ type TestAccountRequest struct {
 	Mode    string `json:"mode"`
 }
 
+const accountTestModeExtraKey = "account_test_mode"
+
+// UpdateAccountTestModeRequest 仅接收管理员模型测试使用的 OpenAI 请求模式。
+// 独立接口避免通用账号更新误覆盖 Extra 中的运行态数据。
+type UpdateAccountTestModeRequest struct {
+	Mode string `json:"mode" binding:"required,oneof=default responses compact workspace"`
+}
+
+// UpdateTestMode 保存 OpenAI 账号的模型测试模式。
+// PUT /api/v1/admin/accounts/:id/test-mode
+func (h *AccountHandler) UpdateTestMode(c *gin.Context) {
+	// 账号ID必须为正整数，避免把无效路径参数传入服务层。
+	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || accountID <= 0 {
+		response.BadRequest(c, "保存模型测试模式失败：账号 ID 格式无效，请检查请求路径。技术详情：id must be a positive integer")
+		return
+	}
+
+	var req UpdateAccountTestModeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "保存模型测试模式失败：测试模式仅支持 default、responses、compact 或 workspace，请重新选择后重试。技术详情："+err.Error())
+		return
+	}
+
+	account, err := h.adminService.GetAccount(c.Request.Context(), accountID)
+	if err != nil {
+		statusCode, status := infraerrors.ToHTTP(err)
+		response.ErrorWithDetails(c, statusCode, "保存模型测试模式失败：未能读取账号，请确认账号仍存在并刷新后重试。技术详情："+err.Error(), status.Reason, status.Metadata)
+		return
+	}
+	if account == nil || account.Platform != service.PlatformOpenAI {
+		platform := "unknown"
+		if account != nil {
+			platform = account.Platform
+		}
+		response.BadRequest(c, "保存模型测试模式失败：仅 OpenAI 账号支持该设置，请在 OpenAI 账号中使用模型测试。技术详情：account platform is "+platform)
+		return
+	}
+
+	// 仅合并 account_test_mode，保证其它 Extra 配置与运行态键不会被覆盖。
+	if err := h.adminService.UpdateAccountExtra(c.Request.Context(), accountID, map[string]any{accountTestModeExtraKey: req.Mode}); err != nil {
+		statusCode, status := infraerrors.ToHTTP(err)
+		response.ErrorWithDetails(c, statusCode, "保存模型测试模式失败：账号配置未写入，请检查数据库连接或稍后重试。技术详情："+err.Error(), status.Reason, status.Metadata)
+		return
+	}
+
+	updatedAccount, err := h.adminService.GetAccount(c.Request.Context(), accountID)
+	if err != nil {
+		statusCode, status := infraerrors.ToHTTP(err)
+		response.ErrorWithDetails(c, statusCode, "保存模型测试模式失败：配置已写入但无法返回最新账号信息，请刷新列表确认。技术详情："+err.Error(), status.Reason, status.Metadata)
+		return
+	}
+	response.Success(c, h.buildAccountResponseWithRuntime(c.Request.Context(), updatedAccount))
+}
+
 type SyncFromCRSRequest struct {
 	BaseURL            string   `json:"base_url" binding:"required"`
 	Username           string   `json:"username" binding:"required"`
