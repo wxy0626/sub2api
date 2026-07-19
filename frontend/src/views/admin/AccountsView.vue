@@ -437,10 +437,9 @@
     <CreateAccountModal :show="showCreate" :proxies="proxies" :groups="groups" @close="showCreate = false" @created="reload" />
     <EditAccountModal :show="showEdit" :account="edAcc" :proxies="proxies" :groups="groups" @close="showEdit = false" @updated="handleAccountUpdated" />
     <ReAuthAccountModal :show="showReAuth" :account="reAuthAcc" @close="closeReAuthModal" @reauthorized="handleAccountUpdated" />
-    <AccountTestModal :show="showTest" :account="testingAcc" @close="closeTestModal" @testing-changed="handleTestStateChange" />
     <AccountStatsModal :show="showStats" :account="statsAcc" @close="closeStatsModal" />
     <ScheduledTestsPanel :show="showSchedulePanel" :account-id="scheduleAcc?.id ?? null" :model-options="scheduleModelOptions" @close="closeSchedulePanel" />
-    <AccountActionMenu :show="menu.show" :account="menu.acc" :position="menu.pos" @close="menu.show = false" @quick-test="handleQuickTest" @test="handleTest" @stats="handleViewStats" @schedule="handleSchedule" @duplicate="handleDuplicateAccount" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" />
+    <AccountActionMenu :show="menu.show" :account="menu.acc" :position="menu.pos" @close="menu.show = false" @quick-test="handleQuickTest" @stats="handleViewStats" @schedule="handleSchedule" @duplicate="handleDuplicateAccount" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" />
     <SyncFromCrsModal :show="showSync" @close="showSync = false" @synced="reload" />
     <ImportDataModal :show="showImportData" @close="showImportData = false" @imported="handleDataImported" />
     <BulkEditAccountModal
@@ -494,7 +493,6 @@ import AccountBulkActionsBar from '@/components/admin/account/AccountBulkActions
 import AccountActionMenu from '@/components/admin/account/AccountActionMenu.vue'
 import ImportDataModal from '@/components/admin/account/ImportDataModal.vue'
 import ReAuthAccountModal from '@/components/admin/account/ReAuthAccountModal.vue'
-import AccountTestModal from '@/components/admin/account/AccountTestModal.vue'
 import AccountStatsModal from '@/components/admin/account/AccountStatsModal.vue'
 import ScheduledTestsPanel from '@/components/admin/account/ScheduledTestsPanel.vue'
 import type { SelectOption } from '@/components/common/Select.vue'
@@ -574,7 +572,6 @@ const showTempUnsched = ref(false)
 const showDeleteDialog = ref(false)
 const showCreateShadowDialog = ref(false)
 const showReAuth = ref(false)
-const showTest = ref(false)
 // 保存正在连接测试的账号 ID，驱动状态列刷新图标的禁用和转圈状态。
 const testingAccountIds = reactive(new Set<number>())
 const showStats = ref(false)
@@ -585,7 +582,6 @@ const tempUnschedAcc = ref<Account | null>(null)
 const deletingAcc = ref<Account | null>(null)
 const creatingShadowAcc = ref<Account | null>(null)
 const reAuthAcc = ref<Account | null>(null)
-const testingAcc = ref<Account | null>(null)
 const statsAcc = ref<Account | null>(null)
 const showSchedulePanel = ref(false)
 const scheduleAcc = ref<Account | null>(null)
@@ -1053,7 +1049,6 @@ const isAnyModalOpen = computed(() => {
     showTempUnsched.value ||
     showDeleteDialog.value ||
     showReAuth.value ||
-    showTest.value ||
     showStats.value ||
     showSchedulePanel.value ||
     showErrorPassthrough.value ||
@@ -1940,18 +1935,9 @@ const handleExportData = async () => {
   }
 }
 const accountExportStepUp = useStepUp()
-const closeTestModal = () => {
-  if (testingAcc.value) testingAccountIds.delete(testingAcc.value.id)
-  showTest.value = false
-  testingAcc.value = null
-}
 const closeStatsModal = () => { showStats.value = false; statsAcc.value = null }
 const closeReAuthModal = () => { showReAuth.value = false; reAuthAcc.value = null }
-const handleTest = (a: Account) => {
-  testingAcc.value = a
-  showTest.value = true
-}
-// 状态列刷新按钮直接调用后台测试，避免打开交互式“测试账号连接”窗口。
+// 模型检测直接调用后台测试，不打开交互式测试窗口。
 const handleQuickTest = async (a: Account) => {
   if (testingAccountIds.has(a.id)) return
   testingAccountIds.add(a.id)
@@ -1969,14 +1955,6 @@ const handleQuickTest = async (a: Account) => {
     await refreshTestedAccountInList(a.id)
   } finally {
     testingAccountIds.delete(a.id)
-  }
-}
-const handleTestStateChange = (testing: boolean) => {
-  if (!testingAcc.value) return
-  if (testing) {
-    testingAccountIds.add(testingAcc.value.id)
-  } else {
-    testingAccountIds.delete(testingAcc.value.id)
   }
 }
 const handleViewStats = (a: Account) => { statsAcc.value = a; showStats.value = true }

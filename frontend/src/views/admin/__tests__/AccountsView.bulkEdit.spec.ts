@@ -160,7 +160,6 @@ describe('admin AccountsView bulk edit scope', () => {
           AccountActionMenu: true,
           ImportDataModal: true,
           ReAuthAccountModal: true,
-          AccountTestModal: true,
           AccountStatsModal: true,
           ScheduledTestsPanel: true,
           SyncFromCrsModal: true,
@@ -225,7 +224,6 @@ describe('admin AccountsView bulk edit scope', () => {
           AccountActionMenu: true,
           ImportDataModal: true,
           ReAuthAccountModal: true,
-          AccountTestModal: true,
           AccountStatsModal: true,
           ScheduledTestsPanel: true,
           SyncFromCrsModal: true,
@@ -355,7 +353,6 @@ describe('admin AccountsView bulk edit scope', () => {
           AccountActionMenu: true,
           ImportDataModal: true,
           ReAuthAccountModal: true,
-          AccountTestModal: true,
           AccountStatsModal: true,
           ScheduledTestsPanel: true,
           SyncFromCrsModal: true,
@@ -491,7 +488,6 @@ describe('admin AccountsView bulk edit scope', () => {
           AccountActionMenu: true,
           ImportDataModal: true,
           ReAuthAccountModal: true,
-          AccountTestModal: true,
           AccountStatsModal: true,
           ScheduledTestsPanel: true,
           SyncFromCrsModal: true,
@@ -531,7 +527,7 @@ describe('admin AccountsView bulk edit scope', () => {
     expect(testingIds.size).toBe(0)
   })
 
-  it('立即测试完成后只更新当前账号行，不重载列表或跳回首个账号', async () => {
+  it('菜单模型检测完成后只更新当前账号行，不重载列表或跳回首个账号', async () => {
     const account = {
       id: 99,
       name: 'bottom-account',
@@ -556,10 +552,12 @@ describe('admin AccountsView bulk edit scope', () => {
           AccountTableActions: true,
           AccountTableFilters: true,
           AccountBulkActionsBar: AccountBulkActionsBarStub,
-          AccountActionMenu: true,
+          AccountActionMenu: {
+            emits: ['quick-test'],
+            template: '<button data-test="model-detection" @click="$emit(\'quick-test\', $attrs.account)">模型检测</button>'
+          },
           ImportDataModal: true,
           ReAuthAccountModal: true,
-          AccountTestModal: true,
           AccountStatsModal: true,
           ScheduledTestsPanel: true,
           SyncFromCrsModal: true,
@@ -583,13 +581,17 @@ describe('admin AccountsView bulk edit scope', () => {
     await flushPromises()
     listAccounts.mockClear()
 
-    await (wrapper.vm as any).handleQuickTest(account)
+    ;(wrapper.vm as any).menu.acc = account
+    await wrapper.vm.$nextTick()
+    await wrapper.get('[data-test="model-detection"]').trigger('click')
+    await flushPromises()
 
     expect(testAccount).toHaveBeenCalledTimes(1)
     expect(testAccount).toHaveBeenCalledWith(99, { modelId: 'gpt-5.6-luna', mode: 'default' })
     expect(getAccountById).toHaveBeenCalledWith(99)
     expect(listAccounts).not.toHaveBeenCalled()
     expect((wrapper.vm as any).accounts[0]).toMatchObject({ id: 99, status: 'error' })
+    expect(wrapper.find('[data-test="account-test-modal"]').exists()).toBe(false)
   })
 
   it('OpenAI 的 Luna 测试失败后才回退到默认测试', async () => {
@@ -623,7 +625,6 @@ describe('admin AccountsView bulk edit scope', () => {
           AccountActionMenu: true,
           ImportDataModal: true,
           ReAuthAccountModal: true,
-          AccountTestModal: true,
           AccountStatsModal: true,
           ScheduledTestsPanel: true,
           SyncFromCrsModal: true,
