@@ -180,7 +180,7 @@ func createTestPayload(modelID string) (map[string]any, error) {
 // All account types use full Claude Code client characteristics, only auth header differs
 // modelID is optional - if empty, defaults to claude.DefaultTestModel
 // mode is optional - "compact" routes OpenAI accounts to the /responses/compact probe path
-func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int64, modelID string, prompt string, mode string) error {
+func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int64, modelID string, prompt string, mode string) (err error) {
 	ctx := c.Request.Context()
 
 	// Get account
@@ -188,6 +188,29 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Account not found")
 	}
+
+	// 统一同步测试结果与调度状态，保证每个账号结束后立即反映在列表和调度器。
+	defer func() {
+		if s.accountRepo == nil {
+			return
+		}
+		if err != nil {
+			if setErrorErr := s.accountRepo.SetError(ctx, account.ID, err.Error()); setErrorErr != nil {
+				log.Printf("failed to mark tested account as error: account_id=%d error=%v", account.ID, setErrorErr)
+			}
+			return
+		}
+
+		// 测试成功后先清除旧错误，再明确开启调度。
+		if account.Status == StatusError {
+			if clearErrorErr := s.accountRepo.ClearError(ctx, account.ID); clearErrorErr != nil {
+				log.Printf("failed to clear tested account error: account_id=%d error=%v", account.ID, clearErrorErr)
+			}
+		}
+		if setSchedulableErr := s.accountRepo.SetSchedulable(ctx, account.ID, true); setSchedulableErr != nil {
+			log.Printf("failed to enable tested account scheduling: account_id=%d error=%v", account.ID, setSchedulableErr)
+		}
+	}()
 
 	// Route to platform-specific test method
 	if account.IsOpenAI() {

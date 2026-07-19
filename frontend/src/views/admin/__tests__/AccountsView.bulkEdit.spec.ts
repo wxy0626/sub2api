@@ -7,16 +7,20 @@ const {
   listAccounts,
   listWithEtag,
   getBatchTodayStats,
+  getAccountById,
   getAllProxies,
   getAllGroups,
-  probeUpstreamBillingBatch
+  probeUpstreamBillingBatch,
+  testAccount
 } = vi.hoisted(() => ({
   listAccounts: vi.fn(),
   listWithEtag: vi.fn(),
   getBatchTodayStats: vi.fn(),
+  getAccountById: vi.fn(),
   getAllProxies: vi.fn(),
   getAllGroups: vi.fn(),
-  probeUpstreamBillingBatch: vi.fn()
+  probeUpstreamBillingBatch: vi.fn(),
+  testAccount: vi.fn()
 }))
 
 vi.mock('@/api/admin', () => ({
@@ -25,10 +29,12 @@ vi.mock('@/api/admin', () => ({
       list: listAccounts,
       listWithEtag,
       getBatchTodayStats,
+      getById: getAccountById,
       getUpstreamBillingProbeSettings: vi.fn().mockResolvedValue({ enabled: true, interval_minutes: 30 }),
       delete: vi.fn(),
       batchClearError: vi.fn(),
       batchRefresh: vi.fn(),
+      testAccount,
       probeUpstreamBillingBatch,
       toggleSchedulable: vi.fn()
     },
@@ -80,11 +86,12 @@ const DataTableStub = {
 
 const AccountBulkActionsBarStub = {
   props: ['selectedIds'],
-  emits: ['edit-filtered', 'probe-upstream-billing'],
+  emits: ['edit-filtered', 'probe-upstream-billing', 'test'],
   template: `
     <div>
       <button data-test="edit-filtered" @click="$emit('edit-filtered')">edit filtered</button>
       <button data-test="probe-upstream-billing" @click="$emit('probe-upstream-billing')">probe</button>
+      <button data-test="bulk-test" @click="$emit('test')">test</button>
     </div>
   `
 }
@@ -106,9 +113,11 @@ describe('admin AccountsView bulk edit scope', () => {
     listAccounts.mockReset()
     listWithEtag.mockReset()
     getBatchTodayStats.mockReset()
+    getAccountById.mockReset()
     getAllProxies.mockReset()
     getAllGroups.mockReset()
     probeUpstreamBillingBatch.mockReset()
+    testAccount.mockReset()
 
     listAccounts.mockResolvedValue({
       items: [],
@@ -123,9 +132,11 @@ describe('admin AccountsView bulk edit scope', () => {
       data: null
     })
     getBatchTodayStats.mockResolvedValue({ stats: {} })
+    getAccountById.mockResolvedValue(null)
     getAllProxies.mockResolvedValue([])
     getAllGroups.mockResolvedValue([])
     probeUpstreamBillingBatch.mockResolvedValue([])
+    testAccount.mockResolvedValue({ success: true, message: '账号测试成功' })
   })
 
   it('opens bulk edit in filtered-results mode from the bulk actions dropdown', async () => {
@@ -301,5 +312,198 @@ describe('admin AccountsView bulk edit scope', () => {
     await flushPromises()
 
     expect(probeUpstreamBillingBatch).toHaveBeenCalledWith([7, 11])
+  })
+
+  it('批量测试中每个账号结束后立即停止自身的刷新状态', async () => {
+    const account = (id: number) => ({
+      id,
+      name: `account-${id}`,
+      platform: 'openai',
+      type: 'oauth',
+      status: 'active',
+      schedulable: true,
+      created_at: '2026-07-19T00:00:00Z',
+      updated_at: '2026-07-19T00:00:00Z'
+    })
+    listAccounts.mockResolvedValue({ items: [account(7), account(11)], total: 2, page: 1, page_size: 20, pages: 1 })
+
+    let resolveFirst!: (value: { success: boolean; message: string }) => void
+    let resolveSecond!: (value: { success: boolean; message: string }) => void
+    testAccount
+      .mockImplementationOnce(() => new Promise(resolve => { resolveFirst = resolve }))
+      .mockImplementationOnce(() => new Promise(resolve => { resolveSecond = resolve }))
+
+    const wrapper = mount(AccountsView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: { template: '<div><slot name="filters" /><slot name="table" /></div>' },
+          DataTable: DataTableStub,
+          Pagination: true,
+          ConfirmDialog: true,
+          AccountTableActions: true,
+          AccountTableFilters: true,
+          AccountBulkActionsBar: AccountBulkActionsBarStub,
+          AccountActionMenu: true,
+          ImportDataModal: true,
+          ReAuthAccountModal: true,
+          AccountTestModal: true,
+          AccountStatsModal: true,
+          ScheduledTestsPanel: true,
+          SyncFromCrsModal: true,
+          TempUnschedStatusModal: true,
+          ErrorPassthroughRulesModal: true,
+          TLSFingerprintProfilesModal: true,
+          CreateAccountModal: true,
+          EditAccountModal: true,
+          BulkEditAccountModal: BulkEditAccountModalStub,
+          PlatformTypeBadge: true,
+          AccountCapacityCell: true,
+          AccountStatusIndicator: true,
+          AccountTodayStatsCell: true,
+          AccountGroupsCell: true,
+          AccountUsageCell: true,
+          Icon: true
+        }
+      }
+    })
+
+    await flushPromises()
+    await wrapper.get('[data-test="select-row"] input').trigger('change')
+    await wrapper.findAll('[data-test="select-row"] input')[1].trigger('change')
+    await wrapper.get('[data-test="bulk-test"]').trigger('click')
+    await wrapper.vm.$nextTick()
+
+    const testingIds = (wrapper.vm as any).testingAccountIds as Set<number>
+    expect(testingIds).toEqual(new Set([7, 11]))
+
+    resolveFirst({ success: true, message: '账号测试成功' })
+    await flushPromises()
+    expect(testingIds.has(7)).toBe(false)
+    expect(testingIds.has(11)).toBe(true)
+
+    resolveSecond({ success: true, message: '账号测试成功' })
+    await flushPromises()
+    expect(testingIds.size).toBe(0)
+  })
+
+  it('立即测试完成后只更新当前账号行，不重载列表或跳回首个账号', async () => {
+    const account = {
+      id: 99,
+      name: 'bottom-account',
+      platform: 'openai',
+      type: 'oauth',
+      status: 'active',
+      schedulable: true,
+      created_at: '2026-07-19T00:00:00Z',
+      updated_at: '2026-07-19T00:00:00Z'
+    }
+    listAccounts.mockResolvedValue({ items: [account], total: 1, page: 1, page_size: 20, pages: 1 })
+    getAccountById.mockResolvedValue({ ...account, status: 'error', error_message: 'API returned 403: INSUFFICIENT_BALANCE' })
+
+    const wrapper = mount(AccountsView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: { template: '<div><slot name="filters" /><slot name="table" /></div>' },
+          DataTable: DataTableStub,
+          Pagination: true,
+          ConfirmDialog: true,
+          AccountTableActions: true,
+          AccountTableFilters: true,
+          AccountBulkActionsBar: AccountBulkActionsBarStub,
+          AccountActionMenu: true,
+          ImportDataModal: true,
+          ReAuthAccountModal: true,
+          AccountTestModal: true,
+          AccountStatsModal: true,
+          ScheduledTestsPanel: true,
+          SyncFromCrsModal: true,
+          TempUnschedStatusModal: true,
+          ErrorPassthroughRulesModal: true,
+          TLSFingerprintProfilesModal: true,
+          CreateAccountModal: true,
+          EditAccountModal: true,
+          BulkEditAccountModal: BulkEditAccountModalStub,
+          PlatformTypeBadge: true,
+          AccountCapacityCell: true,
+          AccountStatusIndicator: true,
+          AccountTodayStatsCell: true,
+          AccountGroupsCell: true,
+          AccountUsageCell: true,
+          Icon: true
+        }
+      }
+    })
+
+    await flushPromises()
+    listAccounts.mockClear()
+
+    await (wrapper.vm as any).handleQuickTest(account)
+
+    expect(testAccount).toHaveBeenCalledTimes(1)
+    expect(testAccount).toHaveBeenCalledWith(99, { modelId: 'gpt-5.6-luna', mode: 'default' })
+    expect(getAccountById).toHaveBeenCalledWith(99)
+    expect(listAccounts).not.toHaveBeenCalled()
+    expect((wrapper.vm as any).accounts[0]).toMatchObject({ id: 99, status: 'error' })
+  })
+
+  it('OpenAI 的 Luna 测试失败后才回退到默认测试', async () => {
+    const account = {
+      id: 18,
+      name: 'fallback-account',
+      platform: 'openai',
+      type: 'apikey',
+      status: 'active',
+      schedulable: true,
+      created_at: '2026-07-19T00:00:00Z',
+      updated_at: '2026-07-19T00:00:00Z'
+    }
+    listAccounts.mockResolvedValue({ items: [account], total: 1, page: 1, page_size: 20, pages: 1 })
+    getAccountById.mockResolvedValue(account)
+    testAccount
+      .mockResolvedValueOnce({ success: false, message: 'Luna 模型不可用' })
+      .mockResolvedValueOnce({ success: true, message: '账号测试成功' })
+
+    const wrapper = mount(AccountsView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: { template: '<div><slot name="filters" /><slot name="table" /></div>' },
+          DataTable: DataTableStub,
+          Pagination: true,
+          ConfirmDialog: true,
+          AccountTableActions: true,
+          AccountTableFilters: true,
+          AccountBulkActionsBar: AccountBulkActionsBarStub,
+          AccountActionMenu: true,
+          ImportDataModal: true,
+          ReAuthAccountModal: true,
+          AccountTestModal: true,
+          AccountStatsModal: true,
+          ScheduledTestsPanel: true,
+          SyncFromCrsModal: true,
+          TempUnschedStatusModal: true,
+          ErrorPassthroughRulesModal: true,
+          TLSFingerprintProfilesModal: true,
+          CreateAccountModal: true,
+          EditAccountModal: true,
+          BulkEditAccountModal: BulkEditAccountModalStub,
+          PlatformTypeBadge: true,
+          AccountCapacityCell: true,
+          AccountStatusIndicator: true,
+          AccountTodayStatsCell: true,
+          AccountGroupsCell: true,
+          AccountUsageCell: true,
+          Icon: true
+        }
+      }
+    })
+
+    await flushPromises()
+    await (wrapper.vm as any).handleQuickTest(account)
+
+    expect(testAccount).toHaveBeenNthCalledWith(1, 18, { modelId: 'gpt-5.6-luna', mode: 'default' })
+    expect(testAccount).toHaveBeenNthCalledWith(2, 18)
   })
 })

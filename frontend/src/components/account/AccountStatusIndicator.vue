@@ -170,6 +170,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
+import { normalizeDisplayErrorMessage } from '@/utils/errorMessage'
 import type { Account } from '@/types'
 import { formatCountdown, formatDateTime, formatCountdownWithSuffix, formatTime } from '@/utils/format'
 
@@ -304,23 +305,9 @@ const hasError = computed(() => {
   return props.account.status === 'error'
 })
 
-// displayErrorMessage 将历史版本保存的英文工作区停用错误转换为当前界面语言。
+// displayErrorMessage 将账号错误转换为中文说明并保留管理员后端返回的技术详情。
 const displayErrorMessage = computed(() => {
-  const rawMessage = props.account.error_message || ''
-  const normalizedMessage = rawMessage.toLowerCase()
-
-  if (
-    normalizedMessage.includes('deactivated_workspace') ||
-    normalizedMessage.includes('workspace deactivated') ||
-    normalizedMessage.includes('workspace has been deactivated')
-  ) {
-    return t('admin.accounts.workspaceDeactivated')
-  }
-  if (/[A-Za-z]/.test(rawMessage)) {
-    return t('admin.accounts.accountErrorDetailsInLogs')
-  }
-
-  return rawMessage
+  return normalizeDisplayErrorMessage(props.account.error_message, t('admin.accounts.testFailed'))
 })
 
 const isQuotaExceeded = computed(() => {

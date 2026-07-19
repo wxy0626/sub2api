@@ -25,6 +25,19 @@ describe('admin accounts testAccount', () => {
     }))
   })
 
+  it('将立即测试选定的模型和探测模式发送给后端', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(
+      'data: {\"type\":\"test_complete\",\"success\":true}\n\n',
+      { status: 200, headers: { 'Content-Type': 'text/event-stream' } }
+    )))
+
+    await testAccount(18, { modelId: 'gpt-5.6-luna', mode: 'default' })
+
+    expect(fetch).toHaveBeenCalledWith('/api/v1/admin/accounts/18/test', expect.objectContaining({
+      body: JSON.stringify({ model_id: 'gpt-5.6-luna', mode: 'default' })
+    }))
+  })
+
   it('保留 HTTP 200 SSE 内的真实测试错误', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(
       'data: {\"type\":\"error\",\"error\":\"上游连接超时\"}\n\n',
