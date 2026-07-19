@@ -318,7 +318,7 @@ export default {
         thresholdPlaceholder: 'Enter percentage',
       },
       testConnection: 'Test Connection',
-      runTestNow: 'Run Test Now',
+      runTestNow: 'Model Detection',
       reAuthorize: 'Re-Authorize',
       refreshToken: 'Refresh Token',
       noAccountsYet: 'No accounts yet',

@@ -49,7 +49,7 @@ const getBodyText = () => document.body.textContent ?? ''
 const getBodyButtons = () => Array.from(document.body.querySelectorAll('button'))
 
 describe('AccountActionMenu — spark shadow 按钮可见性', () => {
-  it('“立即检测”触发无弹窗 quick-test 事件', async () => {
+  it('“模型检测”只触发无弹窗 quick-test 事件', async () => {
     const account = makeAccount({})
     const wrapper = mount(AccountActionMenu, {
       props: { show: true, account, position },
@@ -64,24 +64,7 @@ describe('AccountActionMenu — spark shadow 按钮可见性', () => {
 
     expect(wrapper.emitted('quick-test')?.[0]?.[0]).toMatchObject({ id: account.id })
     expect(wrapper.emitted('test')).toBeUndefined()
-    wrapper.unmount()
-  })
-
-  it('“高级模型测试”保留独立的弹窗测试事件', async () => {
-    const account = makeAccount({})
-    const wrapper = mount(AccountActionMenu, {
-      props: { show: true, account, position },
-      attachTo: document.body,
-    })
-
-    const advancedTestBtn = getBodyButtons().find(b => b.textContent?.includes('admin.accounts.advancedModelTest'))
-    expect(advancedTestBtn).toBeDefined()
-
-    advancedTestBtn!.click()
-    await wrapper.vm.$nextTick()
-
-    expect(wrapper.emitted('test')?.[0]?.[0]).toMatchObject({ id: account.id })
-    expect(wrapper.emitted('quick-test')).toBeUndefined()
+    expect(getBodyText()).not.toContain('admin.accounts.advancedModelTest')
     wrapper.unmount()
   })
 

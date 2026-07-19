@@ -103,7 +103,6 @@ function mountView() {
         AccountActionMenu: true,
         ImportDataModal: true,
         ReAuthAccountModal: true,
-        AccountTestModal: true,
         AccountStatsModal: true,
         ScheduledTestsPanel: true,
         SyncFromCrsModal: true,

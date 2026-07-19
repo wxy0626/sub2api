@@ -51,7 +51,7 @@ function makeAccount(overrides: Partial<Account>): Account {
 }
 
 describe('AccountStatusIndicator', () => {
-  it('状态右侧刷新按钮派发立即检测事件，并在检测中禁用', async () => {
+  it('状态右侧刷新按钮派发模型检测事件，并在检测中禁用', async () => {
     const account = makeAccount({})
     const wrapper = mount(AccountStatusIndicator, {
       props: { account },
