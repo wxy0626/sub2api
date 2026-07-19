@@ -192,12 +192,17 @@ try {
     $resolvedVersion = Resolve-ApplicationVersion -RequestedVersion $Version -ProjectRoot $projectRoot
     Write-UpdateStep "本次构建应用版本：$resolvedVersion"
 
-    Invoke-NativeCommand '运行账号测试弹窗的定向单元测试' {
-        corepack $pnpmVersion --dir frontend exec vitest run src/components/admin/account/__tests__/AccountTestModal.spec.ts
+    Invoke-NativeCommand '运行模型检测的定向单元测试' {
+        corepack $pnpmVersion --dir frontend exec vitest run `
+            src/components/account/__tests__/AccountStatusIndicator.spec.ts `
+            src/components/admin/account/__tests__/AccountActionMenu.spark_shadow.spec.ts `
+            src/views/admin/__tests__/AccountsView.bulkEdit.spec.ts
     }
     Invoke-NativeCommand '执行前端类型检查' { corepack $pnpmVersion --dir frontend run typecheck }
+    # 当前提交：写入镜像内的构建信息，便于服务器端准确追溯实际发布的 Git 提交。
+    $当前提交 = (git rev-parse HEAD).Trim()
     Invoke-NativeCommand "构建定制镜像 $ImageTag" {
-        docker build --build-arg VERSION=$resolvedVersion --build-arg COMMIT=local-test-model-whitelist --tag $ImageTag .
+        docker build --build-arg VERSION=$resolvedVersion --build-arg COMMIT=$当前提交 --tag $ImageTag .
     }
 
     $env:SUB2API_IMAGE = $ImageTag
