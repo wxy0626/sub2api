@@ -11,6 +11,7 @@ const {
   getAccountById,
   getAllProxies,
   getAllGroups,
+  getFilterOptions,
   getAvailableModels,
   probeUpstreamBillingBatch,
   testAccount,
@@ -24,6 +25,7 @@ const {
   getAccountById: vi.fn(),
   getAllProxies: vi.fn(),
   getAllGroups: vi.fn(),
+  getFilterOptions: vi.fn(),
   getAvailableModels: vi.fn(),
   probeUpstreamBillingBatch: vi.fn(),
   testAccount: vi.fn(),
@@ -38,6 +40,7 @@ vi.mock('@/api/admin', () => ({
       listWithEtag,
       getBatchTodayStats,
       getUpstreamBillingProbeSettings,
+      getFilterOptions,
       getById: getAccountById,
       delete: vi.fn(),
       batchClearError: vi.fn(),
@@ -85,6 +88,7 @@ const DataTableStub = {
   template: `
     <div data-test="data-table">
       <span v-for="column in columns" :key="column.key" data-test="column-key">{{ column.key }}</span>
+      <div data-test="header-groups"><slot name="header-groups" /></div>
       <div v-for="row in data" :key="row.id">
         <div data-test="select-row"><slot name="cell-select" :row="row" /></div>
         <slot name="cell-created_at" :value="row.created_at" :row="row" />
@@ -113,6 +117,12 @@ const PaginationStub = {
 const BulkEditAccountModalStub = {
   props: ['show', 'target'],
   template: '<div data-test="bulk-edit-modal" :data-show="String(show)" :data-target-mode="target?.mode ?? \'\'"></div>'
+}
+
+const HeaderGroupSelectStub = {
+  props: ['modelValue', 'options'],
+  emits: ['update:modelValue'],
+  template: '<button data-test="header-group-select" @click="$emit(\'update:modelValue\', \'2\')"></button>'
 }
 
 describe('admin AccountsView bulk edit scope', () => {
@@ -333,6 +343,67 @@ describe('admin AccountsView bulk edit scope', () => {
 
     expect(getUpstreamBillingProbeSettings).toHaveBeenCalledTimes(1)
     expect(wrapper.get('[data-test="upstream-billing-cell"]').attributes('data-global-enabled')).toBe('false')
+  })
+
+  it('loads available groups into the table header filter and reloads by the selected group', async () => {
+    vi.useFakeTimers()
+    getAllGroups.mockResolvedValue([{ id: 2, name: '生产分组' }])
+
+    const wrapper = mount(AccountsView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: { template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>' },
+          DataTable: DataTableStub,
+          Select: HeaderGroupSelectStub,
+          Pagination: true,
+          ConfirmDialog: true,
+          AccountTableActions: { template: '<div><slot name="beforeCreate" /><slot name="after" /></div>' },
+          AccountTableFilters: { template: '<div></div>' },
+          AccountBulkActionsBar: AccountBulkActionsBarStub,
+          AccountActionMenu: true,
+          ImportDataModal: true,
+          ReAuthAccountModal: true,
+          AccountStatsModal: true,
+          ScheduledTestsPanel: true,
+          SyncFromCrsModal: true,
+          TempUnschedStatusModal: true,
+          ErrorPassthroughRulesModal: true,
+          TLSFingerprintProfilesModal: true,
+          CreateAccountModal: true,
+          EditAccountModal: true,
+          BulkEditAccountModal: BulkEditAccountModalStub,
+          PlatformTypeBadge: true,
+          AccountCapacityCell: true,
+          AccountStatusIndicator: true,
+          AccountTodayStatsCell: true,
+          AccountGroupsCell: true,
+          AccountUsageCell: true,
+          Icon: true
+        }
+      }
+    })
+
+    await flushPromises()
+    const groupSelect = wrapper.getComponent(HeaderGroupSelectStub)
+    expect(groupSelect.props('modelValue')).toBe('')
+    expect(groupSelect.props('options')).toEqual([
+      { value: '', label: 'admin.accounts.allGroups' },
+      { value: 'ungrouped', label: 'admin.accounts.ungroupedGroup' },
+      { value: '2', label: '生产分组' }
+    ])
+
+    await wrapper.get('[data-test="header-group-select"]').trigger('click')
+    await vi.advanceTimersByTimeAsync(300)
+    await flushPromises()
+
+    expect(listAccounts).toHaveBeenLastCalledWith(
+      1,
+      expect.any(Number),
+      expect.objectContaining({ group: '2' }),
+      expect.any(Object)
+    )
+    vi.useRealTimers()
   })
 
   it('submits selected account IDs from every page for backend eligibility checks', async () => {

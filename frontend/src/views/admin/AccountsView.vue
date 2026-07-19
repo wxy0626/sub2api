@@ -210,6 +210,33 @@
               @change="toggleSelectAllVisible($event)"
             />
           </template>
+          <template #header-groups>
+            <Select
+              :model-value="params.group"
+              :options="groupFilterOptions"
+              class="w-36 normal-case"
+              :aria-label="t('admin.accounts.columns.groups')"
+              @update:model-value="handleHeaderGroupFilterChange"
+            />
+          </template>
+          <template #header-platform>
+            <Select
+              :model-value="params.platform"
+              :options="platformFilterOptions"
+              class="w-32 normal-case"
+              :aria-label="t('admin.accounts.columns.platform')"
+              @update:model-value="handleHeaderPlatformFilterChange"
+            />
+          </template>
+          <template #header-type>
+            <Select
+              :model-value="params.type"
+              :options="typeFilterOptions"
+              class="w-32 normal-case"
+              :aria-label="t('admin.accounts.columns.type')"
+              @update:model-value="handleHeaderTypeFilterChange"
+            />
+          </template>
           <template #cell-select="{ row }">
             <input type="checkbox" :checked="isSelected(row.id)" @change="toggleSel(row.id)" class="rounded border-gray-300 text-primary-600 focus:ring-primary-500" />
           </template>
@@ -249,10 +276,14 @@
             <span v-if="value" :title="value" class="block max-w-xs truncate text-sm text-gray-600 dark:text-gray-300">{{ value }}</span>
             <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
           </template>
-          <template #cell-platform_type="{ row }">
+          <template #cell-platform="{ row }">
+            <PlatformTypeBadge :platform="row.platform" :type="row.type" :show-type="false" />
+          </template>
+          <template #cell-type="{ row }">
             <div class="flex min-w-0 flex-col gap-1">
               <div class="flex flex-wrap items-center gap-1">
                 <PlatformTypeBadge :platform="row.platform" :type="row.type"
+                  :show-platform="false"
                   :auth-mode="getOpenAIAuthMode(row)"
                   :plan-type="getAccountPlanType(row)"
                   :privacy-mode="row.extra?.privacy_mode || row.parent_privacy_mode"
@@ -497,7 +528,7 @@ import ReAuthAccountModal from '@/components/admin/account/ReAuthAccountModal.vu
 import AccountTestModal from '@/components/admin/account/AccountTestModal.vue'
 import AccountStatsModal from '@/components/admin/account/AccountStatsModal.vue'
 import ScheduledTestsPanel from '@/components/admin/account/ScheduledTestsPanel.vue'
-import type { SelectOption } from '@/components/common/Select.vue'
+import Select, { type SelectOption } from '@/components/common/Select.vue'
 import AccountStatusIndicator from '@/components/account/AccountStatusIndicator.vue'
 import AccountUsageCell from '@/components/account/AccountUsageCell.vue'
 import AccountTodayStatsCell from '@/components/account/AccountTodayStatsCell.vue'
@@ -523,6 +554,44 @@ const authStore = useAuthStore()
 
 const proxies = ref<AccountProxy[]>([])
 const groups = ref<AdminGroup[]>([])
+// 全量账号聚合得到的安全筛选枚举；接口不返回任何账号详情或凭据。
+const accountFilterValues = ref<{ platforms: string[]; types: string[] }>({ platforms: [], types: [] })
+// 表头分组筛选选项，始终提供“全部分组”，其余选项由接口返回的可用分组动态生成。
+const groupFilterOptions = computed<SelectOption[]>(() => [
+  { value: '', label: t('admin.accounts.allGroups') },
+  { value: 'ungrouped', label: t('admin.accounts.ungroupedGroup') },
+  ...groups.value.map(group => ({ value: String(group.id), label: group.name }))
+])
+
+// 表头平台筛选选项，始终提供“全部平台”，其余选项由后端安全聚合接口动态生成。
+const platformFilterOptions = computed<SelectOption[]>(() => [
+  { value: '', label: t('admin.accounts.allPlatforms') },
+  ...accountFilterValues.value.platforms.map(platform => ({ value: platform, label: platform }))
+])
+
+// 表头类型筛选选项，始终提供“全部类型”，其余选项由后端安全聚合接口动态生成。
+const typeFilterOptions = computed<SelectOption[]>(() => [
+  { value: '', label: t('admin.accounts.allTypes') },
+  ...accountFilterValues.value.types.map(accountType => ({ value: accountType, label: accountType }))
+])
+
+// 表头分组下拉变更后更新账号列表请求参数并重新加载列表。
+const handleHeaderGroupFilterChange = (value: string | number | boolean | null) => {
+  params.group = value == null ? '' : String(value)
+  debouncedReload()
+}
+
+// 表头平台下拉变更后更新账号列表请求参数并重新加载列表。
+const handleHeaderPlatformFilterChange = (value: string | number | boolean | null) => {
+  params.platform = value == null ? '' : String(value)
+  debouncedReload()
+}
+
+// 表头类型下拉变更后更新账号列表请求参数并重新加载列表。
+const handleHeaderTypeFilterChange = (value: string | number | boolean | null) => {
+  params.type = value == null ? '' : String(value)
+  debouncedReload()
+}
 const accountTableRef = ref<HTMLElement | null>(null)
 const dataTableRef = ref<InstanceType<typeof DataTable> | null>(null)
 type AccountBulkEditTarget =
@@ -1371,7 +1440,8 @@ const allColumns = computed(() => {
     { key: 'select', label: '', sortable: false },
     { key: 'name', label: t('admin.accounts.columns.name'), sortable: true },
     { key: 'id', label: t('admin.accounts.columns.id'), sortable: true },
-    { key: 'platform_type', label: t('admin.accounts.columns.platformType'), sortable: false },
+    { key: 'platform', label: t('admin.accounts.columns.platform'), sortable: false },
+    { key: 'type', label: t('admin.accounts.columns.type'), sortable: false },
     { key: 'capacity', label: t('admin.accounts.columns.capacity'), sortable: false },
     { key: 'status', label: t('admin.accounts.columns.status'), sortable: true },
     { key: 'schedulable', label: t('admin.accounts.columns.schedulable'), sortable: true },
@@ -2186,9 +2256,14 @@ onMounted(async () => {
   load()
   loadUpstreamBillingProbeGlobalState()
   try {
-    const [p, g] = await Promise.all([adminAPI.proxies.getAll(), adminAPI.groups.getAll()])
+    const [p, g, filterValues] = await Promise.all([
+      adminAPI.proxies.getAll(),
+      adminAPI.groups.getAll(),
+      adminAPI.accounts.getFilterOptions()
+    ])
     proxies.value = p
     groups.value = g
+    accountFilterValues.value = filterValues
   } catch (error) {
     console.error('Failed to load proxies/groups:', error)
   }
