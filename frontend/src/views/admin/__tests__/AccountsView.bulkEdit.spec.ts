@@ -87,6 +87,8 @@ const DataTableStub = {
     <div data-test="data-table">
       <span v-for="column in columns" :key="column.key" data-test="column-key">{{ column.key }}</span>
       <div data-test="header-groups"><slot name="header-groups" /></div>
+      <div data-test="header-platform"><slot name="header-platform" /></div>
+      <div data-test="header-type"><slot name="header-type" /></div>
       <div v-for="row in data" :key="row.id">
         <div data-test="select-row"><slot name="cell-select" :row="row" /></div>
         <slot name="cell-created_at" :value="row.created_at" :row="row" />
@@ -133,6 +135,7 @@ describe('admin AccountsView bulk edit scope', () => {
     getAccountById.mockReset()
     getAllProxies.mockReset()
     getAllGroups.mockReset()
+    getFilterOptions.mockReset()
     getAvailableModels.mockReset()
     probeUpstreamBillingBatch.mockReset()
     testAccount.mockReset()
@@ -155,6 +158,7 @@ describe('admin AccountsView bulk edit scope', () => {
     getAccountById.mockResolvedValue(null)
     getAllProxies.mockResolvedValue([])
     getAllGroups.mockResolvedValue([])
+    getFilterOptions.mockResolvedValue({ platforms: [], types: [] })
     getAvailableModels.mockResolvedValue([])
     probeUpstreamBillingBatch.mockResolvedValue([])
     testAccount.mockResolvedValue({ success: true, message: '账号测试成功' })
@@ -275,6 +279,7 @@ describe('admin AccountsView bulk edit scope', () => {
   it('loads available groups into the table header filter and reloads by the selected group', async () => {
     vi.useFakeTimers()
     getAllGroups.mockResolvedValue([{ id: 2, name: '生产分组' }])
+    getFilterOptions.mockResolvedValue({ platforms: ['grok', 'openai'], types: ['apikey', 'oauth'] })
 
     const wrapper = mount(AccountsView, {
       global: {
@@ -312,13 +317,29 @@ describe('admin AccountsView bulk edit scope', () => {
     })
 
     await flushPromises()
-    const groupSelect = wrapper.getComponent(HeaderGroupSelectStub)
+    const headerSelects = wrapper.findAllComponents(HeaderGroupSelectStub)
+    const groupSelect = headerSelects[0]
     expect(groupSelect.props('modelValue')).toBe('')
     expect(groupSelect.props('options')).toEqual([
       { value: '', label: 'admin.accounts.allGroups' },
       { value: 'ungrouped', label: 'admin.accounts.ungroupedGroup' },
       { value: '2', label: '生产分组' }
     ])
+    expect(headerSelects[1].props('options')).toEqual([
+      { value: '', label: 'admin.accounts.allPlatforms' },
+      { value: 'grok', label: 'grok' },
+      { value: 'openai', label: 'openai' }
+    ])
+    expect(headerSelects[2].props('options')).toEqual([
+      { value: '', label: 'admin.accounts.allTypes' },
+      { value: 'apikey', label: 'apikey' },
+      { value: 'oauth', label: 'oauth' }
+    ])
+
+    const columnKeys = wrapper.findAll('[data-test="column-key"]').map(node => node.text())
+    expect(columnKeys).toContain('platform')
+    expect(columnKeys).toContain('type')
+    expect(columnKeys).not.toContain('platform_type')
 
     await wrapper.get('[data-test="header-group-select"]').trigger('click')
     await vi.advanceTimersByTimeAsync(300)
@@ -328,6 +349,26 @@ describe('admin AccountsView bulk edit scope', () => {
       1,
       expect.any(Number),
       expect.objectContaining({ group: '2' }),
+      expect.any(Object)
+    )
+
+    ;(wrapper.vm as any).handleHeaderPlatformFilterChange('openai')
+    await vi.advanceTimersByTimeAsync(300)
+    await flushPromises()
+    expect(listAccounts).toHaveBeenLastCalledWith(
+      1,
+      expect.any(Number),
+      expect.objectContaining({ platform: 'openai' }),
+      expect.any(Object)
+    )
+
+    ;(wrapper.vm as any).handleHeaderTypeFilterChange('oauth')
+    await vi.advanceTimersByTimeAsync(300)
+    await flushPromises()
+    expect(listAccounts).toHaveBeenLastCalledWith(
+      1,
+      expect.any(Number),
+      expect.objectContaining({ platform: 'openai', type: 'oauth' }),
       expect.any(Object)
     )
     vi.useRealTimers()

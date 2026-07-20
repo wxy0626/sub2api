@@ -62,6 +62,18 @@ export async function list(
   return data
 }
 
+/** 账号列表表头筛选项，仅包含平台和账号类型枚举，不包含账号详情或凭据。 */
+export interface AccountFilterOptions {
+  platforms: string[]
+  types: string[]
+}
+
+/** 获取全部账号聚合出的平台和类型筛选项。 */
+export async function getFilterOptions(): Promise<AccountFilterOptions> {
+  const { data } = await apiClient.get<AccountFilterOptions>('/admin/accounts/filter-options')
+  return data
+}
+
 export interface AccountListWithEtagResult {
   notModified: boolean
   etag: string | null
