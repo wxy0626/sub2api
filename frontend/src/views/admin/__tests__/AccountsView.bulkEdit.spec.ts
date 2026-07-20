@@ -331,7 +331,7 @@ describe('admin AccountsView bulk edit scope', () => {
     const listControls = wrapper.get('[data-test="account-list-controls"]')
     expect(listControls.find('[data-test="account-search-input"]').exists()).toBe(true)
     const toolbarSelects = listControls.findAllComponents(HeaderGroupSelectStub)
-    expect(toolbarSelects).toHaveLength(0)
+    expect(toolbarSelects).toHaveLength(6)
 
     const groupSelect = wrapper.get('[data-test="header-groups"]').getComponent(HeaderGroupSelectStub)
     expect(groupSelect.props('modelValue')).toBe('')

@@ -3,11 +3,14 @@
     <TablePageLayout>
       <template #filters>
         <div data-test="account-list-controls" class="flex flex-wrap-reverse items-start justify-between gap-3">
-          <SearchInput
-            v-model="params.search"
-            :placeholder="t('admin.accounts.searchAccounts')"
-            class="w-full sm:w-64"
-            @update:model-value="debouncedReload"
+          <AccountTableFilters
+            v-model:searchQuery="params.search"
+            :filters="params"
+            :groups="groups"
+            :proxy-options="proxyFilterOptions"
+            @update:filters="(newFilters) => Object.assign(params, newFilters)"
+            @change="debouncedReload"
+            @update:searchQuery="debouncedReload"
           />
           <AccountTableActions
             :loading="loading"
@@ -560,9 +563,9 @@ import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
-import SearchInput from '@/components/common/SearchInput.vue'
 import { CreateAccountModal, EditAccountModal, BulkEditAccountModal, SyncFromCrsModal, TempUnschedStatusModal } from '@/components/account'
 import AccountTableActions from '@/components/admin/account/AccountTableActions.vue'
+import AccountTableFilters from '@/components/admin/account/AccountTableFilters.vue'
 import AccountBulkActionsBar from '@/components/admin/account/AccountBulkActionsBar.vue'
 import AccountActionMenu from '@/components/admin/account/AccountActionMenu.vue'
 import ImportDataModal from '@/components/admin/account/ImportDataModal.vue'
