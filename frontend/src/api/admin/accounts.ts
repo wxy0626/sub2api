@@ -975,6 +975,7 @@ export async function probeUpstreamBillingBatch(accountIds: number[]): Promise<U
 export const accountsAPI = {
   list,
   listWithEtag,
+  getFilterOptions,
   getById,
   create,
   duplicate,

@@ -7,12 +7,16 @@ vi.mock('../../client', () => ({
   buildApiUrl: (path: string) => `/api/v1${path}`
 }))
 
-import { testAccount, updateTestMode } from '../accounts'
+import { accountsAPI, getFilterOptions, testAccount, updateTestMode } from '../accounts'
 
 describe('admin accounts testAccount', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     put.mockReset()
+  })
+
+  it('通过 accountsAPI 聚合暴露列表筛选枚举接口', () => {
+    expect(accountsAPI.getFilterOptions).toBe(getFilterOptions)
   })
 
   it('解析成功 SSE 终态而不是将流式响应当作 JSON', async () => {
