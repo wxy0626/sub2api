@@ -28,6 +28,8 @@ $新加坡SSH隧道错误日志 = 'E:\AI\sun2api\.codex\log\sub2api-singapore-pr
 $新加坡SSH隧道状态日志 = 'E:\AI\sun2api\.codex\log\sub2api-singapore-proxy-tunnel-launcher.log'
 # 新加坡专用本地 HTTP 代理端口。
 $新加坡本地代理端口 = 17998
+# 新加坡代理登记脚本：只在专用代理和 SSH 隧道确认后写入本地 Sub2API 代理列表。
+$新加坡代理登记脚本 = 'E:\AI\sun2api\tools\register-sub2api-local-singapore-proxy.ps1'
 
 function 测试Docker引擎就绪 {
     docker info *> $null
@@ -118,6 +120,18 @@ function 启动新加坡SSH隧道守护 {
         '-WindowStyle', 'Hidden',
         '-File', $新加坡SSH隧道守护脚本
     ) -WindowStyle Hidden -PassThru -ErrorAction Stop
+}
+
+# 登记本地新加坡代理：脚本会先从应用容器验证代理连通性，再幂等写入代理记录。
+function 登记本地新加坡代理 {
+    if (-not (Test-Path -LiteralPath $新加坡代理登记脚本 -PathType Leaf)) {
+        throw "未找到新加坡代理登记脚本：$新加坡代理登记脚本"
+    }
+
+    & pwsh.exe -NoProfile -ExecutionPolicy Bypass -File $新加坡代理登记脚本
+    if ($LASTEXITCODE -ne 0) {
+        throw '新加坡专用代理和 SSH 隧道已建立，但未能安全登记到本地账号代理列表。请查看 .codex\\log 和 sub2api-postgres 容器日志。'
+    }
 }
 
 # 测试本地代理端口：用于在隧道尚未建立时给出准确的中文状态说明。
@@ -284,6 +298,8 @@ Write-Output '[sub2api] Starting Singapore dedicated proxy...'
 Write-Output '[sub2api] Starting Singapore proxy tunnel guardian...'
 $新加坡SSH隧道守护进程 = 启动新加坡SSH隧道守护
 确认新加坡SSH隧道结果 -守护进程 $新加坡SSH隧道守护进程
+Write-Output '[sub2api] Registering Singapore proxy in the local account list...'
+登记本地新加坡代理
 
 # 端口健康检查最大轮次。
 $健康检查次数 = 30
