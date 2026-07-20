@@ -19,7 +19,35 @@ func setupAccountListRouter() (*gin.Engine, *stubAdminService) {
 	adminSvc := newStubAdminService()
 	handler := NewAccountHandler(adminSvc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	router.GET("/api/v1/admin/accounts", handler.List)
+	router.GET("/api/v1/admin/accounts/filter-options", handler.ListFilterOptions)
 	return router, adminSvc
+}
+
+func TestAccountHandlerListFilterOptionsReturnsOnlySortedUniqueEnums(t *testing.T) {
+	router, adminSvc := setupAccountListRouter()
+	adminSvc.accounts = []service.Account{
+		{ID: 1, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth},
+		{ID: 2, Platform: service.PlatformGrok, Type: service.AccountTypeAPIKey},
+		{ID: 3, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey},
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/filter-options", nil)
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var payload struct {
+		Data struct {
+			Platforms []string `json:"platforms"`
+			Types     []string `json:"types"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+	require.Equal(t, []string{"grok", "openai"}, payload.Data.Platforms)
+	require.Equal(t, []string{"apikey", "oauth"}, payload.Data.Types)
+	// 端点只返回枚举字段，不能让账号 ID 或凭据进入筛选响应。
+	require.NotContains(t, rec.Body.String(), "\"id\"")
+	require.NotContains(t, rec.Body.String(), "credentials")
 }
 
 func TestAccountHandlerListIncludesCreatedAt(t *testing.T) {

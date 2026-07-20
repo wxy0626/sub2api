@@ -671,6 +671,43 @@ func (h *AccountHandler) List(c *gin.Context) {
 	response.Paginated(c, result, total, page, pageSize)
 }
 
+// ListFilterOptions 返回账号列表筛选所需的平台和类型枚举，不返回账号详情或凭据。
+// GET /api/v1/admin/accounts/filter-options
+func (h *AccountHandler) ListFilterOptions(c *gin.Context) {
+	accounts, err := h.adminService.ListAccountsForSchedulerScoreFilter(c.Request.Context(), "", "", "", "", 0, "")
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	// 仅聚合枚举值，避免为了筛选项向浏览器发送账号或凭据数据。
+	platformSet := make(map[string]struct{})
+	typeSet := make(map[string]struct{})
+	for _, account := range accounts {
+		if account.Platform != "" {
+			platformSet[account.Platform] = struct{}{}
+		}
+		if account.Type != "" {
+			typeSet[account.Type] = struct{}{}
+		}
+	}
+
+	// 筛选选项按字母序稳定返回，避免前端每次加载时顺序跳动。
+	platforms := make([]string, 0, len(platformSet))
+	for platform := range platformSet {
+		platforms = append(platforms, platform)
+	}
+	sort.Strings(platforms)
+
+	types := make([]string, 0, len(typeSet))
+	for accountType := range typeSet {
+		types = append(types, accountType)
+	}
+	sort.Strings(types)
+
+	response.Success(c, gin.H{"platforms": platforms, "types": types})
+}
+
 func buildAccountsListETag(
 	items []AccountWithConcurrency,
 	total int64,

@@ -1,12 +1,12 @@
 <template>
   <div class="inline-flex flex-col gap-0.5 text-xs font-medium">
     <!-- Row 1: Platform + Type -->
-    <div class="inline-flex items-center overflow-hidden rounded-md">
-      <span :class="['inline-flex items-center gap-1 px-2 py-1', platformClass]">
+    <div v-if="showPlatform || showType" class="inline-flex items-center overflow-hidden rounded-md">
+      <span v-if="showPlatform" :class="['inline-flex items-center gap-1 px-2 py-1', platformClass]">
         <PlatformIcon :platform="platform" size="xs" />
         <span>{{ platformLabel }}</span>
       </span>
-      <span :class="['inline-flex items-center gap-1 px-1.5 py-1', typeClass]">
+      <span v-if="showType" :class="['inline-flex items-center gap-1 px-1.5 py-1', typeClass]">
         <!-- OAuth icon -->
         <svg
           v-if="type === 'oauth'"
@@ -81,9 +81,16 @@ interface Props {
   planType?: string
   privacyMode?: string
   subscriptionExpiresAt?: string
+  /** 是否显示平台徽标，默认显示。 */
+  showPlatform?: boolean
+  /** 是否显示类型徽标，默认显示。 */
+  showType?: boolean
 }
 
-const props = defineProps<Props>()
+const props = withDefaults(defineProps<Props>(), {
+  showPlatform: true,
+  showType: true
+})
 
 const platformLabel = computed(() => {
   if (props.platform === 'anthropic') return 'Anthropic'
