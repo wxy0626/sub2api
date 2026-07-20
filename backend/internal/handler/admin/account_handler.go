@@ -464,13 +464,14 @@ func (h *AccountHandler) listAccountSchedulerScoreFilterPool(
 	platform, accountType, status, search string,
 	groupID int64,
 	privacyMode string,
+	proxyID int64,
 ) []service.Account {
 	if h.adminService == nil || (platform != "" && platform != service.PlatformOpenAI) {
 		return nil
 	}
 	// 池只用于 OpenAI 分数计算（非 OpenAI 账号会在打分时被丢弃），
 	// 无论列表页平台过滤为何，查询一律限定 openai，避免无过滤时全表扫描。
-	accounts, err := h.adminService.ListAccountsForSchedulerScoreFilter(ctx, service.PlatformOpenAI, accountType, status, search, groupID, privacyMode)
+	accounts, err := h.adminService.ListAccountsForSchedulerScoreFilter(ctx, service.PlatformOpenAI, accountType, status, search, groupID, privacyMode, proxyID)
 	if err != nil {
 		slog.Warn("openai_scheduler_filter_score_pool_failed", "error", err)
 		return nil
@@ -487,6 +488,16 @@ func (h *AccountHandler) List(c *gin.Context) {
 	status := c.Query("status")
 	search := c.Query("search")
 	privacyMode := strings.TrimSpace(c.Query("privacy_mode"))
+	// 代理筛选 ID：0 表示不过滤，正数限制为指定已绑定代理。
+	var proxyID int64
+	if proxyIDStr := strings.TrimSpace(c.Query("proxy_id")); proxyIDStr != "" {
+		parsedProxyID, parseErr := strconv.ParseInt(proxyIDStr, 10, 64)
+		if parseErr != nil || parsedProxyID <= 0 {
+			response.ErrorFrom(c, infraerrors.BadRequest("INVALID_PROXY_FILTER", "代理筛选参数 proxy_id 无效：仅支持大于 0 的整数。请从代理下拉列表重新选择有效代理后重试。技术详情：proxy_id must be a positive integer"))
+			return
+		}
+		proxyID = parsedProxyID
+	}
 	sortBy := c.DefaultQuery("sort_by", "name")
 	sortOrder := c.DefaultQuery("sort_order", "asc")
 	// 标准化和验证 search 参数
@@ -516,7 +527,7 @@ func (h *AccountHandler) List(c *gin.Context) {
 		}
 	}
 
-	accounts, total, err := h.adminService.ListAccounts(c.Request.Context(), page, pageSize, platform, accountType, status, search, groupID, privacyMode, sortBy, sortOrder)
+	accounts, total, err := h.adminService.ListAccounts(c.Request.Context(), page, pageSize, platform, accountType, status, search, groupID, privacyMode, proxyID, sortBy, sortOrder)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -543,7 +554,7 @@ func (h *AccountHandler) List(c *gin.Context) {
 		}
 	}
 	if includeSchedulerScore && pageHasOpenAIAccounts {
-		schedulerFilterPool := h.listAccountSchedulerScoreFilterPool(c.Request.Context(), platform, accountType, status, search, groupID, privacyMode)
+		schedulerFilterPool := h.listAccountSchedulerScoreFilterPool(c.Request.Context(), platform, accountType, status, search, groupID, privacyMode, proxyID)
 		schedulerScores, schedulerGroupScores = h.buildOpenAIAccountSchedulerScores(c.Request.Context(), accounts, schedulerFilterPool)
 	}
 
@@ -672,7 +683,7 @@ func (h *AccountHandler) List(c *gin.Context) {
 // ListFilterOptions 返回账号列表筛选所需的平台和类型枚举，不返回账号详情或凭据。
 // GET /api/v1/admin/accounts/filter-options
 func (h *AccountHandler) ListFilterOptions(c *gin.Context) {
-	accounts, err := h.adminService.ListAccountsForSchedulerScoreFilter(c.Request.Context(), "", "", "", "", 0, "")
+	accounts, err := h.adminService.ListAccountsForSchedulerScoreFilter(c.Request.Context(), "", "", "", "", 0, "", 0)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -2810,7 +2821,7 @@ func (h *AccountHandler) BatchRefreshTier(c *gin.Context) {
 	accounts := make([]*service.Account, 0)
 
 	if len(req.AccountIDs) == 0 {
-		allAccounts, _, err := h.adminService.ListAccounts(ctx, 1, 10000, "gemini", "oauth", "", "", 0, "", "name", "asc")
+		allAccounts, _, err := h.adminService.ListAccounts(ctx, 1, 10000, "gemini", "oauth", "", "", 0, "", 0, "name", "asc")
 		if err != nil {
 			response.ErrorFrom(c, err)
 			return

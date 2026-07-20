@@ -397,6 +397,8 @@ func (s *AccountRepoSuite) TestListOAuthRefreshCandidatePage_GrokCursorAndExclus
 }
 
 func (s *AccountRepoSuite) TestListWithFilters() {
+	// 代理在 case 初始化期间创建，供对应 case 在查询时使用其真实数据库 ID。
+	var proxyFilterID int64
 	tests := []struct {
 		name        string
 		setup       func(client *dbent.Client)
@@ -406,9 +408,25 @@ func (s *AccountRepoSuite) TestListWithFilters() {
 		search      string
 		groupID     int64
 		privacyMode string
+		proxyID     int64
+		proxyIDRef  *int64
 		wantCount   int
 		validate    func(accounts []service.Account)
 	}{
+		{
+			name: "filter_by_proxy",
+			setup: func(client *dbent.Client) {
+				proxy := mustCreateProxy(s.T(), client, &service.Proxy{Name: "proxy-filter"})
+				mustCreateAccount(s.T(), client, &service.Account{Name: "proxy-matched", ProxyID: &proxy.ID})
+				mustCreateAccount(s.T(), client, &service.Account{Name: "proxy-unmatched"})
+				proxyFilterID = proxy.ID
+			},
+			proxyIDRef: &proxyFilterID,
+			wantCount: 1,
+			validate: func(accounts []service.Account) {
+				s.Require().Equal("proxy-matched", accounts[0].Name)
+			},
+		},
 		{
 			name: "filter_by_platform",
 			setup: func(client *dbent.Client) {
@@ -604,8 +622,12 @@ func (s *AccountRepoSuite) TestListWithFilters() {
 			ctx := context.Background()
 
 			tt.setup(client)
+			proxyID := tt.proxyID
+			if tt.proxyIDRef != nil {
+				proxyID = *tt.proxyIDRef
+			}
 
-			accounts, page, err := repo.ListWithFilters(ctx, pagination.PaginationParams{Page: 1, PageSize: 10}, tt.platform, tt.accType, tt.status, tt.search, tt.groupID, tt.privacyMode)
+			accounts, page, err := repo.ListWithFilters(ctx, pagination.PaginationParams{Page: 1, PageSize: 10}, tt.platform, tt.accType, tt.status, tt.search, tt.groupID, tt.privacyMode, proxyID)
 			s.Require().NoError(err)
 			s.Require().Len(accounts, tt.wantCount)
 			// Regression guard for issue #3601: when the whole result set fits on a single page,
@@ -677,7 +699,7 @@ func (s *AccountRepoSuite) TestPreload_And_VirtualFields() {
 	s.Require().Len(got.Groups, 1, "expected Groups to be populated")
 	s.Require().Equal(group.ID, got.Groups[0].ID)
 
-	accounts, page, err := s.repo.ListWithFilters(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 10}, "", "", "", "acc", 0, "")
+	accounts, page, err := s.repo.ListWithFilters(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 10}, "", "", "", "acc", 0, "", 0)
 	s.Require().NoError(err, "ListWithFilters")
 	s.Require().Equal(int64(1), page.Total)
 	s.Require().Len(accounts, 1)

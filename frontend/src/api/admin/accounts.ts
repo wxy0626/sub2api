@@ -40,6 +40,7 @@ export async function list(
     type?: string
     status?: string
     group?: string
+    proxy_id?: number
     search?: string
     privacy_mode?: string
     lite?: string
@@ -88,6 +89,7 @@ export async function listWithEtag(
     type?: string
     status?: string
     group?: string
+    proxy_id?: number
     search?: string
     privacy_mode?: string
     lite?: string

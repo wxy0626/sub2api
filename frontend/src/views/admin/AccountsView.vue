@@ -2,14 +2,12 @@
   <AppLayout>
     <TablePageLayout>
       <template #filters>
-        <div class="flex flex-wrap-reverse items-start justify-between gap-3">
-          <AccountTableFilters
-            v-model:searchQuery="params.search"
-            :filters="params"
-            :groups="groups"
-            @update:filters="(newFilters) => Object.assign(params, newFilters)"
-            @change="debouncedReload"
-            @update:searchQuery="debouncedReload"
+        <div data-test="account-list-controls" class="flex flex-wrap-reverse items-start justify-between gap-3">
+          <SearchInput
+            v-model="params.search"
+            :placeholder="t('admin.accounts.searchAccounts')"
+            class="w-full sm:w-64"
+            @update:model-value="debouncedReload"
           />
           <AccountTableActions
             :loading="loading"
@@ -272,6 +270,15 @@
               @update:model-value="handleHeaderTypeFilterChange"
             />
           </template>
+          <template #header-proxy>
+            <Select
+              :model-value="params.proxy_id"
+              :options="proxyFilterOptions"
+              class="w-36 normal-case"
+              :aria-label="t('admin.accounts.columns.proxy')"
+              @update:model-value="handleHeaderProxyFilterChange"
+            />
+          </template>
           <template #cell-select="{ row }">
             <input type="checkbox" :checked="isSelected(row.id)" @change="toggleSel(row.id)" class="rounded border-gray-300 text-primary-600 focus:ring-primary-500" />
           </template>
@@ -387,13 +394,14 @@
           </template>
           <template #cell-proxy="{ row }">
             <div class="flex flex-col gap-1">
-              <div v-if="row.proxy" class="flex items-center gap-2">
-                <span class="text-sm text-gray-700 dark:text-gray-300">{{ row.proxy.name }}</span>
-                <span v-if="row.proxy.country_code" class="text-xs text-gray-500 dark:text-gray-400">
-                  ({{ row.proxy.country_code }})
-                </span>
-              </div>
-              <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
+              <Select
+                :model-value="row.proxy_id"
+                :options="accountProxyOptions(row)"
+                :disabled="updatingProxyAccountIds.has(row.id)"
+                class="w-44 normal-case"
+                :aria-label="t('admin.accounts.columns.proxy')"
+                @update:model-value="handleAccountProxyChange(row, $event)"
+              />
               <div v-if="row.proxy && row.proxy.expires_at" class="flex items-center gap-2 text-xs">
                 <span class="text-gray-600 dark:text-gray-300">{{ formatDateTime(row.proxy.expires_at) }}</span>
                 <span :class="proxyExpiryBadge(row.proxy)">{{ proxyExpiryText(row.proxy) }}</span>
@@ -552,9 +560,9 @@ import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import SearchInput from '@/components/common/SearchInput.vue'
 import { CreateAccountModal, EditAccountModal, BulkEditAccountModal, SyncFromCrsModal, TempUnschedStatusModal } from '@/components/account'
 import AccountTableActions from '@/components/admin/account/AccountTableActions.vue'
-import AccountTableFilters from '@/components/admin/account/AccountTableFilters.vue'
 import AccountBulkActionsBar from '@/components/admin/account/AccountBulkActionsBar.vue'
 import AccountActionMenu from '@/components/admin/account/AccountActionMenu.vue'
 import ImportDataModal from '@/components/admin/account/ImportDataModal.vue'
@@ -588,6 +596,18 @@ const authStore = useAuthStore()
 
 const proxies = ref<AccountProxy[]>([])
 const groups = ref<AdminGroup[]>([])
+// 可用代理下拉选项：仅暴露启用中的代理，首项用于清除账号代理绑定。
+const availableProxyOptions = computed<SelectOption[]>(() => [
+  { value: null, label: '-' },
+  ...proxies.value
+    .filter(proxy => proxy.status === 'active')
+    .map(proxy => ({ value: proxy.id, label: proxy.country_code ? `${proxy.name} (${proxy.country_code})` : proxy.name }))
+])
+// 列表顶部代理筛选选项：空值表示不过滤，其他值限定为已绑定指定代理的账号。
+const proxyFilterOptions = computed<SelectOption[]>(() => [
+  { value: '', label: t('admin.accounts.allProxies') },
+  ...availableProxyOptions.value.filter(option => option.value !== null)
+])
 // 全量账号聚合得到的安全筛选枚举；接口不返回任何账号详情或凭据。
 const accountFilterValues = ref<{ platforms: string[]; types: string[] }>({ platforms: [], types: [] })
 // 表头分组筛选选项，始终提供“全部分组”，其余选项由接口返回的可用分组动态生成。
@@ -626,6 +646,12 @@ const handleHeaderTypeFilterChange = (value: string | number | boolean | null) =
   params.type = value == null ? '' : String(value)
   debouncedReload()
 }
+// 表头代理下拉变更后使用代理 ID 重载整个分页列表，空值恢复全部账号。
+const handleHeaderProxyFilterChange = (value: string | number | boolean | null) => {
+  const proxyID = normalizeProxyID(value)
+  params.proxy_id = proxyID ?? ''
+  debouncedReload()
+}
 const accountTableRef = ref<HTMLElement | null>(null)
 const dataTableRef = ref<InstanceType<typeof DataTable> | null>(null)
 type AccountBulkEditTarget =
@@ -640,10 +666,8 @@ type AccountBulkEditTarget =
       filters: {
         platform?: string
         type?: string
-        status?: string
         group?: string
         search?: string
-        privacy_mode?: string
         sort_by?: string
         sort_order?: AccountSortOrder
       }
@@ -682,6 +706,8 @@ const showReAuth = ref(false)
 const showTest = ref(false)
 // 保存正在连接测试的账号 ID，驱动状态列刷新图标的禁用和转圈状态。
 const testingAccountIds = reactive(new Set<number>())
+// 正在更新代理的账号 ID：避免同一行在请求未完成时重复提交。
+const updatingProxyAccountIds = reactive(new Set<number>())
 const showStats = ref(false)
 const showErrorPassthrough = ref(false)
 const showTLSFingerprintProfiles = ref(false)
@@ -1000,9 +1026,8 @@ const {
   initialParams: {
     platform: '',
     type: '',
-    status: '',
-    privacy_mode: '',
     group: '',
+    proxy_id: '',
     search: '',
     include_scheduler_score: shouldIncludeSchedulerScore() ? '1' : '0',
     sort_by: sortState.sort_by,
@@ -1212,9 +1237,8 @@ const refreshAccountsIncrementally = async () => {
       toRaw(params) as {
         platform?: string
         type?: string
-        status?: string
-        privacy_mode?: string
         group?: string
+        proxy_id?: number
         search?: string
         sort_by?: string
         sort_order?: AccountSortOrder
@@ -1796,10 +1820,8 @@ const buildBulkEditFilterSnapshot = () => {
   return {
     platform: typeof rawParams.platform === 'string' ? rawParams.platform : '',
     type: typeof rawParams.type === 'string' ? rawParams.type : '',
-    status: typeof rawParams.status === 'string' ? rawParams.status : '',
     group: typeof rawParams.group === 'string' ? rawParams.group : '',
     search: typeof rawParams.search === 'string' ? rawParams.search : '',
-    privacy_mode: typeof rawParams.privacy_mode === 'string' ? rawParams.privacy_mode : '',
     sort_by: typeof rawParams.sort_by === 'string' ? rawParams.sort_by : '',
     sort_order: sortOrder
   }
@@ -1843,13 +1865,10 @@ const handleBulkUpdated = () => {
 }
 const handleDataImported = () => { showImportData.value = false; reload() }
 const ACCOUNT_UNGROUPED_GROUP_QUERY_VALUE = 'ungrouped'
-const ACCOUNT_PRIVACY_MODE_UNSET_QUERY_VALUE = '__unset__'
 const buildAccountQueryFilters = () => ({
   platform: params.platform || '',
   type: params.type || '',
-  status: params.status || '',
   group: params.group || '',
-  privacy_mode: params.privacy_mode || '',
   search: params.search || '',
   sort_by: sortState.sort_by,
   sort_order: sortState.sort_order
@@ -1858,38 +1877,13 @@ const accountMatchesCurrentFilters = (account: Account) => {
   const filters = buildAccountQueryFilters()
   if (filters.platform && account.platform !== filters.platform) return false
   if (filters.type && account.type !== filters.type) return false
-  if (filters.status) {
-    const now = Date.now()
-    const rateLimitResetAt = account.rate_limit_reset_at ? new Date(account.rate_limit_reset_at).getTime() : Number.NaN
-    const isRateLimited = Number.isFinite(rateLimitResetAt) && rateLimitResetAt > now
-    const tempUnschedUntil = account.temp_unschedulable_until ? new Date(account.temp_unschedulable_until).getTime() : Number.NaN
-    const isTempUnschedulable = Number.isFinite(tempUnschedUntil) && tempUnschedUntil > now
-
-    if (filters.status === 'active') {
-      if (account.status !== 'active' || isRateLimited || isTempUnschedulable || !account.schedulable) return false
-    } else if (filters.status === 'rate_limited') {
-      if (account.status !== 'active' || !isRateLimited || isTempUnschedulable) return false
-    } else if (filters.status === 'temp_unschedulable') {
-      if (account.status !== 'active' || !isTempUnschedulable) return false
-    } else if (filters.status === 'unschedulable') {
-      if (account.status !== 'active' || account.schedulable || isRateLimited || isTempUnschedulable) return false
-    } else if (account.status !== filters.status) {
-      return false
-    }
-  }
+  const selectedProxyID = normalizeProxyID(params.proxy_id)
+  if (selectedProxyID !== null && account.proxy_id !== selectedProxyID) return false
   if (filters.group) {
     const groupIds = account.group_ids ?? account.groups?.map((group) => group.id) ?? []
     if (filters.group === ACCOUNT_UNGROUPED_GROUP_QUERY_VALUE) {
       if (groupIds.length > 0) return false
     } else if (!groupIds.includes(Number(filters.group))) {
-      return false
-    }
-  }
-  const privacyMode = typeof account.extra?.privacy_mode === 'string' ? account.extra.privacy_mode : ''
-  if (filters.privacy_mode) {
-    if (filters.privacy_mode === ACCOUNT_PRIVACY_MODE_UNSET_QUERY_VALUE) {
-      if (privacyMode.trim() !== '') return false
-    } else if (privacyMode !== filters.privacy_mode) {
       return false
     }
   }
@@ -1936,6 +1930,44 @@ const patchAccountInList = (updatedAccount: Account) => {
   nextAccounts[index] = mergedAccount
   accounts.value = nextAccounts
   syncAccountRefs(mergedAccount)
+}
+
+// 解析 Select 回传的代理 ID；空值、非法值和零都统一表示清除代理绑定。
+const normalizeProxyID = (value: string | number | boolean | null | undefined): number | null => {
+  const parsedProxyID = typeof value === 'number' ? value : Number(value)
+  return Number.isInteger(parsedProxyID) && parsedProxyID > 0 ? parsedProxyID : null
+}
+
+// 为账号行构建代理选项：保留当前非启用代理的只读标签，允许管理员明确清除失效绑定。
+const accountProxyOptions = (account: Account): SelectOption[] => {
+  if (!account.proxy || account.proxy.status === 'active' || availableProxyOptions.value.some(option => option.value === account.proxy_id)) {
+    return availableProxyOptions.value
+  }
+  const currentProxyLabel = account.proxy.country_code
+    ? `${account.proxy.name} (${account.proxy.country_code})`
+    : account.proxy.name
+  return [
+    ...availableProxyOptions.value,
+    { value: account.proxy.id, label: currentProxyLabel, disabled: true }
+  ]
+}
+
+// 行内代理选择持久化到既有账号更新接口，并用服务端返回的完整账号刷新当前行。
+const handleAccountProxyChange = async (account: Account, value: string | number | boolean | null) => {
+  const proxyID = normalizeProxyID(value)
+  if (account.proxy_id === proxyID || updatingProxyAccountIds.has(account.id)) return
+
+  updatingProxyAccountIds.add(account.id)
+  try {
+    const updatedAccount = await adminAPI.accounts.update(account.id, { proxy_id: proxyID ?? 0 })
+    patchAccountInList(updatedAccount)
+    appStore.showSuccess(t('admin.accounts.proxyUpdated'))
+  } catch (error) {
+    console.error('Failed to update account proxy:', error)
+    appStore.showError(extractApiErrorMessage(error, t('admin.accounts.proxyUpdateFailed')))
+  } finally {
+    updatingProxyAccountIds.delete(account.id)
+  }
 }
 
 // refreshTestedAccountInList 测试结束后只刷新目标账号，保持当前列表位置和滚动位置不变。

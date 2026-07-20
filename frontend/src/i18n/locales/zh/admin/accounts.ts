@@ -89,7 +89,10 @@ export default {
       allTypes: '全部类型',
       allStatus: '全部状态',
       allGroups: '全部分组',
-      ungroupedGroup: '未分配分组',
+      allProxies: '全部代理',
+      ungroupedGroup: '未分组',
+      proxyUpdated: '账号代理已更新',
+      proxyUpdateFailed: '更新账号代理失败，请检查代理是否可用后重试。',
       oauthType: 'OAuth',
       // Schedulable toggle
       schedulable: '参与调度',

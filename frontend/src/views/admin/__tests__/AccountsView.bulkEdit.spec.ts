@@ -14,6 +14,7 @@ const {
   getAvailableModels,
   probeUpstreamBillingBatch,
   testAccount,
+  updateAccount,
   showError,
   showSuccess
 } = vi.hoisted(() => ({
@@ -27,6 +28,7 @@ const {
   getAvailableModels: vi.fn(),
   probeUpstreamBillingBatch: vi.fn(),
   testAccount: vi.fn(),
+  updateAccount: vi.fn(),
   showError: vi.fn(),
   showSuccess: vi.fn()
 }))
@@ -45,6 +47,7 @@ vi.mock('@/api/admin', () => ({
       batchRefresh: vi.fn(),
       getAvailableModels,
       testAccount,
+      update: updateAccount,
       probeUpstreamBillingBatch,
       toggleSchedulable: vi.fn()
     },
@@ -89,9 +92,11 @@ const DataTableStub = {
       <div data-test="header-groups"><slot name="header-groups" /></div>
       <div data-test="header-platform"><slot name="header-platform" /></div>
       <div data-test="header-type"><slot name="header-type" /></div>
+      <div data-test="header-proxy"><slot name="header-proxy" /></div>
       <div v-for="row in data" :key="row.id">
         <div data-test="select-row"><slot name="cell-select" :row="row" /></div>
         <slot name="cell-created_at" :value="row.created_at" :row="row" />
+        <slot name="cell-proxy" :row="row" />
       </div>
     </div>
   `
@@ -121,7 +126,7 @@ const BulkEditAccountModalStub = {
 
 const HeaderGroupSelectStub = {
   props: ['modelValue', 'options'],
-  emits: ['update:modelValue'],
+  emits: ['update:modelValue', 'change'],
   template: '<button data-test="header-group-select" @click="$emit(\'update:modelValue\', \'2\')"></button>'
 }
 
@@ -139,6 +144,7 @@ describe('admin AccountsView bulk edit scope', () => {
     getAvailableModels.mockReset()
     probeUpstreamBillingBatch.mockReset()
     testAccount.mockReset()
+    updateAccount.mockReset()
     showError.mockReset()
     showSuccess.mockReset()
 
@@ -162,6 +168,7 @@ describe('admin AccountsView bulk edit scope', () => {
     getAvailableModels.mockResolvedValue([])
     probeUpstreamBillingBatch.mockResolvedValue([])
     testAccount.mockResolvedValue({ success: true, message: '账号测试成功' })
+    updateAccount.mockResolvedValue({})
   })
 
   it('opens bulk edit in filtered-results mode from the bulk actions dropdown', async () => {
@@ -279,7 +286,144 @@ describe('admin AccountsView bulk edit scope', () => {
   it('loads available groups into the table header filter and reloads by the selected group', async () => {
     vi.useFakeTimers()
     getAllGroups.mockResolvedValue([{ id: 2, name: '生产分组' }])
+    getAllProxies.mockResolvedValue([{ id: 7, name: '日本 11', country_code: 'JP', status: 'active' }])
     getFilterOptions.mockResolvedValue({ platforms: ['grok', 'openai'], types: ['apikey', 'oauth'] })
+
+    const wrapper = mount(AccountsView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: { template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>' },
+          DataTable: DataTableStub,
+          Select: HeaderGroupSelectStub,
+          SearchInput: {
+            props: ['modelValue'],
+            template: '<input data-test="account-search-input" :value="modelValue" />'
+          },
+          Pagination: true,
+          ConfirmDialog: true,
+          AccountTableActions: { template: '<div><slot name="beforeCreate" /><slot name="after" /></div>' },
+          AccountBulkActionsBar: AccountBulkActionsBarStub,
+          AccountActionMenu: true,
+          ImportDataModal: true,
+          ReAuthAccountModal: true,
+          AccountStatsModal: true,
+          ScheduledTestsPanel: true,
+          SyncFromCrsModal: true,
+          TempUnschedStatusModal: true,
+          ErrorPassthroughRulesModal: true,
+          TLSFingerprintProfilesModal: true,
+          CreateAccountModal: true,
+          EditAccountModal: true,
+          BulkEditAccountModal: BulkEditAccountModalStub,
+          PlatformTypeBadge: true,
+          AccountCapacityCell: true,
+          AccountStatusIndicator: true,
+          AccountTodayStatsCell: true,
+          AccountGroupsCell: true,
+          AccountUsageCell: true,
+          Icon: true
+        }
+      }
+    })
+
+    await flushPromises()
+    const listControls = wrapper.get('[data-test="account-list-controls"]')
+    expect(listControls.find('[data-test="account-search-input"]').exists()).toBe(true)
+    const toolbarSelects = listControls.findAllComponents(HeaderGroupSelectStub)
+    expect(toolbarSelects).toHaveLength(0)
+
+    const groupSelect = wrapper.get('[data-test="header-groups"]').getComponent(HeaderGroupSelectStub)
+    expect(groupSelect.props('modelValue')).toBe('')
+    expect(groupSelect.props('options')).toEqual([
+      { value: '', label: 'admin.accounts.allGroups' },
+      { value: 'ungrouped', label: 'admin.accounts.ungroupedGroup' },
+      { value: '2', label: '生产分组' }
+    ])
+    expect(wrapper.get('[data-test="header-platform"]').getComponent(HeaderGroupSelectStub).props('options')).toEqual([
+      { value: '', label: 'admin.accounts.allPlatforms' },
+      { value: 'grok', label: 'grok' },
+      { value: 'openai', label: 'openai' }
+    ])
+    expect(wrapper.get('[data-test="header-type"]').getComponent(HeaderGroupSelectStub).props('options')).toEqual([
+      { value: '', label: 'admin.accounts.allTypes' },
+      { value: 'apikey', label: 'apikey' },
+      { value: 'oauth', label: 'oauth' }
+    ])
+    expect(wrapper.get('[data-test="header-proxy"]').getComponent(HeaderGroupSelectStub).props('options')).toEqual([
+      { value: '', label: 'admin.accounts.allProxies' },
+      { value: 7, label: '日本 11 (JP)' }
+    ])
+
+    const columnKeys = wrapper.findAll('[data-test="column-key"]').map(node => node.text())
+    expect(columnKeys).toContain('platform')
+    expect(columnKeys).toContain('type')
+    expect(columnKeys).not.toContain('platform_type')
+
+    await wrapper.get('[data-test="header-groups"]').get('[data-test="header-group-select"]').trigger('click')
+    await vi.advanceTimersByTimeAsync(300)
+    await flushPromises()
+
+    expect(listAccounts).toHaveBeenLastCalledWith(
+      1,
+      expect.any(Number),
+      expect.objectContaining({ group: '2' }),
+      expect.any(Object)
+    )
+
+    ;(wrapper.vm as any).handleHeaderPlatformFilterChange('openai')
+    await vi.advanceTimersByTimeAsync(300)
+    await flushPromises()
+    expect(listAccounts).toHaveBeenLastCalledWith(
+      1,
+      expect.any(Number),
+      expect.objectContaining({ platform: 'openai' }),
+      expect.any(Object)
+    )
+
+    ;(wrapper.vm as any).handleHeaderTypeFilterChange('oauth')
+    await vi.advanceTimersByTimeAsync(300)
+    await flushPromises()
+    expect(listAccounts).toHaveBeenLastCalledWith(
+      1,
+      expect.any(Number),
+      expect.objectContaining({ platform: 'openai', type: 'oauth' }),
+      expect.any(Object)
+    )
+
+    ;(wrapper.vm as any).handleHeaderProxyFilterChange(7)
+    await vi.advanceTimersByTimeAsync(300)
+    await flushPromises()
+    expect(listAccounts).toHaveBeenLastCalledWith(
+      1,
+      expect.any(Number),
+      expect.objectContaining({ proxy_id: 7 }),
+      expect.any(Object)
+    )
+
+    vi.useRealTimers()
+  })
+
+  it('uses the account update API to bind and clear a row proxy', async () => {
+    const account = {
+      id: 9,
+      name: 'plus',
+      platform: 'openai',
+      type: 'oauth',
+      status: 'active',
+      schedulable: true,
+      proxy_id: null,
+      created_at: '2026-03-07T10:00:00Z',
+      updated_at: '2026-03-07T10:00:00Z'
+    }
+    listAccounts.mockResolvedValue({ items: [account], total: 1, page: 1, page_size: 20, pages: 1 })
+    getAllProxies.mockResolvedValue([
+      { id: 7, name: '日本 11', country_code: 'JP', status: 'active' },
+      { id: 8, name: '失效代理', status: 'inactive' }
+    ])
+    updateAccount
+      .mockResolvedValueOnce({ ...account, proxy_id: 7, proxy: { id: 7, name: '日本 11', country_code: 'JP', status: 'active' } })
+      .mockResolvedValueOnce({ ...account, proxy_id: null, proxy: undefined })
 
     const wrapper = mount(AccountsView, {
       global: {
@@ -317,61 +461,17 @@ describe('admin AccountsView bulk edit scope', () => {
     })
 
     await flushPromises()
-    const headerSelects = wrapper.findAllComponents(HeaderGroupSelectStub)
-    const groupSelect = headerSelects[0]
-    expect(groupSelect.props('modelValue')).toBe('')
-    expect(groupSelect.props('options')).toEqual([
-      { value: '', label: 'admin.accounts.allGroups' },
-      { value: 'ungrouped', label: 'admin.accounts.ungroupedGroup' },
-      { value: '2', label: '生产分组' }
-    ])
-    expect(headerSelects[1].props('options')).toEqual([
-      { value: '', label: 'admin.accounts.allPlatforms' },
-      { value: 'grok', label: 'grok' },
-      { value: 'openai', label: 'openai' }
-    ])
-    expect(headerSelects[2].props('options')).toEqual([
-      { value: '', label: 'admin.accounts.allTypes' },
-      { value: 'apikey', label: 'apikey' },
-      { value: 'oauth', label: 'oauth' }
+    expect((wrapper.vm as any).accountProxyOptions(account)).toEqual([
+      { value: null, label: '-' },
+      { value: 7, label: '日本 11 (JP)' }
     ])
 
-    const columnKeys = wrapper.findAll('[data-test="column-key"]').map(node => node.text())
-    expect(columnKeys).toContain('platform')
-    expect(columnKeys).toContain('type')
-    expect(columnKeys).not.toContain('platform_type')
+    await (wrapper.vm as any).handleAccountProxyChange(account, 7)
+    expect(updateAccount).toHaveBeenLastCalledWith(9, { proxy_id: 7 })
 
-    await wrapper.get('[data-test="header-group-select"]').trigger('click')
-    await vi.advanceTimersByTimeAsync(300)
-    await flushPromises()
-
-    expect(listAccounts).toHaveBeenLastCalledWith(
-      1,
-      expect.any(Number),
-      expect.objectContaining({ group: '2' }),
-      expect.any(Object)
-    )
-
-    ;(wrapper.vm as any).handleHeaderPlatformFilterChange('openai')
-    await vi.advanceTimersByTimeAsync(300)
-    await flushPromises()
-    expect(listAccounts).toHaveBeenLastCalledWith(
-      1,
-      expect.any(Number),
-      expect.objectContaining({ platform: 'openai' }),
-      expect.any(Object)
-    )
-
-    ;(wrapper.vm as any).handleHeaderTypeFilterChange('oauth')
-    await vi.advanceTimersByTimeAsync(300)
-    await flushPromises()
-    expect(listAccounts).toHaveBeenLastCalledWith(
-      1,
-      expect.any(Number),
-      expect.objectContaining({ platform: 'openai', type: 'oauth' }),
-      expect.any(Object)
-    )
-    vi.useRealTimers()
+    await (wrapper.vm as any).handleAccountProxyChange({ ...account, proxy_id: 7 }, null)
+    expect(updateAccount).toHaveBeenLastCalledWith(9, { proxy_id: 0 })
+    expect(showSuccess).toHaveBeenCalledWith('admin.accounts.proxyUpdated')
   })
 
   it('submits selected account IDs from every page for backend eligibility checks', async () => {
