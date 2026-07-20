@@ -80,6 +80,31 @@ func TestAccountHandlerListIncludesCreatedAt(t *testing.T) {
 	require.Equal(t, 0, offset)
 }
 
+func TestAccountHandlerListPassesProxyFilter(t *testing.T) {
+	router, adminSvc := setupAccountListRouter()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts?proxy_id=12", nil)
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, int64(12), adminSvc.lastListAccounts.proxyID)
+}
+
+func TestAccountHandlerListRejectsInvalidProxyFilter(t *testing.T) {
+	router, _ := setupAccountListRouter()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts?proxy_id=0", nil)
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "INVALID_PROXY_FILTER")
+	require.Contains(t, rec.Body.String(), "代理筛选参数 proxy_id 无效")
+	require.Contains(t, rec.Body.String(), "请从代理下拉列表重新选择有效代理后重试")
+	require.Contains(t, rec.Body.String(), "技术详情：proxy_id must be a positive integer")
+}
+
 func TestAccountHandlerListReturnsSchedulerScoresPerGroup(t *testing.T) {
 	router, adminSvc := setupAccountListRouter()
 	now := time.Now().UTC()

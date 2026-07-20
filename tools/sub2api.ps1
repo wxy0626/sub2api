@@ -16,6 +16,18 @@ $SSH隧道错误日志 = 'E:\AI\sun2api\.codex\log\sub2api-proxy-tunnel.err.log'
 $SSH隧道状态日志 = 'E:\AI\sun2api\.codex\log\sub2api-proxy-tunnel-launcher.log'
 # 本地 Mihomo HTTP 代理端口：仅用于区分等待代理与 SSH 建连失败。
 $本地代理端口 = 7897
+# 新加坡专用 Mihomo 启动器：独立实例固定选用已验证的新加坡节点。
+$新加坡代理启动脚本 = 'E:\AI\sun2api\tools\start-sub2api-singapore-proxy.ps1'
+# 新加坡 SSH 隧道守护脚本：仅建立远端 17898 到本机 17998 的专用转发。
+$新加坡SSH隧道守护脚本 = 'E:\AI\sun2api\tools\start-sub2api-singapore-proxy-tunnel.ps1'
+# 新加坡 SSH 隧道状态文件：用于确认第二条隧道已独立建立。
+$新加坡SSH隧道状态文件 = 'E:\AI\sun2api\.codex\log\sub2api-singapore-proxy-tunnel-state.json'
+# 新加坡 SSH 隧道错误日志：连接失败时保留 SSH 原始技术详情。
+$新加坡SSH隧道错误日志 = 'E:\AI\sun2api\.codex\log\sub2api-singapore-proxy-tunnel.err.log'
+# 新加坡 SSH 隧道状态日志：记录守护重连与本地专用代理状态。
+$新加坡SSH隧道状态日志 = 'E:\AI\sun2api\.codex\log\sub2api-singapore-proxy-tunnel-launcher.log'
+# 新加坡专用本地 HTTP 代理端口。
+$新加坡本地代理端口 = 17998
 
 function 测试Docker引擎就绪 {
     docker info *> $null
@@ -82,6 +94,32 @@ function 启动SSH隧道守护 {
     ) -WindowStyle Hidden -PassThru -ErrorAction Stop
 }
 
+# 启动新加坡专用 Mihomo：此脚本不会改变 Clash Verge 全局实例或日本节点选择。
+function 启动新加坡专用代理 {
+    if (-not (Test-Path -LiteralPath $新加坡代理启动脚本 -PathType Leaf)) {
+        throw "未找到新加坡专用代理启动脚本：$新加坡代理启动脚本"
+    }
+
+    & pwsh.exe -NoProfile -ExecutionPolicy Bypass -File $新加坡代理启动脚本
+    if ($LASTEXITCODE -ne 0) {
+        throw "新加坡专用代理启动或 ChatGPT TLS 验证失败。请查看 .codex\\log\\sub2api-singapore-proxy-probe.log 和 .codex\\log\\sub2api-singapore-mihomo.err.log。"
+    }
+}
+
+# 启动新加坡 SSH 隧道守护：独立进程与独立端口确保日本隧道不受影响。
+function 启动新加坡SSH隧道守护 {
+    if (-not (Test-Path -LiteralPath $新加坡SSH隧道守护脚本 -PathType Leaf)) {
+        throw "未找到新加坡 SSH 隧道守护脚本：$新加坡SSH隧道守护脚本"
+    }
+
+    return Start-Process -FilePath 'pwsh.exe' -ArgumentList @(
+        '-NoProfile',
+        '-ExecutionPolicy', 'Bypass',
+        '-WindowStyle', 'Hidden',
+        '-File', $新加坡SSH隧道守护脚本
+    ) -WindowStyle Hidden -PassThru -ErrorAction Stop
+}
+
 # 测试本地代理端口：用于在隧道尚未建立时给出准确的中文状态说明。
 function 测试本地代理已监听 {
     return [bool](Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort $本地代理端口 -State Listen -ErrorAction SilentlyContinue)
@@ -100,10 +138,31 @@ function 获取SSH隧道状态 {
     }
 }
 
+# 获取指定状态文件的隧道状态：供日本和新加坡两条隧道复用相同确认流程。
+function 获取指定SSH隧道状态 {
+    param([Parameter(Mandatory = $true)][string]$状态文件路径)
+
+    if (-not (Test-Path -LiteralPath $状态文件路径 -PathType Leaf)) {
+        return $null
+    }
+
+    try {
+        return Get-Content -LiteralPath $状态文件路径 -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        return $null
+    }
+}
+
 # 测试 SSH 隧道进程：只接受携带目标反向转发参数且仍存活的 ssh.exe 进程。
 function 测试SSH隧道进程已连接 {
     return [bool](Get-CimInstance Win32_Process -Filter "Name = 'ssh.exe'" -ErrorAction SilentlyContinue |
         Where-Object { $_.CommandLine -match '172\.17\.0\.1:17897:127\.0\.0\.1:7897' })
+}
+
+# 测试新加坡 SSH 隧道进程：只匹配 17898 到 17998 的专用转发。
+function 测试新加坡SSH隧道进程已连接 {
+    return [bool](Get-CimInstance Win32_Process -Filter "Name = 'ssh.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -match '172\.17\.0\.1:17898:127\.0\.0\.1:17998' })
 }
 
 # 确认 SSH 隧道结果：本地代理可用时必须等到 SSH 进程和守护状态同时确认，否则以失败结束。
@@ -143,6 +202,48 @@ function 确认SSH隧道结果 {
     throw "本机 Mihomo 127.0.0.1:$本地代理端口 已监听，但 SSH 反向隧道在 $隧道确认超时秒数 秒内未建立。请检查 SSH 私钥、ECS 118.31.186.169 的 sshd 反向转发权限及端口占用。状态日志：$SSH隧道状态日志；SSH 错误日志：$SSH隧道错误日志"
 }
 
+# 确认新加坡 SSH 隧道结果：只有专用代理、守护状态和 SSH 进程均就绪才报告连接成功。
+function 确认新加坡SSH隧道结果 {
+    param([Parameter(Mandatory = $true)][System.Diagnostics.Process]$守护进程)
+
+    $隧道确认超时秒数 = 15
+    $截止时间 = (Get-Date).AddSeconds($隧道确认超时秒数)
+    while ((Get-Date) -lt $截止时间) {
+        $隧道状态 = 获取指定SSH隧道状态 -状态文件路径 $新加坡SSH隧道状态文件
+        # 短 TCP 探针：避免 Windows 网络枚举在启动路径阻塞。
+        $新加坡代理客户端 = [System.Net.Sockets.TcpClient]::new()
+        try {
+            $新加坡代理异步连接 = $新加坡代理客户端.BeginConnect('127.0.0.1', $新加坡本地代理端口, $null, $null)
+            $本地代理已监听 = $新加坡代理异步连接.AsyncWaitHandle.WaitOne(1000)
+            if ($本地代理已监听) {
+                $新加坡代理客户端.EndConnect($新加坡代理异步连接)
+            }
+        } catch {
+            $本地代理已监听 = $false
+        } finally {
+            $新加坡代理客户端.Dispose()
+        }
+        $SSH隧道已连接 = 测试新加坡SSH隧道进程已连接
+
+        if ($隧道状态 -and $隧道状态.status -eq 'connected' -and $SSH隧道已连接) {
+            Write-Output "[sub2api] 新加坡 SSH 反向隧道已连接：172.17.0.1:17898 -> 127.0.0.1:$新加坡本地代理端口"
+            return
+        }
+        if (-not $本地代理已监听) {
+            throw "新加坡专用代理 127.0.0.1:$新加坡本地代理端口 未监听。请查看 .codex\\log\\sub2api-singapore-proxy-probe.log。"
+        }
+        if ($隧道状态 -and $隧道状态.status -eq 'failed') {
+            throw "新加坡 SSH 反向隧道连接失败：$($隧道状态.message) 请检查 $新加坡SSH隧道状态日志 和 $新加坡SSH隧道错误日志。"
+        }
+        if ($守护进程.HasExited) {
+            throw "新加坡 SSH 隧道守护进程已提前退出。请检查 $新加坡SSH隧道状态日志 和 $新加坡SSH隧道错误日志。"
+        }
+        Start-Sleep -Milliseconds 500
+    }
+
+    throw "新加坡专用代理已监听，但 SSH 反向隧道在 $隧道确认超时秒数 秒内未建立。请检查 $新加坡SSH隧道状态日志 和 $新加坡SSH隧道错误日志。"
+}
+
 Write-Output '[sub2api] Checking Docker Desktop...'
 if (-not (测试Docker引擎就绪)) {
     Write-Output '[sub2api] Starting Docker Desktop...'
@@ -177,6 +278,12 @@ try {
 Write-Output '[sub2api] Starting remote proxy tunnel guardian...'
 $SSH隧道守护进程 = 启动SSH隧道守护
 确认SSH隧道结果 -守护进程 $SSH隧道守护进程
+
+Write-Output '[sub2api] Starting Singapore dedicated proxy...'
+启动新加坡专用代理
+Write-Output '[sub2api] Starting Singapore proxy tunnel guardian...'
+$新加坡SSH隧道守护进程 = 启动新加坡SSH隧道守护
+确认新加坡SSH隧道结果 -守护进程 $新加坡SSH隧道守护进程
 
 # 端口健康检查最大轮次。
 $健康检查次数 = 30
