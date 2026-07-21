@@ -1229,6 +1229,29 @@ update:
   proxy_url: ""
 
 # =============================================================================
+# Personal Git + OCI Image Deployment (个人 Git 与 OCI 镜像部署)
+# =============================================================================
+# 上游 Release 仅用于版本提示。管理员部署最新版本和回退历史版本时，只会使用这里
+# 的 Git tag 与镜像 digest/revision 三方一致的镜像。
+personal_deployment:
+  # GitHub repository, owner/repository format
+  # 用户自己的 GitHub 仓库，格式 owner/repository
+  git_repository: ""
+  # OCI registry image repository; a tag is stripped before digest verification
+  # OCI 镜像仓库；即使填入 tag，部署时也会剥离 tag 并强制使用 digest
+  registry_image: ""
+  # Private Git repository read token (contents:read)
+  # 私有 Git 仓库只读 token（contents:read）
+  github_token: ""
+  # Private registry read credentials (for example GHCR packages:read)
+  # 私有镜像仓库只读凭据（例如 GHCR packages:read）
+  registry_username: ""
+  registry_token: ""
+  # Number of newest verified personal versions displayed to administrators
+  # 管理端展示的最新已验证个人版本数量
+  max_versions: 3
+
+# =============================================================================
 # Image Storage (异步图片任务结果对象存储)
 # =============================================================================
 # 长耗时生图套 Cloudflare 会 524 超时，异步图片任务接口（/v1/images/generations/async

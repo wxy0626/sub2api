@@ -95,6 +95,7 @@ type Config struct {
 	Timezone                string                        `mapstructure:"timezone"` // e.g. "Asia/Shanghai", "UTC"
 	Gemini                  GeminiConfig                  `mapstructure:"gemini"`
 	Update                  UpdateConfig                  `mapstructure:"update"`
+	PersonalDeployment      PersonalDeploymentConfig      `mapstructure:"personal_deployment"`
 	Idempotency             IdempotencyConfig             `mapstructure:"idempotency"`
 	BatchImage              BatchImageConfig              `mapstructure:"batch_image"`
 	ImageStorage            ImageStorageConfig            `mapstructure:"image_storage"`
@@ -159,6 +160,22 @@ type UpdateConfig struct {
 	// 支持 http/https/socks5/socks5h 协议
 	// 例如: "http://127.0.0.1:7890", "socks5://127.0.0.1:1080"
 	ProxyURL string `mapstructure:"proxy_url"`
+}
+
+// PersonalDeploymentConfig 描述用户自有 Git 仓库与镜像仓库的受控部署来源。
+// 上游 Release 仅用于版本提示，实际更新与回退必须由这里配置的版本映射完成。
+type PersonalDeploymentConfig struct {
+	// GitRepository 使用 owner/repository 形式，例如 example/sub2api。
+	GitRepository string `mapstructure:"git_repository"`
+	// RegistryImage 是不含 tag/digest 的镜像仓库，也兼容从 SUB2API_IMAGE 传入的带 tag 引用。
+	RegistryImage string `mapstructure:"registry_image"`
+	// GitHubToken 用于读取私有仓库标签；不会返回给客户端或写入错误详情。
+	GitHubToken string `mapstructure:"github_token"`
+	// RegistryUsername 与 RegistryToken 用于读取私有 OCI 镜像清单；RegistryToken 不会记录到日志。
+	RegistryUsername string `mapstructure:"registry_username"`
+	RegistryToken    string `mapstructure:"registry_token"`
+	// MaxVersions 限制管理员界面展示和校验的自有发布版本数量。
+	MaxVersions int `mapstructure:"max_versions"`
 }
 
 type IdempotencyConfig struct {
@@ -2364,6 +2381,12 @@ func setEnvReachableDefaults() {
 	viper.SetDefault("gateway.session_idle_timeout_minutes", 0)
 	viper.SetDefault("gateway.user_message_queue.mode", "")
 	viper.SetDefault("update.proxy_url", "")
+	viper.SetDefault("personal_deployment.git_repository", "")
+	viper.SetDefault("personal_deployment.registry_image", "")
+	viper.SetDefault("personal_deployment.github_token", "")
+	viper.SetDefault("personal_deployment.registry_username", "")
+	viper.SetDefault("personal_deployment.registry_token", "")
+	viper.SetDefault("personal_deployment.max_versions", 3)
 
 	// sticky_escape_enabled is the one exception to the zero-value rule: its
 	// effective default is true, applied post-unmarshal via a viper.IsSet guard.

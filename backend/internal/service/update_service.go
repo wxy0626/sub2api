@@ -658,7 +658,9 @@ func parseVersion(v string) [3]int {
 	parts := strings.Split(v, ".")
 	result := [3]int{0, 0, 0}
 	for i := 0; i < len(parts) && i < 3; i++ {
-		if parsed, err := strconv.Atoi(parts[i]); err == nil {
+		// 发布基础版本忽略 -dev 等构建后缀，避免同一 Release 被误判为可更新。
+		basePart := strings.SplitN(parts[i], "-", 2)[0]
+		if parsed, err := strconv.Atoi(basePart); err == nil {
 			result[i] = parsed
 		}
 	}
