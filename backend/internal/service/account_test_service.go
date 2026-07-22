@@ -59,6 +59,12 @@ const (
 	defaultGeminiTextTestPrompt  = "hi"
 	defaultGeminiImageTestPrompt = "Generate a cute orange cat astronaut sticker on a clean pastel background."
 	defaultOpenAIImageTestPrompt = "Generate a cute orange cat astronaut sticker on a clean pastel background."
+	// modelTestReasoningEffort 统一可配置模型测试请求的推理强度，避免默认高推理造成测试变慢。
+	modelTestReasoningEffort = "low"
+	// geminiLowThinkingBudget 是 Gemini 2.5 系列 low 推理强度对应的测试预算。
+	geminiLowThinkingBudget = 1024
+	// geminiLowThinkingLevel 是 Gemini 3 文本模型的 low 推理强度枚举值。
+	geminiLowThinkingLevel = "LOW"
 )
 
 // isOpenAIImageModel checks if the model is an OpenAI image generation model (e.g. gpt-image-2).
@@ -142,7 +148,7 @@ func createTestPayload(modelID string) (map[string]any, error) {
 		return nil, err
 	}
 
-	return map[string]any{
+	payload := map[string]any{
 		"model": modelID,
 		"messages": []map[string]any{
 			{
@@ -173,7 +179,33 @@ func createTestPayload(modelID string) (map[string]any, error) {
 		"max_tokens":  1024,
 		"temperature": 1,
 		"stream":      true,
-	}, nil
+	}
+	if outputConfig := claudeTestOutputConfig(modelID); outputConfig != nil {
+		payload["output_config"] = outputConfig
+	}
+	return payload, nil
+}
+
+// claudeTestOutputConfig 仅为支持 effort 的 Claude 模型生成低推理强度配置。
+// 不支持该参数的旧模型保持原请求体，避免测试请求被上游参数校验拒绝。
+func claudeTestOutputConfig(modelID string) map[string]string {
+	normalizedModelID := strings.ToLower(strings.TrimSpace(modelID))
+	normalizedModelID = strings.TrimPrefix(normalizedModelID, "models/")
+	normalizedModelID = strings.ReplaceAll(normalizedModelID, ".", "-")
+
+	supportsEffort := strings.HasPrefix(normalizedModelID, "claude-fable-5") ||
+		strings.HasPrefix(normalizedModelID, "claude-mythos-5") ||
+		strings.HasPrefix(normalizedModelID, "claude-mythos-preview") ||
+		strings.HasPrefix(normalizedModelID, "claude-opus-4-5") ||
+		strings.HasPrefix(normalizedModelID, "claude-opus-4-6") ||
+		strings.HasPrefix(normalizedModelID, "claude-opus-4-7") ||
+		strings.HasPrefix(normalizedModelID, "claude-opus-4-8") ||
+		strings.HasPrefix(normalizedModelID, "claude-sonnet-4-6") ||
+		strings.HasPrefix(normalizedModelID, "claude-sonnet-5")
+	if !supportsEffort {
+		return nil
+	}
+	return map[string]string{"effort": modelTestReasoningEffort}
 }
 
 // TestAccountConnection tests an account's connection by sending a test request
@@ -1369,6 +1401,16 @@ func createGeminiTestPayload(modelID string, prompt string) []byte {
 			imagePrompt = defaultGeminiImageTestPrompt
 		}
 
+		generationConfig := map[string]any{
+			"responseModalities": []string{"TEXT", "IMAGE"},
+			"imageConfig": map[string]any{
+				"aspectRatio": "1:1",
+			},
+		}
+		if thinkingConfig := geminiTestThinkingConfig(modelID); thinkingConfig != nil {
+			generationConfig["thinkingConfig"] = thinkingConfig
+		}
+
 		payload := map[string]any{
 			"contents": []map[string]any{
 				{
@@ -1378,12 +1420,7 @@ func createGeminiTestPayload(modelID string, prompt string) []byte {
 					},
 				},
 			},
-			"generationConfig": map[string]any{
-				"responseModalities": []string{"TEXT", "IMAGE"},
-				"imageConfig": map[string]any{
-					"aspectRatio": "1:1",
-				},
-			},
+			"generationConfig": generationConfig,
 		}
 		bytes, _ := json.Marshal(payload)
 		return bytes
@@ -1409,8 +1446,30 @@ func createGeminiTestPayload(modelID string, prompt string) []byte {
 			},
 		},
 	}
+	if thinkingConfig := geminiTestThinkingConfig(modelID); thinkingConfig != nil {
+		payload["generationConfig"] = map[string]any{"thinkingConfig": thinkingConfig}
+	}
 	bytes, _ := json.Marshal(payload)
 	return bytes
+}
+
+// geminiTestThinkingConfig 按 Gemini 模型能力返回低推理强度配置。
+// Gemini 2.0 与不支持 low 的图像模型保持上游默认，避免无效字段导致测试失败。
+func geminiTestThinkingConfig(modelID string) map[string]any {
+	normalizedModelID := strings.ToLower(strings.TrimSpace(modelID))
+	normalizedModelID = strings.TrimPrefix(normalizedModelID, "models/")
+	if isImageGenerationModel(normalizedModelID) {
+		return nil
+	}
+
+	switch {
+	case strings.HasPrefix(normalizedModelID, "gemini-2.5-"):
+		return map[string]any{"thinkingBudget": geminiLowThinkingBudget}
+	case strings.HasPrefix(normalizedModelID, "gemini-3") && !strings.Contains(normalizedModelID, "-image"):
+		return map[string]any{"thinkingLevel": geminiLowThinkingLevel}
+	default:
+		return nil
+	}
 }
 
 // processGeminiStream processes SSE stream from Gemini API
@@ -1509,7 +1568,8 @@ func createOpenAITestPayload(modelID string, isOAuth bool) map[string]any {
 				},
 			},
 		},
-		"stream": true,
+		"reasoning": map[string]string{"effort": modelTestReasoningEffort},
+		"stream":    true,
 	}
 
 	// OAuth accounts using ChatGPT internal API require store: false
@@ -1535,6 +1595,7 @@ func createOpenAIAccountTestPayload(modelID string, isOAuth bool, lightweightPro
 		"input":             "hi",
 		"stream":            true,
 		"max_output_tokens": 1,
+		"reasoning":         map[string]string{"effort": modelTestReasoningEffort},
 	}
 }
 
@@ -1545,7 +1606,8 @@ func createOpenAIChatCompletionsTestPayload(modelID string, prompt string) map[s
 	}
 
 	return map[string]any{
-		"model": modelID,
+		"model":            modelID,
+		"reasoning_effort": modelTestReasoningEffort,
 		"messages": []map[string]any{
 			{
 				"role":    "user",

@@ -442,6 +442,14 @@ func testConnectionHandleError(
 // buildGeminiTestRequest 构建 Gemini 格式测试请求
 // 使用最小 token 消耗：输入 "." + maxOutputTokens: 1
 func (s *AntigravityGatewayService) buildGeminiTestRequest(projectID, model string) ([]byte, error) {
+	// generationConfig 保持测试输出最小，并在模型支持时显式限制为低推理强度。
+	generationConfig := map[string]any{
+		"maxOutputTokens": 1,
+	}
+	if thinkingConfig := geminiTestThinkingConfig(model); thinkingConfig != nil {
+		generationConfig["thinkingConfig"] = thinkingConfig
+	}
+
 	payload := map[string]any{
 		"contents": []map[string]any{
 			{
@@ -457,9 +465,7 @@ func (s *AntigravityGatewayService) buildGeminiTestRequest(projectID, model stri
 				{"text": antigravity.GetDefaultIdentityPatch()},
 			},
 		},
-		"generationConfig": map[string]any{
-			"maxOutputTokens": 1,
-		},
+		"generationConfig": generationConfig,
 	}
 	payloadBytes, _ := json.Marshal(payload)
 	return s.wrapV1InternalRequest(projectID, model, payloadBytes)
@@ -478,6 +484,11 @@ func (s *AntigravityGatewayService) buildClaudeTestRequest(projectID, mappedMode
 		},
 		MaxTokens: 1,
 		Stream:    false,
+		// Antigravity 会将该预算转换为 Gemini thinkingConfig，确保测试不使用默认高推理预算。
+		Thinking: &antigravity.ThinkingConfig{
+			Type:         "enabled",
+			BudgetTokens: geminiLowThinkingBudget,
+		},
 	}
 	return antigravity.TransformClaudeToGemini(claudeReq, projectID, mappedModel)
 }

@@ -178,6 +178,24 @@ func TestAccountTestService_OpenAIOAuthTestNormalizesGPT56Alias(t *testing.T) {
 	body, err := io.ReadAll(upstream.requests[0].Body)
 	require.NoError(t, err)
 	require.Equal(t, "gpt-5.6-sol", gjson.GetBytes(body, "model").String())
+	require.Equal(t, modelTestReasoningEffort, gjson.GetBytes(body, "reasoning.effort").String())
+}
+
+// TestOpenAIAccountTestPayloadsUseLowReasoningEffort 覆盖模型测试的所有 OpenAI 请求体构造路径。
+func TestOpenAIAccountTestPayloadsUseLowReasoningEffort(t *testing.T) {
+	t.Parallel()
+
+	responsesPayload := createOpenAITestPayload("gpt-5.6-luna", true)
+	require.Equal(t, modelTestReasoningEffort, responsesPayload["reasoning"].(map[string]string)["effort"])
+
+	lightweightResponsesPayload := createOpenAIAccountTestPayload("gpt-5.6-luna", false, true)
+	require.Equal(t, modelTestReasoningEffort, lightweightResponsesPayload["reasoning"].(map[string]string)["effort"])
+
+	chatCompletionsPayload := createOpenAIChatCompletionsTestPayload("gpt-5.6-luna", "")
+	require.Equal(t, modelTestReasoningEffort, chatCompletionsPayload["reasoning_effort"])
+
+	compactPayload := createOpenAICompactProbePayload("gpt-5.6-luna")
+	require.Equal(t, modelTestReasoningEffort, compactPayload["reasoning"].(map[string]string)["effort"])
 }
 
 func TestAccountTestService_OpenAIShadowUsesParentCredentialsAndShadowModel(t *testing.T) {

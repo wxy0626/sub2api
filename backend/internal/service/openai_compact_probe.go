@@ -35,6 +35,7 @@ func createOpenAICompactProbePayload(model string) map[string]any {
 	return map[string]any{
 		"model":        strings.TrimSpace(model),
 		"instructions": "You are a helpful coding assistant.",
+		"reasoning":    map[string]string{"effort": modelTestReasoningEffort},
 		"input": []any{
 			map[string]any{
 				"type":    "message",
