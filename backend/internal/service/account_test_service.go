@@ -776,6 +776,9 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		if mode == AccountTestModeResponses {
 			return s.sendErrorAndEnd(c, fmt.Sprintf("通过 /v1/responses 测试连接失败：上游返回 HTTP %d，请检查接口兼容性、模型权限和 API Key。原始技术详情：%s", resp.StatusCode, string(body)))
 		}
+		if resp.StatusCode == http.StatusBadRequest {
+			return s.sendErrorAndEnd(c, formatOpenAIAccountTestHTTP400Error(body))
+		}
 		return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
 	}
 
@@ -1098,6 +1101,9 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 		}
 		if s.isOpenAIWorkspaceDeactivated(resp.StatusCode, body) {
 			return s.sendWorkspaceDeactivatedAndEnd(c, ctx, account)
+		}
+		if resp.StatusCode == http.StatusBadRequest {
+			return s.sendErrorAndEnd(c, formatOpenAIAccountTestHTTP400Error(body))
 		}
 		return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
 	}
@@ -2082,6 +2088,17 @@ func openAIAccountTestTransportErrorMessage(err error) string {
 		return "请求失败：与 ChatGPT 上游服务的连接意外中断（EOF）"
 	}
 	return "请求失败：无法连接到上游服务，请检查代理、网络和账号配置"
+}
+
+// formatOpenAIAccountTestHTTP400Error 将 OpenAI 测试上游 HTTP 400 转换为管理员可操作的中文错误，并保留已脱敏的原始技术详情。
+func formatOpenAIAccountTestHTTP400Error(responseBody []byte) string {
+	// 原始技术详情已在调用方按账号凭证脱敏，空响应仍保留 HTTP 状态便于排查。
+	technicalDetail := strings.TrimSpace(string(responseBody))
+	if technicalDetail == "" {
+		technicalDetail = "upstream returned HTTP 400 without a response body"
+	}
+
+	return fmt.Sprintf("账号测试失败：上游拒绝了测试请求（HTTP 400）。请检查所选模型、请求参数、账号权限和接口兼容性。原始技术详情：%s", technicalDetail)
 }
 
 // cloneOpenAIAccountTestRequest 为传输层重试重新创建独立且可读取的请求体。

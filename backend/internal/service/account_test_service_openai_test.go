@@ -522,6 +522,41 @@ func TestAccountTestService_OpenAI403MarksTestedAccountAsError(t *testing.T) {
 	require.Contains(t, recorder.Body.String(), `"type":"error"`)
 }
 
+// TestAccountTestService_OpenAI400MarksTestedAccountAsError 确保账号 ID 16 的 HTTP 400 始终按测试失败处理，不会被误判为连接正确或重新参与调度。
+func TestAccountTestService_OpenAI400MarksTestedAccountAsError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+
+	account := &Account{
+		ID:          16,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Concurrency: 1,
+		Credentials: map[string]any{"access_token": "test-token"},
+	}
+	repo := &openAIAccountTestRepo{
+		mockAccountRepoForGemini: mockAccountRepoForGemini{
+			accountsByID: map[int64]*Account{account.ID: account},
+		},
+	}
+	upstream := &queuedHTTPUpstream{responses: []*http.Response{
+		newJSONResponse(http.StatusBadRequest, `{"error":{"message":"unsupported parameter: reasoning.effort"}}`),
+	}}
+	svc := &AccountTestService{accountRepo: repo, httpUpstream: upstream}
+
+	err := svc.TestAccountConnection(ctx, account.ID, "gpt-5.6-luna", "", AccountTestModeDefault)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "账号测试失败：上游拒绝了测试请求（HTTP 400）")
+	require.Contains(t, err.Error(), "原始技术详情：{\"error\":{\"message\":\"unsupported parameter: reasoning.effort\"}}")
+	require.Equal(t, account.ID, repo.setErrorID)
+	require.Contains(t, repo.setErrorMsg, "HTTP 400")
+	require.Zero(t, repo.setSchedulableID, "HTTP 400 测试失败不应重新开启调度")
+	require.Contains(t, recorder.Body.String(), `"type":"error"`)
+	require.NotContains(t, recorder.Body.String(), `"success":true`)
+}
+
 // TestAccountTestService_OpenAISuccessEnablesScheduling 验证测试成功会清除旧错误并重新参与调度。
 func TestAccountTestService_OpenAISuccessEnablesScheduling(t *testing.T) {
 	gin.SetMode(gin.TestMode)
