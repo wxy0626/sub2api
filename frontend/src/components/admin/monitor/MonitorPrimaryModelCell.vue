@@ -20,10 +20,6 @@
             {{ statusLabel(row.primary_status) }}
           </span>
         </div>
-        <div v-if="row.primary_message" class="break-words text-[11px] leading-relaxed text-gray-300">
-          <span class="font-medium text-gray-200">{{ t('monitorCommon.latestDiagnostic') }}:</span>
-          {{ row.primary_message }}
-        </div>
         <div v-if="(row.extra_models?.length ?? 0) === 0" class="text-[11px] text-gray-300">
           {{ t('monitorCommon.extraModelsEmpty') }}
         </div>

@@ -63,7 +63,7 @@
           <button
             type="button"
             class="btn btn-primary shrink-0"
-            :disabled="!selectedUser || newRate === null || newRate < 0"
+            :disabled="!selectedUser || !newRate"
             @click="handleAddLocal"
           >
             {{ t('common.add') }}
@@ -87,7 +87,7 @@
             <button
               type="button"
               class="btn btn-primary btn-sm shrink-0 px-2.5 py-1 text-xs"
-              :disabled="batchFactor === null || batchFactor < 0"
+              :disabled="!batchFactor || batchFactor <= 0"
               @click="applyBatchFactor"
             >
               {{ t('admin.groups.applyMultiplier') }}
@@ -126,8 +126,8 @@
         <div v-else>
           <!-- 表格 -->
           <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-dark-600">
-            <div class="max-h-[420px] overflow-y-auto">
-              <table class="w-full text-sm">
+            <div class="max-h-[420px] overflow-auto">
+              <table class="w-full min-w-max text-sm">
                 <thead class="sticky top-0 z-[1]">
                   <tr class="border-b border-gray-200 bg-gray-50 dark:border-dark-600 dark:bg-dark-700">
                     <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.groups.columns.userEmail') }}</th>
@@ -166,7 +166,7 @@
                       <input
                         type="number"
                         step="0.001"
-                        min="0"
+                        min="0.001"
                         autocomplete="off"
                         :value="entry.rate_multiplier ?? ''"
                         :placeholder="String(props.group?.rate_multiplier ?? 1)"
@@ -291,13 +291,13 @@ const platformColorClass = computed(() => {
 
 // 是否显示"最终倍率"预览列
 const showFinalRate = computed(() => {
-  return batchFactor.value != null && batchFactor.value >= 0 && batchFactor.value !== 1
+  return batchFactor.value != null && batchFactor.value > 0 && batchFactor.value !== 1
 })
 
 // 计算最终倍率预览
 const computeFinalRate = (rate: number | null | undefined) => {
   const base = rate ?? props.group?.rate_multiplier ?? 1
-  if (batchFactor.value === null) return base
+  if (!batchFactor.value) return base
   return parseFloat((base * batchFactor.value).toFixed(6))
 }
 
@@ -386,7 +386,7 @@ const selectUser = (user: AdminUser) => {
 
 // 本地添加（或覆盖已有用户）
 const handleAddLocal = () => {
-  if (!selectedUser.value || newRate.value === null || newRate.value < 0) return
+  if (!selectedUser.value || !newRate.value) return
   const user = selectedUser.value
   const idx = localEntries.value.findIndex(e => e.user_id === user.id)
   const entry: LocalEntry = {
@@ -418,7 +418,7 @@ const updateLocalRate = (userId: number, value: string) => {
     return
   }
   const num = parseFloat(value)
-  if (!Number.isFinite(num) || num < 0) return
+  if (isNaN(num)) return
   entry.rate_multiplier = num
 }
 
@@ -430,7 +430,7 @@ const removeLocal = (userId: number) => {
 
 // 批量乘数应用到本地
 const applyBatchFactor = () => {
-  if (batchFactor.value === null || batchFactor.value < 0) return
+  if (!batchFactor.value || batchFactor.value <= 0) return
   for (const entry of localEntries.value) {
     if (entry.rate_multiplier != null) {
       entry.rate_multiplier = parseFloat((entry.rate_multiplier * batchFactor.value).toFixed(6))

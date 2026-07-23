@@ -106,14 +106,6 @@ describe('useAppStore', () => {
       expect(store.toasts[0].message).toBe('出错了')
     })
 
-    it('showError 将英文网络错误转换为中文 toast', () => {
-      const store = useAppStore()
-      store.showError('Network error. Please check your connection.')
-
-      expect(store.toasts[0].message).toContain('网络连接失败，请检查网络、代理和服务状态后重试。')
-      expect(store.toasts[0].message).toContain('技术详情：Network error. Please check your connection.')
-    })
-
     it('showWarning 创建 warning 类型 toast', () => {
       const store = useAppStore()
       store.showWarning('警告信息')

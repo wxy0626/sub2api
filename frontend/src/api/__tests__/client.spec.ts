@@ -259,23 +259,6 @@ describe('API Client', () => {
       )
     })
 
-    it('结构化错误为 Error 实例，调用方可读取中文说明和后端技术详情', async () => {
-      const adapter = vi.fn().mockResolvedValue({
-        status: 200,
-        data: { code: 1001, message: 'Unsupported OpenAI account type for upstream model sync: oauth' },
-        headers: {},
-        config: {},
-        statusText: 'OK',
-      })
-      apiClient.defaults.adapter = adapter
-
-      await expect(apiClient.get('/test')).rejects.toSatisfy((error: unknown) => {
-        return error instanceof Error &&
-          error.message.includes('上游请求失败，请根据下方技术详情检查账号、模型、代理或上游服务。') &&
-          error.message.includes('技术详情：Unsupported OpenAI account type for upstream model sync: oauth')
-      })
-    })
-
     it('部署与运营合规未确认时广播事件且保留登录态', async () => {
       localStorage.setItem('auth_token', 'admin-token')
       const listener = vi.fn()
@@ -378,7 +361,7 @@ describe('API Client', () => {
       await expect(apiClient.get('/test')).rejects.toEqual(
         expect.objectContaining({
           status: 0,
-          message: '网络连接失败，请检查网络、代理和服务状态后重试。',
+          message: 'Network error. Please check your connection.',
         })
       )
     })

@@ -1,5 +1,3 @@
-import { normalizeDisplayErrorMessage } from './errorMessage'
-
 /**
  * Centralized API error message extraction
  *
@@ -127,29 +125,29 @@ export function extractApiErrorMessage(
   fallback = 'Unknown error',
   i18nMap?: Record<string, string>,
 ): string {
-  if (!err) return normalizeDisplayErrorMessage('', fallback)
+  if (!err) return fallback
 
   // Try i18n mapping by error code first
   if (i18nMap) {
     const code = extractApiErrorCode(err)
-    if (code && i18nMap[code]) return normalizeDisplayErrorMessage(i18nMap[code], fallback)
+    if (code && i18nMap[code]) return i18nMap[code]
   }
 
   // Plain object from API client interceptor (most common case)
   if (typeof err === 'object' && err !== null) {
     const e = err as ApiErrorLike
     // Interceptor shape: { message, error }
-    if (e.message) return normalizeDisplayErrorMessage(e.message, fallback)
-    if (e.error) return normalizeDisplayErrorMessage(e.error, fallback)
+    if (e.message) return e.message
+    if (e.error) return e.error
     // Legacy axios shape: { response.data.detail }
-    if (e.response?.data?.detail) return normalizeDisplayErrorMessage(e.response.data.detail, fallback)
-    if (e.response?.data?.message) return normalizeDisplayErrorMessage(e.response.data.message, fallback)
+    if (e.response?.data?.detail) return e.response.data.detail
+    if (e.response?.data?.message) return e.response.data.message
   }
 
   // Standard Error
-  if (err instanceof Error) return normalizeDisplayErrorMessage(err.message, fallback)
+  if (err instanceof Error) return err.message
 
   // Last resort
   const str = String(err)
-  return str === '[object Object]' ? normalizeDisplayErrorMessage('', fallback) : normalizeDisplayErrorMessage(str, fallback)
+  return str === '[object Object]' ? fallback : str
 }

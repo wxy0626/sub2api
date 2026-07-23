@@ -3,7 +3,7 @@
  * Handles AI platform account management for administrators
  */
 
-import { apiClient, buildApiUrl } from '../client'
+import { apiClient } from '../client'
 import type {
   Account,
   CreateAccountRequest,
@@ -40,7 +40,6 @@ export async function list(
     type?: string
     status?: string
     group?: string
-    proxy_id?: number
     search?: string
     privacy_mode?: string
     lite?: string
@@ -63,18 +62,6 @@ export async function list(
   return data
 }
 
-/** 账号列表表头筛选项，仅包含平台和账号类型枚举，不包含账号详情或凭据。 */
-export interface AccountFilterOptions {
-  platforms: string[]
-  types: string[]
-}
-
-/** 获取全部账号聚合出的平台和类型筛选项。 */
-export async function getFilterOptions(): Promise<AccountFilterOptions> {
-  const { data } = await apiClient.get<AccountFilterOptions>('/admin/accounts/filter-options')
-  return data
-}
-
 export interface AccountListWithEtagResult {
   notModified: boolean
   etag: string | null
@@ -89,7 +76,6 @@ export async function listWithEtag(
     type?: string
     status?: string
     group?: string
-    proxy_id?: number
     search?: string
     privacy_mode?: string
     lite?: string
@@ -244,95 +230,17 @@ export async function toggleStatus(id: number, status: 'active' | 'inactive'): P
  * @param id - Account ID
  * @returns Test result
  */
-export interface AccountTestResult {
+export async function testAccount(id: number): Promise<{
   success: boolean
   message: string
   latency_ms?: number
-}
-
-// AccountTestOptions 描述列表即时测试使用的模型和 OpenAI 探测模式。
-export interface AccountTestOptions {
-  modelId?: string
-  mode?: AccountTestMode
-}
-
-// AccountTestMode 描述 OpenAI 账号模型测试的请求路径模式。
-export type AccountTestMode = 'default' | 'responses' | 'compact' | 'workspace'
-
-/** 保存 OpenAI 账号的模型测试模式，不覆盖其他 extra 配置。 */
-export async function updateTestMode(id: number, mode: AccountTestMode): Promise<Account> {
-  const { data } = await apiClient.put<Account>(`/admin/accounts/${id}/test-mode`, { mode })
+}> {
+  const { data } = await apiClient.post<{
+    success: boolean
+    message: string
+    latency_ms?: number
+  }>(`/admin/accounts/${id}/test`)
   return data
-}
-
-interface AccountTestSSEEvent {
-  type?: string
-  success?: boolean
-  error?: string
-}
-
-/**
- * 执行账号检测并解析后端 SSE 测试流的最终结果。
- * 账号测试接口始终返回 SSE，不能作为普通 JSON 接口读取。
- */
-export async function testAccount(id: number, options: AccountTestOptions = {}): Promise<AccountTestResult> {
-  // 记录前端侧耗时，供状态栏和批量操作的成功消息使用。
-  const startedAt = performance.now()
-  const response = await fetch(buildApiUrl(`/admin/accounts/${id}/test`), {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${localStorage.getItem('auth_token') || ''}`,
-      'Content-Type': 'application/json',
-      Accept: 'text/event-stream'
-    },
-    credentials: 'include',
-    body: JSON.stringify({
-      model_id: options.modelId || undefined,
-      mode: options.mode || undefined
-    })
-  })
-
-  const responseBody = await response.text()
-  if (!response.ok) {
-    throw new Error(extractAccountTestHTTPError(responseBody, response.status))
-  }
-
-  // 标记后端是否已明确发送测试完成事件。
-  let completed = false
-  // 保存 SSE 中的真实失败原因，优先展示给管理员。
-  let failedMessage = ''
-  for (const rawLine of responseBody.split(/\r?\n/)) {
-    const line = rawLine.trim()
-    if (!line.startsWith('data:')) continue
-
-    try {
-      const event = JSON.parse(line.slice(5).trim()) as AccountTestSSEEvent
-      if (event.type === 'error' || event.type === 'workspace_deactivated') {
-        failedMessage = event.error || '账号测试失败，请稍后重试。'
-      }
-      if (event.type === 'test_complete') {
-        completed = true
-        if (!event.success) failedMessage = event.error || '账号测试失败，请稍后重试。'
-      }
-    } catch {
-      // 单个非 JSON SSE 帧不影响已接收的其他测试结果。
-    }
-  }
-
-  const latencyMs = Math.round(performance.now() - startedAt)
-  if (failedMessage) return { success: false, message: failedMessage, latency_ms: latencyMs }
-  if (!completed) return { success: false, message: '账号测试未返回完成状态，请重试。', latency_ms: latencyMs }
-  return { success: true, message: '账号测试成功', latency_ms: latencyMs }
-}
-
-// extractAccountTestHTTPError 提取非 2xx 测试响应中可展示的错误详情。
-function extractAccountTestHTTPError(responseBody: string, status: number): string {
-  try {
-    const payload = JSON.parse(responseBody) as { message?: string; error?: string }
-    return payload.message || payload.error || `账号测试请求失败（HTTP ${status}）`
-  } catch {
-    return responseBody.trim() || `账号测试请求失败（HTTP ${status}）`
-  }
 }
 
 /**
@@ -977,7 +885,6 @@ export async function probeUpstreamBillingBatch(accountIds: number[]): Promise<U
 export const accountsAPI = {
   list,
   listWithEtag,
-  getFilterOptions,
   getById,
   create,
   duplicate,
@@ -985,7 +892,6 @@ export const accountsAPI = {
   checkMixedChannelRisk,
   delete: deleteAccount,
   toggleStatus,
-  updateTestMode,
   testAccount,
   refreshCredentials,
   applyOAuthCredentials,

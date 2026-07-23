@@ -2,12 +2,14 @@
   <AppLayout>
     <TablePageLayout>
       <template #filters>
-        <div data-test="account-list-controls" class="flex flex-wrap-reverse items-start justify-between gap-3">
-          <SearchInput
-            v-model="params.search"
-            :placeholder="t('admin.accounts.searchAccounts')"
-            class="w-full sm:w-64"
-            @update:model-value="debouncedReload"
+        <div class="flex flex-wrap-reverse items-start justify-between gap-3">
+          <AccountTableFilters
+            v-model:searchQuery="params.search"
+            :filters="params"
+            :groups="groups"
+            @update:filters="(newFilters) => Object.assign(params, newFilters)"
+            @change="debouncedReload"
+            @update:searchQuery="debouncedReload"
           />
           <AccountTableActions
             :loading="loading"
@@ -63,95 +65,98 @@
               <!-- More Tools Dropdown -->
               <div class="relative" ref="accountToolsDropdownRef">
                 <button
-                  @click="
-                    showAccountToolsDropdown = !showAccountToolsDropdown;
-                    showAutoRefreshDropdown = false
-                  "
+                  ref="accountToolsTriggerRef"
+                  @click="toggleAccountToolsDropdown"
                   class="btn btn-secondary px-2 md:px-3"
                   :title="t('admin.accounts.moreActions')"
+                  :aria-expanded="showAccountToolsDropdown"
                 >
                   <Icon name="more" size="sm" class="md:mr-1.5" />
                   <span class="hidden md:inline">{{ t('admin.accounts.moreActions') }}</span>
                   <Icon name="chevronDown" size="xs" class="ml-1 hidden md:inline" />
                 </button>
-                <div
-                  v-if="showAccountToolsDropdown"
-                  class="absolute right-0 z-50 mt-2 w-[min(20rem,calc(100vw-2rem))] origin-top-right overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-dark-700 dark:bg-dark-800"
-                >
-                  <div class="max-h-[70vh] overflow-y-auto p-2">
-                    <div class="px-2 py-2">
-                      <div class="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
-                        {{ t('admin.accounts.dataActions') }}
+                <Teleport to="body">
+                  <div
+                    v-if="showAccountToolsDropdown"
+                    class="fixed z-[9999] origin-top-right overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-dark-700 dark:bg-dark-800"
+                    :style="accountToolsDropdownStyle"
+                    @click.stop
+                  >
+                    <div class="overflow-y-auto p-2" :style="{ maxHeight: `${accountToolsDropdownPosition.maxHeight}px` }">
+                      <div class="px-2 py-2">
+                        <div class="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                          {{ t('admin.accounts.dataActions') }}
+                        </div>
                       </div>
-                    </div>
-                    <button class="account-tools-menu-item" @click="openSyncFromCrs">
-                      <span class="account-tools-menu-icon bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-300">
-                        <Icon name="sync" size="sm" />
-                      </span>
-                      <span class="flex-1 text-left">{{ t('admin.accounts.syncFromCrs') }}</span>
-                    </button>
-                    <button class="account-tools-menu-item" @click="openImportData">
-                      <span class="account-tools-menu-icon bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-300">
-                        <Icon name="upload" size="sm" />
-                      </span>
-                      <span class="flex-1 text-left">{{ t('admin.accounts.dataImport') }}</span>
-                    </button>
-                    <button class="account-tools-menu-item" @click="openExportDataDialogFromMenu">
-                      <span class="account-tools-menu-icon bg-violet-50 text-violet-600 dark:bg-violet-900/30 dark:text-violet-300">
-                        <Icon name="download" size="sm" />
-                      </span>
-                      <span class="flex-1 text-left">
-                        {{ selIds.length ? t('admin.accounts.dataExportSelected') : t('admin.accounts.dataExport') }}
-                      </span>
-                      <span
-                        v-if="selIds.length"
-                        class="rounded-full bg-primary-100 px-2 py-0.5 text-xs font-medium text-primary-700 dark:bg-primary-900/40 dark:text-primary-300"
-                      >
-                        {{ t('admin.accounts.selectedCount', { count: selIds.length }) }}
-                      </span>
-                    </button>
-
-                    <div class="my-2 border-t border-gray-100 dark:border-dark-700"></div>
-                    <div class="px-2 py-2">
-                      <div class="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
-                        {{ t('admin.accounts.toolActions') }}
-                      </div>
-                    </div>
-                    <button class="account-tools-menu-item" @click="openErrorPassthrough">
-                      <span class="account-tools-menu-icon bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-300">
-                        <Icon name="shield" size="sm" />
-                      </span>
-                      <span class="flex-1 text-left">{{ t('admin.errorPassthrough.title') }}</span>
-                    </button>
-                    <button class="account-tools-menu-item" @click="openTLSFingerprintProfiles">
-                      <span class="account-tools-menu-icon bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-200">
-                        <Icon name="lock" size="sm" />
-                      </span>
-                      <span class="flex-1 text-left">{{ t('admin.tlsFingerprintProfiles.title') }}</span>
-                    </button>
-
-                    <div class="my-2 border-t border-gray-100 dark:border-dark-700"></div>
-                    <div class="px-2 py-2">
-                      <div class="flex items-center justify-between gap-3">
-                        <span class="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
-                          {{ t('admin.accounts.viewColumns') }}
+                      <button class="account-tools-menu-item" @click="openSyncFromCrs">
+                        <span class="account-tools-menu-icon bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-300">
+                          <Icon name="sync" size="sm" />
                         </span>
-                        <Icon name="grid" size="sm" class="text-gray-400" />
-                      </div>
-                    </div>
-                    <div class="grid grid-cols-1 gap-1">
-                      <button
-                        v-for="col in toggleableColumns"
-                        :key="col.key"
-                        @click="toggleColumn(col.key)"
-                        class="flex w-full items-center justify-between rounded-md px-3 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-dark-700"
-                      >
-                        <span class="truncate">{{ col.label }}</span>
-                        <Icon v-if="isColumnVisible(col.key)" name="check" size="sm" class="text-primary-500" />
+                        <span class="flex-1 text-left">{{ t('admin.accounts.syncFromCrs') }}</span>
                       </button>
+                      <button class="account-tools-menu-item" @click="openImportData">
+                        <span class="account-tools-menu-icon bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-300">
+                          <Icon name="upload" size="sm" />
+                        </span>
+                        <span class="flex-1 text-left">{{ t('admin.accounts.dataImport') }}</span>
+                      </button>
+                      <button class="account-tools-menu-item" @click="openExportDataDialogFromMenu">
+                        <span class="account-tools-menu-icon bg-violet-50 text-violet-600 dark:bg-violet-900/30 dark:text-violet-300">
+                          <Icon name="download" size="sm" />
+                        </span>
+                        <span class="flex-1 text-left">
+                          {{ selIds.length ? t('admin.accounts.dataExportSelected') : t('admin.accounts.dataExport') }}
+                        </span>
+                        <span
+                          v-if="selIds.length"
+                          class="rounded-full bg-primary-100 px-2 py-0.5 text-xs font-medium text-primary-700 dark:bg-primary-900/40 dark:text-primary-300"
+                        >
+                          {{ t('admin.accounts.selectedCount', { count: selIds.length }) }}
+                        </span>
+                      </button>
+
+                      <div class="my-2 border-t border-gray-100 dark:border-dark-700"></div>
+                      <div class="px-2 py-2">
+                        <div class="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                          {{ t('admin.accounts.toolActions') }}
+                        </div>
+                      </div>
+                      <button class="account-tools-menu-item" @click="openErrorPassthrough">
+                        <span class="account-tools-menu-icon bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-300">
+                          <Icon name="shield" size="sm" />
+                        </span>
+                        <span class="flex-1 text-left">{{ t('admin.errorPassthrough.title') }}</span>
+                      </button>
+                      <button class="account-tools-menu-item" @click="openTLSFingerprintProfiles">
+                        <span class="account-tools-menu-icon bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-200">
+                          <Icon name="lock" size="sm" />
+                        </span>
+                        <span class="flex-1 text-left">{{ t('admin.tlsFingerprintProfiles.title') }}</span>
+                      </button>
+
+                      <div class="my-2 border-t border-gray-100 dark:border-dark-700"></div>
+                      <div class="px-2 py-2">
+                        <div class="flex items-center justify-between gap-3">
+                          <span class="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                            {{ t('admin.accounts.viewColumns') }}
+                          </span>
+                          <Icon name="grid" size="sm" class="text-gray-400" />
+                        </div>
+                      </div>
+                      <div class="grid grid-cols-1 gap-1">
+                        <button
+                          v-for="col in toggleableColumns"
+                          :key="col.key"
+                          @click="toggleColumn(col.key)"
+                          class="flex w-full items-center justify-between rounded-md px-3 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-dark-700"
+                        >
+                          <span class="truncate">{{ col.label }}</span>
+                          <Icon v-if="isColumnVisible(col.key)" name="check" size="sm" class="text-primary-500" />
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
+                </Teleport>
               </div>
             </template>
           </AccountTableActions>
@@ -175,7 +180,6 @@
           @delete="handleBulkDelete"
           @reset-status="handleBulkResetStatus"
           @refresh-token="handleBulkRefreshToken"
-          @test="handleBulkTest"
           @probe-upstream-billing="handleBulkProbeUpstreamBilling"
           @edit-selected="openBulkEditSelected"
           @edit-filtered="openBulkEditFiltered"
@@ -206,42 +210,6 @@
               :checked="allVisibleSelected"
               @click.stop
               @change="toggleSelectAllVisible($event)"
-            />
-          </template>
-          <template #header-groups>
-            <Select
-              :model-value="params.group"
-              :options="groupFilterOptions"
-              class="w-36 normal-case"
-              :aria-label="t('admin.accounts.columns.groups')"
-              @update:model-value="handleHeaderGroupFilterChange"
-            />
-          </template>
-          <template #header-platform>
-            <Select
-              :model-value="params.platform"
-              :options="platformFilterOptions"
-              class="w-32 normal-case"
-              :aria-label="t('admin.accounts.columns.platform')"
-              @update:model-value="handleHeaderPlatformFilterChange"
-            />
-          </template>
-          <template #header-type>
-            <Select
-              :model-value="params.type"
-              :options="typeFilterOptions"
-              class="w-32 normal-case"
-              :aria-label="t('admin.accounts.columns.type')"
-              @update:model-value="handleHeaderTypeFilterChange"
-            />
-          </template>
-          <template #header-proxy>
-            <Select
-              :model-value="params.proxy_id"
-              :options="proxyFilterOptions"
-              class="w-36 normal-case"
-              :aria-label="t('admin.accounts.columns.proxy')"
-              @update:model-value="handleHeaderProxyFilterChange"
             />
           </template>
           <template #cell-select="{ row }">
@@ -283,14 +251,10 @@
             <span v-if="value" :title="value" class="block max-w-xs truncate text-sm text-gray-600 dark:text-gray-300">{{ value }}</span>
             <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
           </template>
-          <template #cell-platform="{ row }">
-            <PlatformTypeBadge :platform="row.platform" :type="row.type" :show-type="false" />
-          </template>
-          <template #cell-type="{ row }">
+          <template #cell-platform_type="{ row }">
             <div class="flex min-w-0 flex-col gap-1">
               <div class="flex flex-wrap items-center gap-1">
                 <PlatformTypeBadge :platform="row.platform" :type="row.type"
-                  :show-platform="false"
                   :auth-mode="getOpenAIAuthMode(row)"
                   :plan-type="getAccountPlanType(row)"
                   :privacy-mode="row.extra?.privacy_mode || row.parent_privacy_mode"
@@ -320,12 +284,7 @@
           </template>
           <template #cell-status="{ row }">
             <div class="flex items-center gap-1.5">
-              <AccountStatusIndicator
-                :account="row"
-                :testing="testingAccountIds.has(row.id)"
-                @show-temp-unsched="handleShowTempUnsched"
-                @quick-test="handleQuickTest"
-              />
+              <AccountStatusIndicator :account="row" @show-temp-unsched="handleShowTempUnsched" />
             </div>
           </template>
           <template #cell-schedulable="{ row }">
@@ -359,14 +318,13 @@
           </template>
           <template #cell-proxy="{ row }">
             <div class="flex flex-col gap-1">
-              <Select
-                :model-value="row.proxy_id"
-                :options="accountProxyOptions(row)"
-                :disabled="updatingProxyAccountIds.has(row.id)"
-                class="w-44 normal-case"
-                :aria-label="t('admin.accounts.columns.proxy')"
-                @update:model-value="handleAccountProxyChange(row, $event)"
-              />
+              <div v-if="row.proxy" class="flex items-center gap-2">
+                <span class="text-sm text-gray-700 dark:text-gray-300">{{ row.proxy.name }}</span>
+                <span v-if="row.proxy.country_code" class="text-xs text-gray-500 dark:text-gray-400">
+                  ({{ row.proxy.country_code }})
+                </span>
+              </div>
+              <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
               <div v-if="row.proxy && row.proxy.expires_at" class="flex items-center gap-2 text-xs">
                 <span class="text-gray-600 dark:text-gray-300">{{ formatDateTime(row.proxy.expires_at) }}</span>
                 <span :class="proxyExpiryBadge(row.proxy)">{{ proxyExpiryText(row.proxy) }}</span>
@@ -476,7 +434,7 @@
     <CreateAccountModal :show="showCreate" :proxies="proxies" :groups="groups" @close="showCreate = false" @created="reload" />
     <EditAccountModal :show="showEdit" :account="edAcc" :proxies="proxies" :groups="groups" @close="showEdit = false" @updated="handleAccountUpdated" />
     <ReAuthAccountModal :show="showReAuth" :account="reAuthAcc" @close="closeReAuthModal" @reauthorized="handleAccountUpdated" />
-    <AccountTestModal :show="showTest" :account="testingAcc" @close="closeTestModal" @testing-changed="handleTestStateChange" @account-updated="handleAccountTestModeUpdated" />
+    <AccountTestModal :show="showTest" :account="testingAcc" @close="closeTestModal" />
     <AccountStatsModal :show="showStats" :account="statsAcc" @close="closeStatsModal" />
     <ScheduledTestsPanel :show="showSchedulePanel" :account-id="scheduleAcc?.id ?? null" :model-options="scheduleModelOptions" @close="closeSchedulePanel" />
     <AccountActionMenu :show="menu.show" :account="menu.acc" :position="menu.pos" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @schedule="handleSchedule" @duplicate="handleDuplicateAccount" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" />
@@ -526,9 +484,9 @@ import DataTable from '@/components/common/DataTable.vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
-import SearchInput from '@/components/common/SearchInput.vue'
 import { CreateAccountModal, EditAccountModal, BulkEditAccountModal, SyncFromCrsModal, TempUnschedStatusModal } from '@/components/account'
 import AccountTableActions from '@/components/admin/account/AccountTableActions.vue'
+import AccountTableFilters from '@/components/admin/account/AccountTableFilters.vue'
 import AccountBulkActionsBar from '@/components/admin/account/AccountBulkActionsBar.vue'
 import AccountActionMenu from '@/components/admin/account/AccountActionMenu.vue'
 import ImportDataModal from '@/components/admin/account/ImportDataModal.vue'
@@ -536,7 +494,7 @@ import ReAuthAccountModal from '@/components/admin/account/ReAuthAccountModal.vu
 import AccountTestModal from '@/components/admin/account/AccountTestModal.vue'
 import AccountStatsModal from '@/components/admin/account/AccountStatsModal.vue'
 import ScheduledTestsPanel from '@/components/admin/account/ScheduledTestsPanel.vue'
-import Select, { type SelectOption } from '@/components/common/Select.vue'
+import type { SelectOption } from '@/components/common/Select.vue'
 import AccountStatusIndicator from '@/components/account/AccountStatusIndicator.vue'
 import AccountUsageCell from '@/components/account/AccountUsageCell.vue'
 import AccountTodayStatsCell from '@/components/account/AccountTodayStatsCell.vue'
@@ -551,9 +509,8 @@ import { buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
 import { formatDateTime, formatRelativeTime } from '@/utils/format'
 import { proxyExpiryBadgeClass, proxyExpiryLabelKey } from '@/utils/proxyExpiry'
 import { extractApiErrorMessage } from '@/utils/apiError'
-import { resolveAccountTestModelSelection } from '@/utils/accountTestModelSelection'
-import type { AccountTestMode } from '@/api/admin/accounts'
 import { sanitizeUrl } from '@/utils/url'
+import { getFloatingPanelPosition } from '@/utils/floatingPanel'
 import type { Account, AccountPlatform, AccountSchedulerGroupScore, AccountType, Proxy as AccountProxy, AdminGroup, WindowStats, ClaudeModel, UpstreamBillingProbeSnapshot } from '@/types'
 
 const { t } = useI18n()
@@ -562,62 +519,6 @@ const authStore = useAuthStore()
 
 const proxies = ref<AccountProxy[]>([])
 const groups = ref<AdminGroup[]>([])
-// 可用代理下拉选项：仅暴露启用中的代理，首项用于清除账号代理绑定。
-const availableProxyOptions = computed<SelectOption[]>(() => [
-  { value: null, label: '-' },
-  ...proxies.value
-    .filter(proxy => proxy.status === 'active')
-    .map(proxy => ({ value: proxy.id, label: proxy.country_code ? `${proxy.name} (${proxy.country_code})` : proxy.name }))
-])
-// 列表顶部代理筛选选项：空值表示不过滤，其他值限定为已绑定指定代理的账号。
-const proxyFilterOptions = computed<SelectOption[]>(() => [
-  { value: '', label: t('admin.accounts.allProxies') },
-  ...availableProxyOptions.value.filter(option => option.value !== null)
-])
-// 全量账号聚合得到的安全筛选枚举；接口不返回任何账号详情或凭据。
-const accountFilterValues = ref<{ platforms: string[]; types: string[] }>({ platforms: [], types: [] })
-// 表头分组筛选选项，始终提供“全部分组”，其余选项由接口返回的可用分组动态生成。
-const groupFilterOptions = computed<SelectOption[]>(() => [
-  { value: '', label: t('admin.accounts.allGroups') },
-  { value: 'ungrouped', label: t('admin.accounts.ungroupedGroup') },
-  ...groups.value.map(group => ({ value: String(group.id), label: group.name }))
-])
-
-// 表头平台筛选选项，始终提供“全部平台”，其余选项由后端安全聚合接口动态生成。
-const platformFilterOptions = computed<SelectOption[]>(() => [
-  { value: '', label: t('admin.accounts.allPlatforms') },
-  ...accountFilterValues.value.platforms.map(platform => ({ value: platform, label: platform }))
-])
-
-// 表头类型筛选选项，始终提供“全部类型”，其余选项由后端安全聚合接口动态生成。
-const typeFilterOptions = computed<SelectOption[]>(() => [
-  { value: '', label: t('admin.accounts.allTypes') },
-  ...accountFilterValues.value.types.map(accountType => ({ value: accountType, label: accountType }))
-])
-
-// 表头分组下拉变更后更新账号列表请求参数并重新加载列表。
-const handleHeaderGroupFilterChange = (value: string | number | boolean | null) => {
-  params.group = value == null ? '' : String(value)
-  debouncedReload()
-}
-
-// 表头平台下拉变更后更新账号列表请求参数并重新加载列表。
-const handleHeaderPlatformFilterChange = (value: string | number | boolean | null) => {
-  params.platform = value == null ? '' : String(value)
-  debouncedReload()
-}
-
-// 表头类型下拉变更后更新账号列表请求参数并重新加载列表。
-const handleHeaderTypeFilterChange = (value: string | number | boolean | null) => {
-  params.type = value == null ? '' : String(value)
-  debouncedReload()
-}
-// 表头代理下拉变更后使用代理 ID 重载整个分页列表，空值恢复全部账号。
-const handleHeaderProxyFilterChange = (value: string | number | boolean | null) => {
-  const proxyID = normalizeProxyID(value)
-  params.proxy_id = proxyID ?? ''
-  debouncedReload()
-}
 const accountTableRef = ref<HTMLElement | null>(null)
 const dataTableRef = ref<InstanceType<typeof DataTable> | null>(null)
 type AccountBulkEditTarget =
@@ -632,8 +533,10 @@ type AccountBulkEditTarget =
       filters: {
         platform?: string
         type?: string
+        status?: string
         group?: string
         search?: string
+        privacy_mode?: string
         sort_by?: string
         sort_order?: AccountSortOrder
       }
@@ -670,10 +573,6 @@ const showDeleteDialog = ref(false)
 const showCreateShadowDialog = ref(false)
 const showReAuth = ref(false)
 const showTest = ref(false)
-// 保存正在连接测试的账号 ID，驱动状态列刷新图标的禁用和转圈状态。
-const testingAccountIds = reactive(new Set<number>())
-// 正在更新代理的账号 ID：避免同一行在请求未完成时重复提交。
-const updatingProxyAccountIds = reactive(new Set<number>())
 const showStats = ref(false)
 const showErrorPassthrough = ref(false)
 const showTLSFingerprintProfiles = ref(false)
@@ -699,6 +598,20 @@ useIntervalFn(() => { upstreamBillingNow.value = Date.now() }, 60_000)
 // Account tools dropdown
 const showAccountToolsDropdown = ref(false)
 const accountToolsDropdownRef = ref<HTMLElement | null>(null)
+const accountToolsTriggerRef = ref<HTMLElement | null>(null)
+const accountToolsDropdownPosition = reactive({
+  top: null as number | null,
+  bottom: null as number | null,
+  left: 16,
+  width: 320,
+  maxHeight: 0
+})
+const accountToolsDropdownStyle = computed(() => ({
+  top: accountToolsDropdownPosition.top == null ? 'auto' : `${accountToolsDropdownPosition.top}px`,
+  bottom: accountToolsDropdownPosition.bottom == null ? 'auto' : `${accountToolsDropdownPosition.bottom}px`,
+  left: `${accountToolsDropdownPosition.left}px`,
+  width: `${accountToolsDropdownPosition.width}px`
+}))
 const hiddenColumns = reactive<Set<string>>(new Set())
 const DEFAULT_HIDDEN_COLUMNS = ['today_stats', 'proxy', 'notes', 'priority', 'scheduler_score', 'rate_multiplier']
 const HIDDEN_COLUMNS_KEY = 'account-hidden-columns'
@@ -989,8 +902,9 @@ const {
   initialParams: {
     platform: '',
     type: '',
+    status: '',
+    privacy_mode: '',
     group: '',
-    proxy_id: '',
     search: '',
     include_scheduler_score: shouldIncludeSchedulerScore() ? '1' : '0',
     sort_by: sortState.sort_by,
@@ -1230,8 +1144,9 @@ const refreshAccountsIncrementally = async () => {
       toRaw(params) as {
         platform?: string
         type?: string
+        status?: string
+        privacy_mode?: string
         group?: string
-        proxy_id?: number
         search?: string
         sort_by?: string
         sort_order?: AccountSortOrder
@@ -1277,6 +1192,25 @@ const loadUpstreamBillingProbeGlobalState = async () => {
 
 const closeAccountToolsDropdown = () => {
   showAccountToolsDropdown.value = false
+}
+
+const updateAccountToolsDropdownPosition = () => {
+  const trigger = accountToolsTriggerRef.value
+  if (!trigger) return
+
+  const position = getFloatingPanelPosition(
+    trigger.getBoundingClientRect(),
+    document.documentElement.clientWidth || window.innerWidth,
+    window.innerHeight
+  )
+  Object.assign(accountToolsDropdownPosition, position)
+}
+
+const toggleAccountToolsDropdown = () => {
+  const nextVisible = !showAccountToolsDropdown.value
+  showAutoRefreshDropdown.value = false
+  if (nextVisible) updateAccountToolsDropdownPosition()
+  showAccountToolsDropdown.value = nextVisible
 }
 
 const openSyncFromCrs = () => {
@@ -1464,8 +1398,7 @@ const allColumns = computed(() => {
     { key: 'select', label: '', sortable: false },
     { key: 'name', label: t('admin.accounts.columns.name'), sortable: true },
     { key: 'id', label: t('admin.accounts.columns.id'), sortable: true },
-    { key: 'platform', label: t('admin.accounts.columns.platform'), sortable: false },
-    { key: 'type', label: t('admin.accounts.columns.type'), sortable: false },
+    { key: 'platform_type', label: t('admin.accounts.columns.platformType'), sortable: false },
     { key: 'capacity', label: t('admin.accounts.columns.capacity'), sortable: false },
     { key: 'status', label: t('admin.accounts.columns.status'), sortable: true },
     { key: 'schedulable', label: t('admin.accounts.columns.schedulable'), sortable: true },
@@ -1590,77 +1523,6 @@ const handleBulkRefreshToken = async () => {
     console.error('Failed to bulk refresh token:', error)
     appStore.showError(String(error))
   }
-}
-// 批量测试使用与状态栏刷新完全相同的 SSE 测试流程，逐个汇总最终结果。
-const handleBulkTest = async () => {
-  // 复制选择结果，避免测试期间用户切换勾选导致目标集合改变。
-  const accountIds = [...selIds.value]
-  if (accountIds.length === 0) return
-
-  try {
-    const results = await Promise.all(accountIds.map(async (id) => {
-      const account = await resolveAccountForTest(id)
-      testingAccountIds.add(id)
-      try {
-        return await testAccountWithSelectedModel(account, id)
-      } catch (error: unknown) {
-        return { success: false, message: extractApiErrorMessage(error, t('admin.accounts.testFailed')) }
-      } finally {
-        // 每个账号结束后立即停止该行的刷新状态，不等待其他并发测试完成。
-        testingAccountIds.delete(id)
-      }
-    }))
-    const failed = results.filter(result => !result.success)
-    if (failed.length > 0) {
-      const firstError = failed[0]?.message
-      appStore.showError(t('admin.accounts.bulkActions.testPartial', { success: results.length - failed.length, failed: failed.length, error: firstError }))
-    } else {
-      appStore.showSuccess(t('admin.accounts.bulkActions.testSuccess', { count: results.length }))
-    }
-  } finally {
-    await reload()
-  }
-}
-
-// resolveAccountForTest 补齐跨页选中的账号信息，确保批量测试使用正确的平台模型参数。
-const resolveAccountForTest = async (accountID: number): Promise<Account | undefined> => {
-  const visibleAccount = accounts.value.find(account => account.id === accountID)
-  if (visibleAccount) return visibleAccount
-
-  try {
-    return await adminAPI.accounts.getById(accountID)
-  } catch (error) {
-    // 账号信息读取失败时保留 undefined，由调用方如实报告本次测试失败。
-    console.warn('Failed to load account before selected-model test:', error)
-    return undefined
-  }
-}
-
-// testAccountWithSelectedModel 读取弹窗同一预填模型并只发起一次检测，失败后不切换模型重试。
-const testAccountWithSelectedModel = async (account: Account | undefined, accountID: number) => {
-  if (!account) {
-    throw new Error('模型检测无法开始：未能读取账号信息，请刷新列表后重试。技术详情：account metadata unavailable')
-  }
-  const models = await adminAPI.accounts.getAvailableModels(accountID)
-  const selection = resolveAccountTestModelSelection(account.platform, models)
-  if (!selection.modelId) {
-    throw new Error('模型检测无法开始：账号未返回可用于测试的模型，请检查账号授权、模型映射或上游权限。技术详情：available_models is empty after test-model filtering')
-  }
-  // OpenAI 即时/批量检测读取弹窗保存的模式；其他平台保持现有模型选择策略。
-  const savedMode = resolveSavedAccountTestMode(account)
-  return adminAPI.accounts.testAccount(accountID, {
-    modelId: selection.modelId,
-    ...(savedMode ? { mode: savedMode } : {})
-  })
-}
-
-// resolveSavedAccountTestMode 统一读取账号保存的 OpenAI 测试模式，缺失或异常值才使用默认模式。
-const resolveSavedAccountTestMode = (account: Account): AccountTestMode | undefined => {
-  if (account.platform !== 'openai') return undefined
-  const mode = account.extra?.account_test_mode
-  return mode === 'responses' || mode === 'compact' || mode === 'workspace' || mode === 'default'
-    ? mode
-    : 'default'
 }
 const handleBulkProbeUpstreamBilling = async () => {
   const accountIDs = [...selIds.value]
@@ -1804,8 +1666,10 @@ const buildBulkEditFilterSnapshot = () => {
   return {
     platform: typeof rawParams.platform === 'string' ? rawParams.platform : '',
     type: typeof rawParams.type === 'string' ? rawParams.type : '',
+    status: typeof rawParams.status === 'string' ? rawParams.status : '',
     group: typeof rawParams.group === 'string' ? rawParams.group : '',
     search: typeof rawParams.search === 'string' ? rawParams.search : '',
+    privacy_mode: typeof rawParams.privacy_mode === 'string' ? rawParams.privacy_mode : '',
     sort_by: typeof rawParams.sort_by === 'string' ? rawParams.sort_by : '',
     sort_order: sortOrder
   }
@@ -1849,10 +1713,13 @@ const handleBulkUpdated = () => {
 }
 const handleDataImported = () => { showImportData.value = false; reload() }
 const ACCOUNT_UNGROUPED_GROUP_QUERY_VALUE = 'ungrouped'
+const ACCOUNT_PRIVACY_MODE_UNSET_QUERY_VALUE = '__unset__'
 const buildAccountQueryFilters = () => ({
   platform: params.platform || '',
   type: params.type || '',
+  status: params.status || '',
   group: params.group || '',
+  privacy_mode: params.privacy_mode || '',
   search: params.search || '',
   sort_by: sortState.sort_by,
   sort_order: sortState.sort_order
@@ -1861,13 +1728,38 @@ const accountMatchesCurrentFilters = (account: Account) => {
   const filters = buildAccountQueryFilters()
   if (filters.platform && account.platform !== filters.platform) return false
   if (filters.type && account.type !== filters.type) return false
-  const selectedProxyID = normalizeProxyID(params.proxy_id)
-  if (selectedProxyID !== null && account.proxy_id !== selectedProxyID) return false
+  if (filters.status) {
+    const now = Date.now()
+    const rateLimitResetAt = account.rate_limit_reset_at ? new Date(account.rate_limit_reset_at).getTime() : Number.NaN
+    const isRateLimited = Number.isFinite(rateLimitResetAt) && rateLimitResetAt > now
+    const tempUnschedUntil = account.temp_unschedulable_until ? new Date(account.temp_unschedulable_until).getTime() : Number.NaN
+    const isTempUnschedulable = Number.isFinite(tempUnschedUntil) && tempUnschedUntil > now
+
+    if (filters.status === 'active') {
+      if (account.status !== 'active' || isRateLimited || isTempUnschedulable || !account.schedulable) return false
+    } else if (filters.status === 'rate_limited') {
+      if (account.status !== 'active' || !isRateLimited || isTempUnschedulable) return false
+    } else if (filters.status === 'temp_unschedulable') {
+      if (account.status !== 'active' || !isTempUnschedulable) return false
+    } else if (filters.status === 'unschedulable') {
+      if (account.status !== 'active' || account.schedulable || isRateLimited || isTempUnschedulable) return false
+    } else if (account.status !== filters.status) {
+      return false
+    }
+  }
   if (filters.group) {
     const groupIds = account.group_ids ?? account.groups?.map((group) => group.id) ?? []
     if (filters.group === ACCOUNT_UNGROUPED_GROUP_QUERY_VALUE) {
       if (groupIds.length > 0) return false
     } else if (!groupIds.includes(Number(filters.group))) {
+      return false
+    }
+  }
+  const privacyMode = typeof account.extra?.privacy_mode === 'string' ? account.extra.privacy_mode : ''
+  if (filters.privacy_mode) {
+    if (filters.privacy_mode === ACCOUNT_PRIVACY_MODE_UNSET_QUERY_VALUE) {
+      if (privacyMode.trim() !== '') return false
+    } else if (privacyMode !== filters.privacy_mode) {
       return false
     }
   }
@@ -1915,55 +1807,6 @@ const patchAccountInList = (updatedAccount: Account) => {
   accounts.value = nextAccounts
   syncAccountRefs(mergedAccount)
 }
-
-// 解析 Select 回传的代理 ID；空值、非法值和零都统一表示清除代理绑定。
-const normalizeProxyID = (value: string | number | boolean | null | undefined): number | null => {
-  const parsedProxyID = typeof value === 'number' ? value : Number(value)
-  return Number.isInteger(parsedProxyID) && parsedProxyID > 0 ? parsedProxyID : null
-}
-
-// 为账号行构建代理选项：保留当前非启用代理的只读标签，允许管理员明确清除失效绑定。
-const accountProxyOptions = (account: Account): SelectOption[] => {
-  if (!account.proxy || account.proxy.status === 'active' || availableProxyOptions.value.some(option => option.value === account.proxy_id)) {
-    return availableProxyOptions.value
-  }
-  const currentProxyLabel = account.proxy.country_code
-    ? `${account.proxy.name} (${account.proxy.country_code})`
-    : account.proxy.name
-  return [
-    ...availableProxyOptions.value,
-    { value: account.proxy.id, label: currentProxyLabel, disabled: true }
-  ]
-}
-
-// 行内代理选择持久化到既有账号更新接口，并用服务端返回的完整账号刷新当前行。
-const handleAccountProxyChange = async (account: Account, value: string | number | boolean | null) => {
-  const proxyID = normalizeProxyID(value)
-  if (account.proxy_id === proxyID || updatingProxyAccountIds.has(account.id)) return
-
-  updatingProxyAccountIds.add(account.id)
-  try {
-    const updatedAccount = await adminAPI.accounts.update(account.id, { proxy_id: proxyID ?? 0 })
-    patchAccountInList(updatedAccount)
-    appStore.showSuccess(t('admin.accounts.proxyUpdated'))
-  } catch (error) {
-    console.error('Failed to update account proxy:', error)
-    appStore.showError(extractApiErrorMessage(error, t('admin.accounts.proxyUpdateFailed')))
-  } finally {
-    updatingProxyAccountIds.delete(account.id)
-  }
-}
-
-// refreshTestedAccountInList 测试结束后只刷新目标账号，保持当前列表位置和滚动位置不变。
-const refreshTestedAccountInList = async (accountID: number) => {
-  try {
-    patchAccountInList(await adminAPI.accounts.getById(accountID))
-  } catch (error) {
-    // 测试结果已反馈给用户；单行状态读取失败不应触发表格整页重载。
-    console.error('Failed to refresh tested account row:', error)
-  }
-}
-
 const patchUpstreamBillingSnapshot = (accountID: number, snapshot: UpstreamBillingProbeSnapshot) => {
   const account = accounts.value.find(item => item.id === accountID)
   if (!account) return
@@ -2049,51 +1892,10 @@ const handleExportData = async () => {
   }
 }
 const accountExportStepUp = useStepUp()
-const closeTestModal = () => {
-  if (testingAcc.value) testingAccountIds.delete(testingAcc.value.id)
-  showTest.value = false
-  testingAcc.value = null
-}
-// handleAccountTestModeUpdated 将弹窗保存的完整账号 DTO 回写当前列表，供立即和批量检测复用。
-const handleAccountTestModeUpdated = (updatedAccount: Account) => {
-  const accountIndex = accounts.value.findIndex(account => account.id === updatedAccount.id)
-  if (accountIndex >= 0) accounts.value[accountIndex] = updatedAccount
-  if (testingAcc.value?.id === updatedAccount.id) testingAcc.value = updatedAccount
-}
+const closeTestModal = () => { showTest.value = false; testingAcc.value = null }
 const closeStatsModal = () => { showStats.value = false; statsAcc.value = null }
 const closeReAuthModal = () => { showReAuth.value = false; reAuthAcc.value = null }
-const handleTest = (a: Account) => {
-  testingAcc.value = a
-  showTest.value = true
-}
-// 模型检测直接调用后台测试，不打开交互式测试窗口。
-const handleQuickTest = async (a: Account) => {
-  if (testingAccountIds.has(a.id)) return
-  testingAccountIds.add(a.id)
-  try {
-    const result = await testAccountWithSelectedModel(a, a.id)
-    if (result.success) {
-      appStore.showSuccess(result.message || t('admin.accounts.testSuccess'))
-    } else {
-      appStore.showError(result.message || t('admin.accounts.testFailed'))
-    }
-    // 仅更新被测账号所在行，避免整页 reload 让虚拟表格回到首个账号。
-    await refreshTestedAccountInList(a.id)
-  } catch (error: unknown) {
-    appStore.showError(extractApiErrorMessage(error, t('admin.accounts.testFailed')))
-    await refreshTestedAccountInList(a.id)
-  } finally {
-    testingAccountIds.delete(a.id)
-  }
-}
-const handleTestStateChange = (testing: boolean) => {
-  if (!testingAcc.value) return
-  if (testing) {
-    testingAccountIds.add(testingAcc.value.id)
-  } else {
-    testingAccountIds.delete(testingAcc.value.id)
-  }
-}
+const handleTest = (a: Account) => { testingAcc.value = a; showTest.value = true }
 const handleViewStats = (a: Account) => { statsAcc.value = a; showStats.value = true }
 const handleSchedule = async (a: Account) => {
   scheduleAcc.value = a
@@ -2268,9 +2070,14 @@ const proxyExpiryText = (p: AccountProxy): string => {
   return params ? t(key, params) : t(key)
 }
 
-// 滚动时关闭操作菜单（不关闭列设置下拉菜单）
+// 表格滚动时关闭行操作菜单，并让顶部工具菜单继续贴紧触发按钮。
 const handleScroll = () => {
   menu.show = false
+  if (showAccountToolsDropdown.value) updateAccountToolsDropdownPosition()
+}
+
+const handleViewportResize = () => {
+  if (showAccountToolsDropdown.value) updateAccountToolsDropdownPosition()
 }
 
 // 点击外部关闭顶部下拉菜单
@@ -2288,18 +2095,14 @@ onMounted(async () => {
   load()
   loadUpstreamBillingProbeGlobalState()
   try {
-    const [p, g, filterValues] = await Promise.all([
-      adminAPI.proxies.getAll(),
-      adminAPI.groups.getAll(),
-      adminAPI.accounts.getFilterOptions()
-    ])
+    const [p, g] = await Promise.all([adminAPI.proxies.getAll(), adminAPI.groups.getAll()])
     proxies.value = p
     groups.value = g
-    accountFilterValues.value = filterValues
   } catch (error) {
     console.error('Failed to load proxies/groups:', error)
   }
   window.addEventListener('scroll', handleScroll, true)
+  window.addEventListener('resize', handleViewportResize)
   document.addEventListener('click', handleClickOutside)
 
   if (autoRefreshEnabled.value) {
@@ -2312,6 +2115,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.removeEventListener('scroll', handleScroll, true)
+  window.removeEventListener('resize', handleViewportResize)
   document.removeEventListener('click', handleClickOutside)
 })
 </script>

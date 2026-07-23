@@ -66,7 +66,6 @@ type openAICaptureHandler struct {
 	status                    int
 	rawResponse               string
 	responsesLeadingReasoning bool
-	responsesSSE              bool
 }
 
 func (h *openAICaptureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -89,15 +88,6 @@ func (h *openAICaptureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 
 	answer := answerFromOpenAIRequest(parsed)
 	if h.lastPath == providerOpenAIResponsesPath {
-		if h.responsesSSE {
-			w.Header().Set("Content-Type", "text/event-stream")
-			sse := "event: response.output_text.delta\n" +
-				"data: {\"type\":\"response.output_text.delta\",\"delta\":" + strconv.Quote(answer) + "}\n\n" +
-				"event: response.completed\n" +
-				"data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":" + strconv.Quote(answer) + "}]}]}}\n\n"
-			_, _ = w.Write([]byte(sse))
-			return
-		}
 		output := []map[string]any{}
 		if h.responsesLeadingReasoning {
 			output = append(output, map[string]any{
@@ -317,15 +307,8 @@ func TestRunCheckForModel_OpenAIResponses_DefaultRequest(t *testing.T) {
 	if _, ok := h.lastBody["messages"]; ok {
 		t.Error("responses body must not contain chat messages")
 	}
-	if h.lastBody["stream"] != true {
-		t.Errorf("responses body should set stream=true, got %v", h.lastBody["stream"])
-	}
-	if h.lastBody["max_output_tokens"] != float64(monitorResponsesChallengeMaxOutputTokens) {
-		t.Errorf("responses body should reserve %d output tokens, got %v", monitorResponsesChallengeMaxOutputTokens, h.lastBody["max_output_tokens"])
-	}
-	reasoning, _ := h.lastBody["reasoning"].(map[string]any)
-	if reasoning["effort"] != "low" {
-		t.Errorf("responses body should request low reasoning effort, got %v", reasoning)
+	if h.lastBody["stream"] != false {
+		t.Errorf("responses body should set stream=false, got %v", h.lastBody["stream"])
 	}
 	if h.lastHeaders.Get("Authorization") != "Bearer sk-openai" {
 		t.Errorf("expected bearer auth header, got %q", h.lastHeaders.Get("Authorization"))
@@ -345,62 +328,6 @@ func TestRunCheckForModel_OpenAIResponses_SkipsLeadingReasoningItem(t *testing.T
 	}
 	if h.lastPath != providerOpenAIResponsesPath {
 		t.Fatalf("expected responses path %q, got %q", providerOpenAIResponsesPath, h.lastPath)
-	}
-}
-
-func TestRunCheckForModel_OpenAIResponses_ParsesSSEFinalText(t *testing.T) {
-	h := &openAICaptureHandler{responsesSSE: true}
-	endpoint := setupFakeOpenAI(t, h)
-
-	res := runCheckForModel(context.Background(), MonitorProviderOpenAI, endpoint, "sk-openai", "gpt-5.6-luna", &CheckOptions{
-		APIMode: MonitorAPIModeResponses,
-	})
-
-	if res.Status != MonitorStatusOperational {
-		t.Fatalf("responses SSE should pass challenge, got status=%s message=%q", res.Status, res.Message)
-	}
-	if h.lastBody["stream"] != true {
-		t.Errorf("responses SSE request should set stream=true, got %v", h.lastBody["stream"])
-	}
-}
-
-func TestRunCheckForModel_OpenAIResponses_ReportsSafeEmptyResponseDiagnostic(t *testing.T) {
-	h := &openAICaptureHandler{
-		rawResponse: `{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[{"type":"reasoning"}]}`,
-	}
-	endpoint := setupFakeOpenAI(t, h)
-
-	res := runCheckForModel(context.Background(), MonitorProviderOpenAI, endpoint, "sk-openai", "gpt-5.6-luna", &CheckOptions{
-		APIMode: MonitorAPIModeResponses,
-	})
-
-	if res.Status != MonitorStatusFailed {
-		t.Fatalf("empty Responses body should fail, got status=%s", res.Status)
-	}
-	for _, want := range []string{"HTTP 2xx", "status=incomplete", "incomplete_reason=max_output_tokens", "output_types=reasoning", "content_items=0", "text_chars=0"} {
-		if !strings.Contains(res.Message, want) {
-			t.Errorf("empty response diagnostic should contain %q, got %q", want, res.Message)
-		}
-	}
-}
-
-func TestRunCheckForModel_OpenAIResponses_ReportsCompletedMessageWithoutContent(t *testing.T) {
-	h := &openAICaptureHandler{
-		rawResponse: `{"status":"completed","output":[{"type":"message","status":"completed","role":"assistant","content":[]}]}`,
-	}
-	endpoint := setupFakeOpenAI(t, h)
-
-	res := runCheckForModel(context.Background(), MonitorProviderOpenAI, endpoint, "sk-openai", "gpt-5.6-luna", &CheckOptions{
-		APIMode: MonitorAPIModeResponses,
-	})
-
-	if res.Status != MonitorStatusFailed {
-		t.Fatalf("completed message without content should fail, got status=%s", res.Status)
-	}
-	for _, want := range []string{"HTTP 2xx", "最终消息没有可验证文本", "expected=", "status=completed", "output_types=message", "content_items=0", "text_chars=0"} {
-		if !strings.Contains(res.Message, want) {
-			t.Errorf("completed empty message diagnostic should contain %q, got %q", want, res.Message)
-		}
 	}
 }
 

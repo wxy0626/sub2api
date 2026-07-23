@@ -106,6 +106,7 @@ function mountView() {
         Toggle: true,
         MonitorFormDialog: true,
         MonitorTemplateManagerDialog: true,
+        MonitorRunResultDialog: true,
         MonitorPrimaryModelCell: true,
       },
     },
@@ -157,7 +158,7 @@ describe('ChannelMonitorView duplicate action', () => {
     await flushPromises()
 
     expect(showSuccess).toHaveBeenCalledWith('admin.channelMonitor.duplicateSuccess')
-    expect(showError).toHaveBeenCalledWith(expect.stringContaining('技术详情：refresh failed'))
+    expect(showError).toHaveBeenCalledWith('refresh failed')
     expect(showError).not.toHaveBeenCalledWith('admin.channelMonitor.duplicateFailed')
     wrapper.unmount()
   })
@@ -190,7 +191,7 @@ describe('ChannelMonitorView duplicate action', () => {
     wrapper.findComponent(MonitorActionsCell).vm.$emit('duplicate', monitor)
     await flushPromises()
 
-    expect(showError).toHaveBeenCalledWith(expect.stringContaining('技术详情：duplicate failed'))
+    expect(showError).toHaveBeenCalledWith('duplicate failed')
     wrapper.unmount()
   })
 

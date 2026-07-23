@@ -239,7 +239,7 @@ describe('GroupsView duplicate action', () => {
     await wrapper.get('[data-testid="group-duplicate"]').trigger('click')
     await flushPromises()
 
-    expect(showError).toHaveBeenCalledWith(expect.stringContaining('技术详情：duplicate failed'))
+    expect(showError).toHaveBeenCalledWith('duplicate failed')
     expect(wrapper.get('[data-testid="group-duplicate"]').attributes('disabled')).toBeUndefined()
     wrapper.unmount()
   })

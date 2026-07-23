@@ -16,9 +16,6 @@ import (
 
 const upstreamModelsBodyLimit int64 = 8 << 20
 
-// 同步白名单允许的模型前缀，仅保留 GPT-5.5、GPT-5.6 和 GPT Image 系列。
-var syncedModelAllowedPrefixes = []string{"gpt-5.5", "gpt-5.6", "gpt-image"}
-
 // UpstreamModelSyncErrorKind classifies model sync failures for safe HTTP mapping.
 type UpstreamModelSyncErrorKind string
 
@@ -85,11 +82,7 @@ func (s *AccountTestService) FetchUpstreamSupportedModels(ctx context.Context, a
 	}
 
 	if account.Platform == PlatformAntigravity && account.Type != AccountTypeAPIKey {
-		models, err := s.fetchAntigravityOAuthUpstreamModels(ctx, account)
-		if err != nil {
-			return nil, err
-		}
-		return filterSyncedModelIDs(models), nil
+		return s.fetchAntigravityOAuthUpstreamModels(ctx, account)
 	}
 
 	if s.httpUpstream == nil {
@@ -123,7 +116,11 @@ func (s *AccountTestService) FetchUpstreamSupportedModels(ctx context.Context, a
 		)
 	}
 
-	models, err := extractUpstreamModelIDs(body)
+	extractModels := extractUpstreamModelIDs
+	if account.IsGrok() {
+		extractModels = extractGrokUpstreamModelIDs
+	}
+	models, err := extractModels(body)
 	if err != nil {
 		return nil, newUpstreamModelSyncUpstreamError("Upstream model list response was not valid JSON", err)
 	}
@@ -131,7 +128,7 @@ func (s *AccountTestService) FetchUpstreamSupportedModels(ctx context.Context, a
 		return nil, newUpstreamModelSyncUpstreamError("Upstream returned no supported models", nil)
 	}
 
-	return filterSyncedModelIDs(models), nil
+	return models, nil
 }
 
 func (s *AccountTestService) buildUpstreamModelsRequest(ctx context.Context, account *Account) (*http.Request, error) {
@@ -154,23 +151,57 @@ func (s *AccountTestService) buildUpstreamModelsRequest(ctx context.Context, acc
 }
 
 func (s *AccountTestService) buildGrokUpstreamModelsRequest(ctx context.Context, account *Account) (*http.Request, error) {
-	if account.Type != AccountTypeAPIKey {
+	if account == nil {
+		return nil, newUpstreamModelSyncConfigError("Account is required", nil)
+	}
+
+	var (
+		authToken         string
+		normalizedBaseURL string
+		isOAuth           = account.IsGrokOAuth()
+	)
+	switch account.Type {
+	case AccountTypeAPIKey:
+		authToken = strings.TrimSpace(account.GetCredential("api_key"))
+		if authToken == "" {
+			return nil, newUpstreamModelSyncConfigError("No Grok API key is available", nil)
+		}
+
+		baseURL := strings.TrimSpace(account.GetCredential("base_url"))
+		if baseURL == "" {
+			baseURL = "https://api.x.ai"
+		}
+		validatedBaseURL, err := s.validateUpstreamBaseURL(baseURL)
+		if err != nil {
+			return nil, newUpstreamModelSyncConfigError("Invalid Grok base URL", err)
+		}
+		normalizedBaseURL = validatedBaseURL
+	case AccountTypeOAuth:
+		if s.grokTokenProvider == nil {
+			return nil, newUpstreamModelSyncConfigError("Grok token provider is not configured", nil)
+		}
+		accessToken, err := s.grokTokenProvider.GetAccessTokenForManualTest(ctx, account)
+		if err != nil {
+			return nil, newUpstreamModelSyncUpstreamError("Failed to get Grok access token", err)
+		}
+		authToken = strings.TrimSpace(accessToken)
+		if authToken == "" {
+			return nil, newUpstreamModelSyncConfigError("No Grok access token is available", nil)
+		}
+
+		validator, err := grokBaseURLValidator(account, s.cfg)
+		if err != nil {
+			return nil, newUpstreamModelSyncConfigError("Invalid Grok base URL", err)
+		}
+		validatedBaseURL, err := validator(account.GetGrokBaseURL())
+		if err != nil {
+			return nil, newUpstreamModelSyncConfigError("Invalid Grok base URL", err)
+		}
+		normalizedBaseURL = validatedBaseURL
+	default:
 		return nil, newUpstreamModelSyncUnsupportedError(
 			fmt.Sprintf("Unsupported Grok account type for upstream model sync: %s", account.Type), nil,
 		)
-	}
-	apiKey := strings.TrimSpace(account.GetCredential("api_key"))
-	if apiKey == "" {
-		return nil, newUpstreamModelSyncConfigError("No Grok API key is available", nil)
-	}
-
-	baseURL := strings.TrimSpace(account.GetCredential("base_url"))
-	if baseURL == "" {
-		baseURL = "https://api.x.ai"
-	}
-	normalizedBaseURL, err := s.validateUpstreamBaseURL(baseURL)
-	if err != nil {
-		return nil, newUpstreamModelSyncConfigError("Invalid Grok base URL", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, buildOpenAIModelsURL(normalizedBaseURL), nil)
@@ -178,7 +209,21 @@ func (s *AccountTestService) buildGrokUpstreamModelsRequest(ctx context.Context,
 		return nil, newUpstreamModelSyncConfigError("Invalid Grok model list URL", err)
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Authorization", "Bearer "+authToken)
+	if isOAuth {
+		// The shared HTTP transport adds the official CLI marker/version for the
+		// exact proxy host. Keep the request builder aligned with the other Grok
+		// probes and only forward account identity headers to that trusted host.
+		applyGrokCLIHeaders(req.Header)
+		if isGrokCLIProxyTarget(req.URL.String()) {
+			if userID := strings.TrimSpace(account.GetCredential("sub")); userID != "" {
+				req.Header.Set("X-UserID", userID)
+			}
+			if email := strings.TrimSpace(account.GetCredential("email")); email != "" {
+				req.Header.Set("X-Email", email)
+			}
+		}
+	}
 	account.ApplyHeaderOverrides(req.Header)
 	return req, nil
 }
@@ -445,11 +490,31 @@ func buildGeminiModelsURL(base string) string {
 }
 
 type upstreamModelEntry struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID           string          `json:"id"`
+	Model        string          `json:"model"`
+	ModelID      string          `json:"modelId"`
+	ModelIDSnake string          `json:"model_id"`
+	Name         string          `json:"name"`
+	Meta         json.RawMessage `json:"_meta"`
+}
+
+type upstreamModelEntryMetadata struct {
+	ID           string `json:"id"`
+	Model        string `json:"model"`
+	ModelID      string `json:"modelId"`
+	ModelIDSnake string `json:"model_id"`
+	Name         string `json:"name"`
 }
 
 func extractUpstreamModelIDs(body []byte) ([]string, error) {
+	return extractUpstreamModelIDsWithSelector(body, upstreamModelEntryID)
+}
+
+func extractGrokUpstreamModelIDs(body []byte) ([]string, error) {
+	return extractUpstreamModelIDsWithSelector(body, grokUpstreamModelEntryID)
+}
+
+func extractUpstreamModelIDsWithSelector(body []byte, selectID func(upstreamModelEntry) string) ([]string, error) {
 	var response struct {
 		Data   []upstreamModelEntry `json:"data"`
 		Models []upstreamModelEntry `json:"models"`
@@ -462,24 +527,24 @@ func extractUpstreamModelIDs(body []byte) ([]string, error) {
 
 		models := make([]string, 0, len(arrayResponse))
 		for _, entry := range arrayResponse {
-			models = append(models, upstreamModelEntryID(entry))
+			models = append(models, selectID(entry))
 		}
 		return dedupeAndSortModelIDs(models), nil
 	}
 
 	models := make([]string, 0, len(response.Data)+len(response.Models))
 	for _, entry := range response.Data {
-		models = append(models, upstreamModelEntryID(entry))
+		models = append(models, selectID(entry))
 	}
 	for _, entry := range response.Models {
-		models = append(models, upstreamModelEntryID(entry))
+		models = append(models, selectID(entry))
 	}
 
 	if len(models) == 0 {
 		var arrayResponse []upstreamModelEntry
 		if err := json.Unmarshal(body, &arrayResponse); err == nil {
 			for _, entry := range arrayResponse {
-				models = append(models, upstreamModelEntryID(entry))
+				models = append(models, selectID(entry))
 			}
 		}
 	}
@@ -493,6 +558,37 @@ func upstreamModelEntryID(entry upstreamModelEntry) string {
 		modelID = strings.TrimSpace(entry.Name)
 	}
 	return strings.TrimPrefix(modelID, "models/")
+}
+
+func grokUpstreamModelEntryID(entry upstreamModelEntry) string {
+	candidates := []string{
+		entry.Model,
+		entry.ModelID,
+		entry.ModelIDSnake,
+		entry.ID,
+	}
+	if len(entry.Meta) > 0 {
+		var meta upstreamModelEntryMetadata
+		if err := json.Unmarshal(entry.Meta, &meta); err == nil {
+			candidates = append(candidates,
+				meta.Model,
+				meta.ModelID,
+				meta.ModelIDSnake,
+				meta.ID,
+				meta.Name,
+			)
+		}
+	}
+	// `name` is a display label in the Grok catalog, so keep it as the final
+	// compatibility fallback rather than preferring it over protocol model IDs.
+	candidates = append(candidates, entry.Name)
+	for _, candidate := range candidates {
+		modelID := strings.TrimSpace(candidate)
+		if modelID != "" {
+			return strings.TrimPrefix(modelID, "models/")
+		}
+	}
+	return ""
 }
 
 func dedupeAndSortModelIDs(models []string) []string {
@@ -511,23 +607,4 @@ func dedupeAndSortModelIDs(models []string) []string {
 	}
 	sort.Strings(result)
 	return result
-}
-
-// filterSyncedModelIDs 清理上游模型列表，确保同步接口不会返回白名单策略之外的模型。
-func filterSyncedModelIDs(models []string) []string {
-	// filteredModels 是通过同步白名单策略的上游模型标识。
-	filteredModels := make([]string, 0, len(models))
-	for _, model := range models {
-		// normalizedModel 保留上游原始大小写，但移除意外空白。
-		normalizedModel := strings.TrimSpace(model)
-		// lowercaseModel 用于不区分大小写地匹配受支持系列。
-		lowercaseModel := strings.ToLower(normalizedModel)
-		for _, prefix := range syncedModelAllowedPrefixes {
-			if lowercaseModel == prefix || strings.HasPrefix(lowercaseModel, prefix+"-") {
-				filteredModels = append(filteredModels, normalizedModel)
-				break
-			}
-		}
-	}
-	return dedupeAndSortModelIDs(filteredModels)
 }

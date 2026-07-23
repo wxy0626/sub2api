@@ -41,30 +41,31 @@ export async function checkUpdates(force = false): Promise<VersionInfo> {
 }
 
 export interface UpdateResult {
-	message: string
-	need_restart: boolean
-	restart_scheduled?: boolean
+  message: string
+  need_restart: boolean
 }
 
-export interface PersonalDeploymentVersion {
-	tag: string
-	commit: string
-	digest: string
-	reference: string
+export interface RollbackVersionInfo {
+  version: string
+  published_at: string
+  html_url: string
 }
 
 /**
- * 获取已由用户 Git tag、OCI digest 与 revision 验证的个人可部署版本。
+ * Get versions available for rollback (up to 3 versions older than current)
  */
-export async function getPersonalDeploymentVersions(): Promise<{ versions: PersonalDeploymentVersion[] }> {
-	const { data } = await apiClient.get<{ versions: PersonalDeploymentVersion[] }>(
-		'/admin/system/deployment-versions'
-	)
-	return data
+export async function getRollbackVersions(): Promise<{ versions: RollbackVersionInfo[] }> {
+  const { data } = await apiClient.get<{ versions: RollbackVersionInfo[] }>(
+    '/admin/system/rollback-versions'
+  )
+  return data
 }
 
 /**
- * 在线更新和本地镜像回退均可能触发服务重建；使用后端允许的最长等待时间，避免全局 30 秒超时中断请求。
+ * In-place update/rollback downloads a full release binary from GitHub, which
+ * can take several minutes on slow links. The global 30s axios timeout would
+ * abort the request mid-download (#4504), so these calls wait as long as the
+ * backend allows (15 minutes server-side).
  */
 const UPDATE_REQUEST_TIMEOUT_MS = 15 * 60 * 1000
 
@@ -80,26 +81,15 @@ export async function performUpdate(): Promise<UpdateResult> {
 }
 
 /**
- * 部署后端自行确定的最新个人 Git tag 对应镜像。
+ * Rollback to a previous version
+ * @param version - Target version (e.g. "0.1.146"); omit to restore the local backup binary
  */
-export async function deployLatestPersonalVersion(): Promise<UpdateResult> {
-	const { data } = await apiClient.post<UpdateResult>(
-		'/admin/system/deployment/update',
-		undefined,
-		{ timeout: UPDATE_REQUEST_TIMEOUT_MS }
-	)
-	return data
-}
-
-/**
- * 回退到后端白名单确认的个人 Git tag 和 OCI digest 镜像。
- */
-export async function rollback(tag: string, digest: string): Promise<UpdateResult> {
-	const { data } = await apiClient.post<UpdateResult>(
-		'/admin/system/rollback',
-		{ tag, digest },
-		{ timeout: UPDATE_REQUEST_TIMEOUT_MS }
-	)
+export async function rollback(version?: string): Promise<UpdateResult> {
+  const { data } = await apiClient.post<UpdateResult>(
+    '/admin/system/rollback',
+    version ? { version } : undefined,
+    { timeout: UPDATE_REQUEST_TIMEOUT_MS }
+  )
   return data
 }
 
@@ -112,11 +102,10 @@ export async function restartService(): Promise<{ message: string }> {
 }
 
 export const systemAPI = {
-	getVersion,
-	checkUpdates,
-	performUpdate,
-	getPersonalDeploymentVersions,
-	deployLatestPersonalVersion,
+  getVersion,
+  checkUpdates,
+  performUpdate,
+  getRollbackVersions,
   rollback,
   restartService
 }

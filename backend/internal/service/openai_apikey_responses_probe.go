@@ -99,8 +99,7 @@ func selectResponsesProbeModel(account *Account) string {
 //   - 上游 404 / 405 → 端点不存在,写 false
 //   - 上游 2xx → 端点存在,进一步看工具能力:响应含 function_call 输出项才写 true;
 //     仅 reasoning / 无 function_call(如火山方舟 coding/v3 × kimi-k2.6)写 false
-//   - 4xx（除 404/405）→ 端点存在但无法判定工具能力,保守写 true
-//   - 5xx → 上游暂时不可用，不覆盖已有探测结果
+//   - 其他非 2xx（401/422/400/5xx 等）→ 端点存在但无法判定工具能力,保守写 true
 //   - 网络层失败（连接错误、超时）→ 不写标记，保持 unknown
 //     （后续请求仍按"现状即证据"默认走 Responses）
 //
@@ -149,6 +148,7 @@ func (s *AccountTestService) ProbeOpenAIAPIKeyResponsesSupport(ctx context.Conte
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Accept", "application/json")
+	applyOpenAICodexProbeHeaders(req.Header)
 
 	// 账号级请求头覆写：能力探测与真实转发保持一致的最终头
 	account.ApplyHeaderOverrides(req.Header)
@@ -175,13 +175,6 @@ func (s *AccountTestService) ProbeOpenAIAPIKeyResponsesSupport(ctx context.Conte
 		return
 	}
 
-	// 临时服务端错误不能作为能力证据；保留已有结果，避免将 503 固化为支持。
-	if !shouldPersistResponsesProbeSupport(resp.StatusCode) {
-		logger.LegacyPrintf("service.openai_probe", "probe_result_transient: account_id=%d status=%d action=preserve_existing", accountID, resp.StatusCode)
-		return
-	}
-
-	// 探测结论：仅在可判定状态下写入账号能力缓存。
 	supported := decideResponsesProbeSupport(resp.StatusCode, bodyBytes)
 
 	if err := s.accountRepo.UpdateExtra(ctx, accountID, map[string]any{
@@ -206,7 +199,7 @@ func (s *AccountTestService) ProbeOpenAIAPIKeyResponsesSupport(ctx context.Conte
 //
 // 因此：仅 404 和 405 视为"端点不存在"，其他 status 视为"端点存在"。
 //
-// 5xx 属于临时故障，不在本函数中参与能力结论持久化。
+// 5xx 也视为"端点存在"——上游偶发故障不应误判为不支持。
 func isResponsesEndpointSupportedByStatus(status int) bool {
 	switch status {
 	case http.StatusNotFound, http.StatusMethodNotAllowed:
@@ -215,23 +208,15 @@ func isResponsesEndpointSupportedByStatus(status int) bool {
 	return true
 }
 
-// shouldPersistResponsesProbeSupport 判断探测响应是否足以覆盖已有 Responses 能力标记。
-// 5xx 仅表示上游暂时不可用，写入 true 会把故障误固化为“支持”。
-func shouldPersistResponsesProbeSupport(status int) bool {
-	return status < http.StatusInternalServerError
-}
-
 // decideResponsesProbeSupport 依据探测响应判定上游 /v1/responses 是否真正可用于
 // 携带工具的请求。
 //
 //   - 404 / 405：端点不存在 → false
-//   - 其他可持久化的非 2xx（401/403/422 等）：端点存在,但本次无法判定工具能力
+//   - 其他非 2xx（401/403/422/5xx 等）：端点存在,但本次无法判定工具能力
 //     （鉴权/校验/瞬时故障）→ 保守按 true,保持既有"端点存在即支持"行为
 //   - 2xx：探测以 tool_choice=required 强制工具调用,响应必须含 function_call
 //     输出项才算真正可用;否则(如火山方舟 coding/v3 × kimi-k2.6 仅回 reasoning)
 //     判为 false,使网关改走 /v1/chat/completions 直转路径。
-//
-// 调用方必须先使用 shouldPersistResponsesProbeSupport 过滤 5xx 响应。
 func decideResponsesProbeSupport(status int, body []byte) bool {
 	if status == http.StatusNotFound || status == http.StatusMethodNotAllowed {
 		return false

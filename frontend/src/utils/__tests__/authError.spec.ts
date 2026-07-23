@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { buildAuthErrorMessage } from '@/utils/authError'
 
 describe('buildAuthErrorMessage', () => {
-  it('将 response detail 中的英文错误显示为中文说明与技术详情', () => {
+  it('prefers response detail message when available', () => {
     const message = buildAuthErrorMessage(
       {
         response: {
@@ -14,11 +14,10 @@ describe('buildAuthErrorMessage', () => {
       },
       { fallback: 'fallback' }
     )
-    expect(message).toContain('操作失败，请根据下方技术详情定位原因。')
-    expect(message).toContain('技术详情：detailed message')
+    expect(message).toBe('detailed message')
   })
 
-  it('将 response message 中的英文错误显示为中文说明与技术详情', () => {
+  it('falls back to response message when detail is unavailable', () => {
     const message = buildAuthErrorMessage(
       {
         response: {
@@ -29,19 +28,17 @@ describe('buildAuthErrorMessage', () => {
       },
       { fallback: 'fallback' }
     )
-    expect(message).toContain('操作失败，请根据下方技术详情定位原因。')
-    expect(message).toContain('技术详情：plain message')
+    expect(message).toBe('plain message')
   })
 
-  it('将 Error.message 中的英文错误显示为中文说明与技术详情', () => {
+  it('falls back to error.message when response payload is unavailable', () => {
     const message = buildAuthErrorMessage(
       {
         message: 'error message'
       },
       { fallback: 'fallback' }
     )
-    expect(message).toContain('操作失败，请根据下方技术详情定位原因。')
-    expect(message).toContain('技术详情：error message')
+    expect(message).toBe('error message')
   })
 
   it('uses fallback when no message can be extracted', () => {

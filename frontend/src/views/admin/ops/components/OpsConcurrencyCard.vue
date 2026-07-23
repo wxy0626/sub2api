@@ -2,7 +2,6 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { opsAPI, type OpsAccountAvailabilityStatsResponse, type OpsConcurrencyStatsResponse, type OpsUserConcurrencyStatsResponse } from '@/api/admin/ops'
-import { normalizeDisplayErrorMessage } from '@/utils/errorMessage'
 
 interface Props {
   platformFilter?: string
@@ -279,7 +278,7 @@ async function loadData() {
     }
   } catch (err: any) {
     console.error('[OpsConcurrencyCard] Failed to load data', err)
-    errorMessage.value = normalizeDisplayErrorMessage(err?.response?.data?.detail || err?.message, t('admin.ops.concurrency.loadFailed'))
+    errorMessage.value = err?.response?.data?.detail || t('admin.ops.concurrency.loadFailed')
   } finally {
     loading.value = false
   }

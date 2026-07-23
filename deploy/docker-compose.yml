@@ -16,7 +16,7 @@ services:
   # Sub2API Application
   # ===========================================================================
   sub2api:
-    image: ${SUB2API_IMAGE:-sub2api:latest}
+    image: weishaw/sub2api:latest
     container_name: sub2api
     restart: unless-stopped
     ulimits:
@@ -28,8 +28,6 @@ services:
     volumes:
       # Data persistence (config.yaml will be auto-generated here)
       - sub2api_data:/app/data
-      # 管理员仅能使用后端验证过的个人 Git tag + OCI digest 替换应用容器。
-      - /var/run/docker.sock:/var/run/docker.sock
       # Optional: Mount custom config.yaml (uncomment and create the file first)
       # Copy config.example.yaml to config.yaml, modify it, then uncomment:
       # - ./config.yaml:/app/data/config.yaml
@@ -52,12 +50,6 @@ services:
       - ENABLE_SERVER_TIMING=${ENABLE_SERVER_TIMING:-false}
       - RUN_MODE=${RUN_MODE:-standard}
       - UPDATE_GITHUB_TOKEN=${UPDATE_GITHUB_TOKEN:-}
-      - PERSONAL_DEPLOYMENT_GIT_REPOSITORY=${PERSONAL_DEPLOYMENT_GIT_REPOSITORY:-}
-      - PERSONAL_DEPLOYMENT_REGISTRY_IMAGE=${PERSONAL_DEPLOYMENT_REGISTRY_IMAGE:-}
-      - PERSONAL_DEPLOYMENT_GITHUB_TOKEN=${PERSONAL_DEPLOYMENT_GITHUB_TOKEN:-}
-      - PERSONAL_DEPLOYMENT_REGISTRY_USERNAME=${PERSONAL_DEPLOYMENT_REGISTRY_USERNAME:-}
-      - PERSONAL_DEPLOYMENT_REGISTRY_TOKEN=${PERSONAL_DEPLOYMENT_REGISTRY_TOKEN:-}
-      - PERSONAL_DEPLOYMENT_MAX_VERSIONS=${PERSONAL_DEPLOYMENT_MAX_VERSIONS:-3}
 
       # =======================================================================
       # Database Configuration (PostgreSQL)
@@ -78,6 +70,7 @@ services:
       # =======================================================================
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - REDIS_USERNAME=${REDIS_USERNAME:-}
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_DB=${REDIS_DB:-0}
       - REDIS_POOL_SIZE=${REDIS_POOL_SIZE:-1024}
@@ -169,6 +162,9 @@ services:
       - GATEWAY_OPENAI_HTTP2_FALLBACK_ERROR_THRESHOLD=${GATEWAY_OPENAI_HTTP2_FALLBACK_ERROR_THRESHOLD:-2}
       - GATEWAY_OPENAI_HTTP2_FALLBACK_WINDOW_SECONDS=${GATEWAY_OPENAI_HTTP2_FALLBACK_WINDOW_SECONDS:-60}
       - GATEWAY_OPENAI_HTTP2_FALLBACK_TTL_SECONDS=${GATEWAY_OPENAI_HTTP2_FALLBACK_TTL_SECONDS:-600}
+      - GATEWAY_OPENAI_PROXY_STREAM_CIRCUIT_FAILURE_THRESHOLD=${GATEWAY_OPENAI_PROXY_STREAM_CIRCUIT_FAILURE_THRESHOLD:-2}
+      - GATEWAY_OPENAI_PROXY_STREAM_CIRCUIT_WINDOW_SECONDS=${GATEWAY_OPENAI_PROXY_STREAM_CIRCUIT_WINDOW_SECONDS:-60}
+      - GATEWAY_OPENAI_PROXY_STREAM_CIRCUIT_TTL_SECONDS=${GATEWAY_OPENAI_PROXY_STREAM_CIRCUIT_TTL_SECONDS:-600}
       - GATEWAY_IMAGE_STREAM_DATA_INTERVAL_TIMEOUT=${GATEWAY_IMAGE_STREAM_DATA_INTERVAL_TIMEOUT:-900}
       - GATEWAY_IMAGE_STREAM_KEEPALIVE_INTERVAL=${GATEWAY_IMAGE_STREAM_KEEPALIVE_INTERVAL:-10}
       - GATEWAY_IMAGE_CONCURRENCY_ENABLED=${GATEWAY_IMAGE_CONCURRENCY_ENABLED:-false}

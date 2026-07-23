@@ -325,7 +325,6 @@ import PendingOAuthCreateAccountForm, {
 } from '@/components/auth/PendingOAuthCreateAccountForm.vue'
 import { apiClient } from '@/api/client'
 import { useAuthStore, useAppStore } from '@/stores'
-import { normalizeDisplayErrorMessage } from '@/utils/errorMessage'
 import {
   completeWeChatOAuthRegistration,
   exchangePendingOAuthCompletion,
@@ -1042,7 +1041,7 @@ onMounted(async () => {
     }
 
     if (error) {
-      errorMessage.value = normalizeDisplayErrorMessage(errorDesc || error, t('auth.loginFailed'))
+      errorMessage.value = errorDesc || error
       isProcessing.value = false
       return
     }

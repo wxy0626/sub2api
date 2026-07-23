@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -290,7 +289,7 @@ func (r *channelMonitorRepository) ListHistory(ctx context.Context, monitorID in
 func (r *channelMonitorRepository) ListLatestPerModel(ctx context.Context, monitorID int64) ([]*service.ChannelMonitorLatest, error) {
 	const q = `
 		SELECT DISTINCT ON (model)
-		    model, status, latency_ms, ping_latency_ms, message, checked_at
+		    model, status, latency_ms, ping_latency_ms, checked_at
 		FROM channel_monitor_histories
 		WHERE monitor_id = $1
 		ORDER BY model, checked_at DESC
@@ -305,7 +304,7 @@ func (r *channelMonitorRepository) ListLatestPerModel(ctx context.Context, monit
 	for rows.Next() {
 		l := &service.ChannelMonitorLatest{}
 		var latency, ping sql.NullInt64
-		if err := rows.Scan(&l.Model, &l.Status, &latency, &ping, &l.Message, &l.CheckedAt); err != nil {
+		if err := rows.Scan(&l.Model, &l.Status, &latency, &ping, &l.CheckedAt); err != nil {
 			return nil, fmt.Errorf("scan latest row: %w", err)
 		}
 		assignNullInt(&l.LatencyMs, latency)
@@ -397,7 +396,7 @@ func (r *channelMonitorRepository) ListLatestForMonitorIDs(ctx context.Context, 
 	}
 	const q = `
 		SELECT DISTINCT ON (monitor_id, model)
-		    monitor_id, model, status, latency_ms, ping_latency_ms, message, checked_at
+		    monitor_id, model, status, latency_ms, ping_latency_ms, checked_at
 		FROM channel_monitor_histories
 		WHERE monitor_id = ANY($1)
 		ORDER BY monitor_id, model, checked_at DESC
@@ -412,7 +411,7 @@ func (r *channelMonitorRepository) ListLatestForMonitorIDs(ctx context.Context, 
 		var monitorID int64
 		l := &service.ChannelMonitorLatest{}
 		var latency, ping sql.NullInt64
-		if err := rows.Scan(&monitorID, &l.Model, &l.Status, &latency, &ping, &l.Message, &l.CheckedAt); err != nil {
+		if err := rows.Scan(&monitorID, &l.Model, &l.Status, &latency, &ping, &l.CheckedAt); err != nil {
 			return nil, fmt.Errorf("scan latest batch row: %w", err)
 		}
 		assignNullInt(&l.LatencyMs, latency)
@@ -738,18 +737,12 @@ func entToServiceMonitor(row *dbent.ChannelMonitor) *service.ChannelMonitor {
 	}
 	duplicateOperationID := headers[service.ChannelMonitorDuplicateOperationIDMetadataKey]
 	delete(headers, service.ChannelMonitorDuplicateOperationIDMetadataKey)
-	accountID := parseChannelMonitorAccountID(headers[service.ChannelMonitorAccountIDMetadataKey])
-	delete(headers, service.ChannelMonitorAccountIDMetadataKey)
-	apiKeyID := parseChannelMonitorAccountID(headers[service.ChannelMonitorAPIKeyIDMetadataKey])
-	delete(headers, service.ChannelMonitorAPIKeyIDMetadataKey)
 	out := &service.ChannelMonitor{
 		ID:                   row.ID,
 		Name:                 row.Name,
 		Provider:             string(row.Provider),
 		APIMode:              defaultAPIModeRepo(row.APIMode),
 		Endpoint:             row.Endpoint,
-		AccountID:            accountID,
-		APIKeyID:             apiKeyID,
 		APIKey:               row.APIKeyEncrypted, // 仍为密文，service 层负责解密
 		PrimaryModel:         row.PrimaryModel,
 		ExtraModels:          extras,
@@ -777,9 +770,9 @@ func channelMonitorHeadersForPersistence(m *service.ChannelMonitor) map[string]s
 	if m == nil {
 		return map[string]string{}
 	}
-	headers := make(map[string]string, len(m.ExtraHeaders)+3)
+	headers := make(map[string]string, len(m.ExtraHeaders)+1)
 	for key, value := range m.ExtraHeaders {
-		if key == service.ChannelMonitorDuplicateOperationIDMetadataKey || key == service.ChannelMonitorAccountIDMetadataKey || key == service.ChannelMonitorAPIKeyIDMetadataKey {
+		if key == service.ChannelMonitorDuplicateOperationIDMetadataKey {
 			continue
 		}
 		headers[key] = value
@@ -787,22 +780,7 @@ func channelMonitorHeadersForPersistence(m *service.ChannelMonitor) map[string]s
 	if operationID := strings.TrimSpace(m.DuplicateOperationID); operationID != "" {
 		headers[service.ChannelMonitorDuplicateOperationIDMetadataKey] = operationID
 	}
-	if m.AccountID != nil && *m.AccountID > 0 {
-		headers[service.ChannelMonitorAccountIDMetadataKey] = strconv.FormatInt(*m.AccountID, 10)
-	}
-	if m.APIKeyID != nil && *m.APIKeyID > 0 {
-		headers[service.ChannelMonitorAPIKeyIDMetadataKey] = strconv.FormatInt(*m.APIKeyID, 10)
-	}
 	return headers
-}
-
-// parseChannelMonitorAccountID 解析持久化账号来源；非法旧值按外部渠道处理。
-func parseChannelMonitorAccountID(raw string) *int64 {
-	id, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
-	if err != nil || id <= 0 {
-		return nil
-	}
-	return &id
 }
 
 // emptyHeadersIfNilRepo 与 service.emptyHeadersIfNil 功能一致，

@@ -251,7 +251,6 @@ import { Icon } from '@/components/icons'
 import { useClipboard } from '@/composables/useClipboard'
 import { buildApiUrl } from '@/api/client'
 import { adminAPI } from '@/api/admin'
-import { normalizeDisplayErrorMessage } from '@/utils/errorMessage'
 import type { Account, ClaudeModel } from '@/types'
 
 const { t } = useI18n()
@@ -274,8 +273,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'close'): void
-  /** 通知外部立即检测的运行状态，以便同步图标加载态。 */
-  (e: 'testing-changed', testing: boolean): void
 }>()
 
 const terminalRef = ref<HTMLElement | null>(null)
@@ -296,8 +293,6 @@ const openAITestModeOptions = computed(() => [
   { value: 'compact', label: t('admin.accounts.openai.testModeCompact') }
 ])
 const previewImageUrl = ref('')
-// 账号连接测试的统一默认模型：模型列表提供 Luna 时优先选用。
-const defaultTestModelID = 'gpt-5.6-luna'
 const prioritizedGeminiModels = ['gemini-3.1-flash-image', 'gemini-2.5-flash-image', 'gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-3-flash-preview', 'gemini-3-pro-preview', 'gemini-2.0-flash']
 const supportsGeminiImageTest = computed(() => {
   const modelID = selectedModelId.value.toLowerCase()
@@ -358,10 +353,7 @@ const loadAvailableModels = async () => {
       : models
     // Default selection by platform
     if (availableModels.value.length > 0) {
-      const lunaModel = availableModels.value.find((model) => model.id === defaultTestModelID)
-      if (lunaModel) {
-        selectedModelId.value = lunaModel.id
-      } else if (props.account.platform === 'gemini') {
+      if (props.account.platform === 'gemini') {
         selectedModelId.value = availableModels.value[0].id
       } else {
         // Try to select Sonnet as default, otherwise use first model
@@ -417,7 +409,6 @@ const startTest = async () => {
 
   resetState()
   status.value = 'connecting'
-  emit('testing-changed', true)
   addLine(t('admin.accounts.startingTestForAccount', { name: props.account.name }), 'text-blue-400')
   addLine(t('admin.accounts.testAccountTypeLabel', { type: props.account.type }), 'text-gray-400')
   addLine('', 'text-gray-300')
@@ -485,11 +476,9 @@ const startTest = async () => {
       return
     }
     status.value = 'error'
-    const msg = normalizeDisplayErrorMessage(error instanceof Error ? error.message : '')
+    const msg = error instanceof Error ? error.message : 'Unknown error'
     errorMessage.value = msg
-    addLine(`错误：${msg}`, 'text-red-400')
-  } finally {
-    emit('testing-changed', false)
+    addLine(`Error: ${msg}`, 'text-red-400')
   }
 }
 
@@ -551,13 +540,13 @@ const handleEvent = (event: {
         status.value = 'success'
       } else {
         status.value = 'error'
-        errorMessage.value = normalizeDisplayErrorMessage(event.error, '账号测试失败，请稍后重试。')
+        errorMessage.value = event.error || 'Test failed'
       }
       break
 
     case 'error':
       status.value = 'error'
-      errorMessage.value = normalizeDisplayErrorMessage(event.error, '账号测试失败，请稍后重试。')
+      errorMessage.value = event.error || 'Unknown error'
       if (streamingContent.value) {
         addLine(streamingContent.value, 'text-green-300')
         streamingContent.value = ''

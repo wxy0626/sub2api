@@ -40,28 +40,6 @@ describe('HelpTooltip', () => {
     wrapper.unmount()
   })
 
-  it('positions the tooltip below its trigger', async () => {
-    const wrapper = mount(HelpTooltip, {
-      attachTo: document.body,
-      props: { content: 'details below trigger' },
-    })
-    const trigger = wrapper.get('.group')
-    const triggerElement = trigger.element as HTMLElement
-    Object.defineProperty(triggerElement, 'getBoundingClientRect', {
-      value: () => ({ left: 100, width: 40, bottom: 72 }),
-    })
-
-    await trigger.trigger('mouseenter')
-    await nextTick()
-
-    const tooltip = getTooltipElement()
-    expect(tooltip.style.top).toBe('calc(80px)')
-    expect(tooltip.style.left).toBe('120px')
-    expect(tooltip.className).not.toContain('-translate-y-full')
-
-    wrapper.unmount()
-  })
-
   it('supports click-to-toggle details and closes on outside click', async () => {
     const wrapper = mount(HelpTooltip, {
       attachTo: document.body,

@@ -4,7 +4,7 @@
 # Copy this file to /etc/sub2api/config.yaml and modify as needed
 # 复制此文件到 /etc/sub2api/config.yaml 并根据需要修改
 #
-# Documentation / 文档: https://github.com/wxy0626/sub2api
+# Documentation / 文档: https://github.com/Wei-Shaw/sub2api
 
 # =============================================================================
 # Server Configuration
@@ -401,6 +401,11 @@ gateway:
     fallback_error_threshold: 2
     fallback_window_seconds: 60
     fallback_ttl_seconds: 600
+  # OpenAI Responses SSE 代理断流熔断；按 proxy_id 跨账号隔离，仅影响下一次调度。
+  openai_proxy_stream_circuit:
+    failure_threshold: 2
+    window_seconds: 60
+    ttl_seconds: 600
   # HTTP upstream connection pool settings (HTTP/2 + multi-proxy scenario defaults)
   # HTTP 上游连接池配置（HTTP/2 + 多代理场景默认值）
   # Max idle connections across all hosts
@@ -920,6 +925,9 @@ redis:
   # Redis port
   # Redis 端口
   port: 6379
+  # Redis ACL username (leave empty for default user)
+  # Redis ACL 用户名（使用默认用户时留空）
+  username: ""
   # Redis password (leave empty if no password is set)
   # Redis 密码（如果未设置密码则留空）
   password: ""
@@ -1227,29 +1235,6 @@ update:
   # Leave empty for direct connection (recommended for overseas servers)
   # 留空表示直连（适用于海外服务器）
   proxy_url: ""
-
-# =============================================================================
-# Personal Git + OCI Image Deployment (个人 Git 与 OCI 镜像部署)
-# =============================================================================
-# 上游 Release 仅用于版本提示。管理员部署最新版本和回退历史版本时，只会使用这里
-# 的 Git tag 与镜像 digest/revision 三方一致的镜像。
-personal_deployment:
-  # GitHub repository, owner/repository format
-  # 用户自己的 GitHub 仓库，格式 owner/repository
-  git_repository: ""
-  # OCI registry image repository; a tag is stripped before digest verification
-  # OCI 镜像仓库；即使填入 tag，部署时也会剥离 tag 并强制使用 digest
-  registry_image: ""
-  # Private Git repository read token (contents:read)
-  # 私有 Git 仓库只读 token（contents:read）
-  github_token: ""
-  # Private registry read credentials (for example GHCR packages:read)
-  # 私有镜像仓库只读凭据（例如 GHCR packages:read）
-  registry_username: ""
-  registry_token: ""
-  # Number of newest verified personal versions displayed to administrators
-  # 管理端展示的最新已验证个人版本数量
-  max_versions: 3
 
 # =============================================================================
 # Image Storage (异步图片任务结果对象存储)

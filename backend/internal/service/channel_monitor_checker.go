@@ -100,13 +100,6 @@ func runCheckForModel(ctx context.Context, provider, endpoint, apiKey, model str
 
 	if !validateChallenge(respText, challenge.Expected) {
 		res.Status = MonitorStatusFailed
-		if strings.TrimSpace(respText) == "" {
-			res.Message = truncateMessage(sanitizeErrorMessage(fmt.Sprintf(
-				"上游返回 HTTP 2xx，但最终消息没有可验证文本；expected=%s；%s",
-				challenge.Expected, describeEmptyMonitorResponse(provider, checkAPIMode(opts), rawBody),
-			)))
-			return res
-		}
 		res.Message = truncateMessage(sanitizeErrorMessage(fmt.Sprintf("challenge mismatch (expected %s, got %q)", challenge.Expected, respText)))
 		return res
 	}
@@ -245,12 +238,8 @@ var providerOpenAIResponsesAdapter = providerAdapter{
 			"model":             model,
 			"instructions":      "You are a channel health-check endpoint. Answer the arithmetic challenge exactly and briefly.",
 			"input":             prompt,
-			"max_output_tokens": monitorResponsesChallengeMaxOutputTokens,
-			// 监控只需一个简短确定答案，避免推理模型把所有输出额度用于内部推理。
-			"reasoning": map[string]string{"effort": "low"},
-			// Codex OAuth 上游会将 Responses 请求转为流式回包；显式流式请求可稳定获得
-			// output_text.delta 或 response.completed 中的最终文本，避免非流式汇总消息缺少 content。
-			"stream": true,
+			"max_output_tokens": monitorChallengeMaxTokens,
+			"stream":            false,
 		})
 	},
 	buildHeaders: func(apiKey string) map[string]string {
@@ -339,28 +328,8 @@ func extractAnthropicMonitorText(respBytes []byte) string {
 // Responses 的 output 数组顺序由模型决定：reasoning / tool-call item 可能排在 message 前面，
 // 因此不能假设文本永远在 output.0.content.0.text。
 func extractOpenAIResponsesText(respBytes []byte) string {
-	if text := extractOpenAIResponsesJSONText(respBytes); strings.TrimSpace(text) != "" {
-		return text
-	}
-	// 兼容部分网关在 stream=false 时仍回传 Responses SSE。
-	// 先取终态完整文本，最后才降级拼接 delta，避免重复内容。
-	return extractOpenAIResponsesSSEText(string(respBytes))
-}
-
-// extractOpenAIResponsesJSONText 从标准 Responses JSON 或单个 SSE 事件中聚合最终文本。
-func extractOpenAIResponsesJSONText(respBytes []byte) string {
 	if text := gjson.GetBytes(respBytes, "output_text").String(); strings.TrimSpace(text) != "" {
 		return text
-	}
-	if response := gjson.GetBytes(respBytes, "response"); response.Exists() && response.Type == gjson.JSON {
-		if text := extractOpenAIResponsesJSONText([]byte(response.Raw)); strings.TrimSpace(text) != "" {
-			return text
-		}
-	}
-	if item := gjson.GetBytes(respBytes, "item"); item.Exists() && item.Type == gjson.JSON {
-		if text := extractOpenAIResponsesJSONText([]byte(`{"output":[` + item.Raw + `]}`)); strings.TrimSpace(text) != "" {
-			return text
-		}
 	}
 
 	var texts []string
@@ -395,122 +364,6 @@ func extractOpenAIResponsesJSONText(respBytes []byte) string {
 		return strings.Join(texts, "")
 	}
 	return gjson.GetBytes(respBytes, providerOpenAIResponsesAdapter.textPath).String()
-}
-
-// extractOpenAIResponsesSSEText 解析 Responses SSE 的终态事件或 output_text delta。
-func extractOpenAIResponsesSSEText(body string) string {
-	var deltaText strings.Builder
-	var terminalText string
-	forEachOpenAISSEDataPayload(body, func(data []byte) {
-		if strings.TrimSpace(terminalText) != "" {
-			return
-		}
-		if text := extractOpenAIResponsesJSONText(data); strings.TrimSpace(text) != "" {
-			terminalText = text
-			return
-		}
-		if gjson.GetBytes(data, "type").String() != "response.output_text.delta" {
-			return
-		}
-		if text := gjson.GetBytes(data, "delta").String(); strings.TrimSpace(text) != "" {
-			_, _ = deltaText.WriteString(text)
-		}
-	})
-	if strings.TrimSpace(terminalText) != "" {
-		return terminalText
-	}
-	return deltaText.String()
-}
-
-// describeEmptyMonitorResponse 仅提取协议状态和结构信息，供 2xx 空文本的诊断使用。
-// 不返回原始响应内容，避免监控历史意外保存模型输出或上游敏感字段。
-func describeEmptyMonitorResponse(provider, apiMode, rawBody string) string {
-	if provider != MonitorProviderOpenAI || defaultAPIMode(apiMode) != MonitorAPIModeResponses {
-		return "response_text 为空"
-	}
-	if gjson.Valid(rawBody) {
-		return describeOpenAIResponsesJSONShape([]byte(rawBody))
-	}
-	var eventTypes []string
-	var terminalShape string
-	forEachOpenAISSEDataPayload(rawBody, func(data []byte) {
-		typ := strings.TrimSpace(gjson.GetBytes(data, "type").String())
-		if typ != "" && !containsMonitorDiagnosticValue(eventTypes, typ) {
-			eventTypes = append(eventTypes, typ)
-		}
-		if typ == "response.completed" || typ == "response.done" {
-			terminalShape = describeOpenAIResponsesJSONShape([]byte(gjson.GetBytes(data, "response").Raw))
-		}
-	})
-	if terminalShape != "" {
-		return terminalShape
-	}
-	if len(eventTypes) > 0 {
-		return "SSE events=" + strings.Join(eventTypes, ",")
-	}
-	return "响应不是 JSON 或可识别的 SSE"
-}
-
-// describeOpenAIResponsesJSONShape 生成不含文本内容的 Responses 回包摘要。
-func describeOpenAIResponsesJSONShape(body []byte) string {
-	root := gjson.ParseBytes(body)
-	if response := root.Get("response"); response.Exists() && response.IsObject() {
-		root = response
-	}
-	parts := make([]string, 0, 4)
-	if status := strings.TrimSpace(root.Get("status").String()); status != "" {
-		parts = append(parts, "status="+status)
-	}
-	if reason := strings.TrimSpace(root.Get("incomplete_details.reason").String()); reason != "" {
-		parts = append(parts, "incomplete_reason="+reason)
-	}
-	if output := root.Get("output"); output.Exists() && output.IsArray() {
-		types := make([]string, 0, len(output.Array()))
-		contentCount := 0
-		contentTypes := make([]string, 0)
-		textChars := 0
-		for _, item := range output.Array() {
-			typ := strings.TrimSpace(item.Get("type").String())
-			if typ != "" && !containsMonitorDiagnosticValue(types, typ) {
-				types = append(types, typ)
-			}
-			content := item.Get("content")
-			if !content.IsArray() {
-				continue
-			}
-			contentCount += len(content.Array())
-			for _, part := range content.Array() {
-				contentType := strings.TrimSpace(part.Get("type").String())
-				if contentType != "" && !containsMonitorDiagnosticValue(contentTypes, contentType) {
-					contentTypes = append(contentTypes, contentType)
-				}
-				textChars += len(part.Get("text").String())
-			}
-		}
-		parts = append(parts, fmt.Sprintf("output_items=%d", len(output.Array())))
-		if len(types) > 0 {
-			parts = append(parts, "output_types="+strings.Join(types, ","))
-		}
-		parts = append(parts, fmt.Sprintf("content_items=%d", contentCount))
-		if len(contentTypes) > 0 {
-			parts = append(parts, "content_types="+strings.Join(contentTypes, ","))
-		}
-		parts = append(parts, fmt.Sprintf("text_chars=%d", textChars))
-	}
-	if len(parts) == 0 {
-		return "Responses JSON 未包含 status 或 output"
-	}
-	return strings.Join(parts, "; ")
-}
-
-// containsMonitorDiagnosticValue 避免诊断摘要重复记录同一事件或输出类型。
-func containsMonitorDiagnosticValue(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
 }
 
 // mergeHeaders 把用户自定义 headers 合并到 adapter 默认 headers 上。

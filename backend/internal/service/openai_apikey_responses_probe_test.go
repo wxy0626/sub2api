@@ -1,11 +1,53 @@
 package service
 
 import (
+	"context"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/stretchr/testify/require"
 )
+
+func TestProbeOpenAIAPIKeyResponsesSupportUsesCodexProbeHeaders(t *testing.T) {
+	updateCalls := make(chan map[string]any, 1)
+	account := Account{
+		ID:          96,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-test",
+			"base_url": "https://compat-upstream.example/v1",
+		},
+	}
+	repo := &snapshotUpdateAccountRepo{
+		stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{account}},
+		updateExtraCalls:      updateCalls,
+	}
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(`{"output":[{"type":"function_call","name":"probe_ping"}]}`)),
+	}}
+	svc := &AccountTestService{
+		accountRepo:  repo,
+		httpUpstream: upstream,
+		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+	}
+
+	svc.ProbeOpenAIAPIKeyResponsesSupport(context.Background(), account.ID)
+
+	require.NotNil(t, upstream.lastReq)
+	require.Equal(t, "https://compat-upstream.example/v1/responses", upstream.lastReq.URL.String())
+	requireOpenAICodexProbeHeaders(t, upstream.lastReq.Header)
+	updates := <-updateCalls
+	require.Equal(t, true, updates[openai_compat.ExtraKeyResponsesSupported])
+}
 
 func TestDecideResponsesProbeSupport(t *testing.T) {
 	fnCall := []byte(`{"output":[{"type":"reasoning"},{"type":"function_call","name":"probe_ping"}]}`)
@@ -34,31 +76,6 @@ func TestDecideResponsesProbeSupport(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			require.Equal(t, tc.want, decideResponsesProbeSupport(tc.status, tc.body))
-		})
-	}
-}
-
-// TestShouldPersistResponsesProbeSupport 验证 5xx 探测结果不会覆盖已有能力标记。
-func TestShouldPersistResponsesProbeSupport(t *testing.T) {
-	// 探测状态用例：覆盖可持久化客户端错误与不可持久化服务端错误。
-	tests := []struct {
-		name   string
-		status int
-		want   bool
-	}{
-		{"客户端校验错误可持久化", 400, true},
-		{"鉴权错误可持久化", 401, true},
-		{"服务不可用保留已有结果", 503, false},
-		{"服务内部错误保留已有结果", 500, false},
-	}
-
-	for _, testCase := range tests {
-		t.Run(testCase.name, func(t *testing.T) {
-			// 探测持久化决策：仅打印状态码与布尔结果，避免输出账号或密钥。
-			// 实际决策：用于对比期望持久化行为。
-			got := shouldPersistResponsesProbeSupport(testCase.status)
-			t.Logf("Responses 能力探测持久化决策: status=%d persist=%t", testCase.status, got)
-			require.Equal(t, testCase.want, got)
 		})
 	}
 }

@@ -36,11 +36,6 @@ func ProvideUpdateService(cache UpdateCache, githubClient GitHubReleaseClient, b
 	return NewUpdateService(cache, githubClient, buildInfo.Version, buildInfo.BuildType)
 }
 
-// ProvidePersonalImageDeploymentService 创建仅部署用户自有 Git tag 对应 OCI 镜像的服务。
-func ProvidePersonalImageDeploymentService(cfg *config.Config) *PersonalImageDeploymentService {
-	return NewPersonalImageDeploymentService(cfg)
-}
-
 // ProvideEmailQueueService creates EmailQueueService with default worker count
 func ProvideEmailQueueService(emailService *EmailService) *EmailQueueService {
 	return NewEmailQueueService(emailService, 3)
@@ -686,6 +681,7 @@ var ProviderSet = wire.NewSet(
 	ProvideAPIKeyAuthCacheInvalidator,
 	ProvideAuthCacheInvalidationWorker,
 	NewGroupService,
+	NewCompositeRouteResolver,
 	NewAccountService,
 	NewProxyService,
 	NewRedeemService,
@@ -755,7 +751,6 @@ var ProviderSet = wire.NewSet(
 	NewIdentityService,
 	NewCRSSyncService,
 	ProvideUpdateService,
-	ProvidePersonalImageDeploymentService,
 	ProvideTokenRefreshService,
 	wire.Bind(new(GrokOAuthReconciler), new(*TokenRefreshService)),
 	ProvideAccountExpiryService,
@@ -787,8 +782,7 @@ var ProviderSet = wire.NewSet(
 	ProvidePaymentService,
 	ProvidePaymentOrderExpiryService,
 	ProvideBalanceNotifyService,
-	ProvideChannelMonitorServiceWithAccountTester,
-	wire.Bind(new(ChannelMonitorAccountTester), new(*AccountTestService)),
+	ProvideChannelMonitorService,
 	ProvideChannelMonitorRunner,
 	NewChannelMonitorRequestTemplateService,
 	ProvideUserPlatformQuotaUsageFlusher,
@@ -836,17 +830,6 @@ func ProvideChannelMonitorService(
 	encryptor SecretEncryptor,
 ) *ChannelMonitorService {
 	return NewChannelMonitorService(repo, encryptor)
-}
-
-// ProvideChannelMonitorServiceWithAccountTester 创建并注入账号原生测试链路，确保账号来源监控可直接执行。
-func ProvideChannelMonitorServiceWithAccountTester(
-	repo ChannelMonitorRepository,
-	encryptor SecretEncryptor,
-	accountTester ChannelMonitorAccountTester,
-) *ChannelMonitorService {
-	service := NewChannelMonitorService(repo, encryptor)
-	service.SetAccountTester(accountTester)
-	return service
 }
 
 // ProvideChannelMonitorRunner 创建并启动渠道监控调度器。

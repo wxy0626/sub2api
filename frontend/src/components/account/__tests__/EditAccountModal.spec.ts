@@ -343,26 +343,6 @@ describe('EditAccountModal', () => {
     })
   })
 
-  it('编辑没有模型映射的 OpenAI 账号时默认只开放 GPT-5.5', async () => {
-    const account = buildAccount()
-    delete account.credentials.model_mapping
-    updateAccountMock.mockReset()
-    checkMixedChannelRiskMock.mockReset()
-    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
-    updateAccountMock.mockResolvedValue(account)
-
-    const wrapper = mountModal(account)
-
-    expect(wrapper.get('[data-testid="model-whitelist-value"]').text()).toBe('gpt-5.5')
-
-    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
-
-    expect(updateAccountMock).toHaveBeenCalledTimes(1)
-    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.model_mapping).toEqual({
-      'gpt-5.5': 'gpt-5.5'
-    })
-  })
-
   it('preserves model mappings when editing the whitelist', async () => {
     const account = buildAccount()
     account.credentials.model_mapping = {

@@ -595,7 +595,7 @@
                   <span
                     class="rounded bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
                   >
-                    {{ t('admin.accounts.gemini.oauthType.badges.projectFallback') }}
+                    {{ t('admin.accounts.gemini.oauthType.badges.noGcp') }}
                   </span>
                 </div>
               </div>
@@ -3170,7 +3170,7 @@
         :show-manual-option="true"
         :initial-input-method="'manual'"
         :platform="form.platform"
-        :show-project-id="geminiOAuthType === 'code_assist' || geminiOAuthType === 'google_one'"
+        :show-project-id="geminiOAuthType === 'code_assist'"
         @generate-url="handleGenerateUrl"
         @cookie-auth="handleCookieAuth"
         @validate-refresh-token="handleValidateRefreshToken"

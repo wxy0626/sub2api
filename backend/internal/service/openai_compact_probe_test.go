@@ -14,11 +14,8 @@ func TestNormalizeAccountTestMode(t *testing.T) {
 	}{
 		{input: "", want: AccountTestModeDefault},
 		{input: "default", want: AccountTestModeDefault},
-		{input: " responses ", want: AccountTestModeResponses},
-		{input: "RESPONSES", want: AccountTestModeResponses},
 		{input: " compact ", want: AccountTestModeCompact},
 		{input: "COMPACT", want: AccountTestModeCompact},
-		{input: " workspace ", want: AccountTestModeWorkspace},
 		{input: "unknown", want: AccountTestModeDefault},
 	}
 

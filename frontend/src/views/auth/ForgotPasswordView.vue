@@ -132,7 +132,6 @@ import Icon from '@/components/icons/Icon.vue'
 import TurnstileWidget from '@/components/TurnstileWidget.vue'
 import { useAppStore } from '@/stores'
 import { getPublicSettings, forgotPassword } from '@/api/auth'
-import { normalizeDisplayErrorMessage } from '@/utils/errorMessage'
 
 const { t } = useI18n()
 
@@ -254,10 +253,13 @@ async function handleSubmit(): Promise<void> {
 
     const err = error as { message?: string; response?: { data?: { detail?: string } } }
 
-    errorMessage.value = normalizeDisplayErrorMessage(
-      err.response?.data?.detail || err.message,
-      t('auth.sendResetLinkFailed')
-    )
+    if (err.response?.data?.detail) {
+      errorMessage.value = err.response.data.detail
+    } else if (err.message) {
+      errorMessage.value = err.message
+    } else {
+      errorMessage.value = t('auth.sendResetLinkFailed')
+    }
 
     appStore.showError(errorMessage.value)
   } finally {

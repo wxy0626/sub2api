@@ -466,14 +466,13 @@ func (h *AccountHandler) listAccountSchedulerScoreFilterPool(
 	platform, accountType, status, search string,
 	groupID int64,
 	privacyMode string,
-	proxyID int64,
 ) []service.Account {
 	if h.adminService == nil || (platform != "" && platform != service.PlatformOpenAI) {
 		return nil
 	}
 	// 池只用于 OpenAI 分数计算（非 OpenAI 账号会在打分时被丢弃），
 	// 无论列表页平台过滤为何，查询一律限定 openai，避免无过滤时全表扫描。
-	accounts, err := h.adminService.ListAccountsForSchedulerScoreFilter(ctx, service.PlatformOpenAI, accountType, status, search, groupID, privacyMode, proxyID)
+	accounts, err := h.adminService.ListAccountsForSchedulerScoreFilter(ctx, service.PlatformOpenAI, accountType, status, search, groupID, privacyMode)
 	if err != nil {
 		slog.Warn("openai_scheduler_filter_score_pool_failed", "error", err)
 		return nil
@@ -490,16 +489,6 @@ func (h *AccountHandler) List(c *gin.Context) {
 	status := c.Query("status")
 	search := c.Query("search")
 	privacyMode := strings.TrimSpace(c.Query("privacy_mode"))
-	// 代理筛选 ID：0 表示不过滤，正数限制为指定已绑定代理。
-	var proxyID int64
-	if proxyIDStr := strings.TrimSpace(c.Query("proxy_id")); proxyIDStr != "" {
-		parsedProxyID, parseErr := strconv.ParseInt(proxyIDStr, 10, 64)
-		if parseErr != nil || parsedProxyID <= 0 {
-			response.ErrorFrom(c, infraerrors.BadRequest("INVALID_PROXY_FILTER", "代理筛选参数 proxy_id 无效：仅支持大于 0 的整数。请从代理下拉列表重新选择有效代理后重试。技术详情：proxy_id must be a positive integer"))
-			return
-		}
-		proxyID = parsedProxyID
-	}
 	sortBy := c.DefaultQuery("sort_by", "name")
 	sortOrder := c.DefaultQuery("sort_order", "asc")
 	// 标准化和验证 search 参数
@@ -529,7 +518,7 @@ func (h *AccountHandler) List(c *gin.Context) {
 		}
 	}
 
-	accounts, total, err := h.adminService.ListAccounts(c.Request.Context(), page, pageSize, platform, accountType, status, search, groupID, privacyMode, proxyID, sortBy, sortOrder)
+	accounts, total, err := h.adminService.ListAccounts(c.Request.Context(), page, pageSize, platform, accountType, status, search, groupID, privacyMode, sortBy, sortOrder)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -556,7 +545,7 @@ func (h *AccountHandler) List(c *gin.Context) {
 		}
 	}
 	if includeSchedulerScore && pageHasOpenAIAccounts {
-		schedulerFilterPool := h.listAccountSchedulerScoreFilterPool(c.Request.Context(), platform, accountType, status, search, groupID, privacyMode, proxyID)
+		schedulerFilterPool := h.listAccountSchedulerScoreFilterPool(c.Request.Context(), platform, accountType, status, search, groupID, privacyMode)
 		schedulerScores, schedulerGroupScores = h.buildOpenAIAccountSchedulerScores(c.Request.Context(), accounts, schedulerFilterPool)
 	}
 
@@ -680,43 +669,6 @@ func (h *AccountHandler) List(c *gin.Context) {
 	}
 
 	response.Paginated(c, result, total, page, pageSize)
-}
-
-// ListFilterOptions 返回账号列表筛选所需的平台和类型枚举，不返回账号详情或凭据。
-// GET /api/v1/admin/accounts/filter-options
-func (h *AccountHandler) ListFilterOptions(c *gin.Context) {
-	accounts, err := h.adminService.ListAccountsForSchedulerScoreFilter(c.Request.Context(), "", "", "", "", 0, "", 0)
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-
-	// 仅聚合枚举值，避免为了筛选项向浏览器发送账号或凭据数据。
-	platformSet := make(map[string]struct{})
-	typeSet := make(map[string]struct{})
-	for _, account := range accounts {
-		if account.Platform != "" {
-			platformSet[account.Platform] = struct{}{}
-		}
-		if account.Type != "" {
-			typeSet[account.Type] = struct{}{}
-		}
-	}
-
-	// 筛选选项按字母序稳定返回，避免前端每次加载时顺序跳动。
-	platforms := make([]string, 0, len(platformSet))
-	for platform := range platformSet {
-		platforms = append(platforms, platform)
-	}
-	sort.Strings(platforms)
-
-	types := make([]string, 0, len(typeSet))
-	for accountType := range typeSet {
-		types = append(types, accountType)
-	}
-	sort.Strings(types)
-
-	response.Success(c, gin.H{"platforms": platforms, "types": types})
 }
 
 func buildAccountsListETag(
@@ -1080,61 +1032,6 @@ type TestAccountRequest struct {
 	ModelID string `json:"model_id"`
 	Prompt  string `json:"prompt"`
 	Mode    string `json:"mode"`
-}
-
-const accountTestModeExtraKey = "account_test_mode"
-
-// UpdateAccountTestModeRequest 仅接收管理员模型测试使用的 OpenAI 请求模式。
-// 独立接口避免通用账号更新误覆盖 Extra 中的运行态数据。
-type UpdateAccountTestModeRequest struct {
-	Mode string `json:"mode" binding:"required,oneof=default responses compact workspace"`
-}
-
-// UpdateTestMode 保存 OpenAI 账号的模型测试模式。
-// PUT /api/v1/admin/accounts/:id/test-mode
-func (h *AccountHandler) UpdateTestMode(c *gin.Context) {
-	// 账号ID必须为正整数，避免把无效路径参数传入服务层。
-	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
-	if err != nil || accountID <= 0 {
-		response.BadRequest(c, "保存模型测试模式失败：账号 ID 格式无效，请检查请求路径。技术详情：id must be a positive integer")
-		return
-	}
-
-	var req UpdateAccountTestModeRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "保存模型测试模式失败：测试模式仅支持 default、responses、compact 或 workspace，请重新选择后重试。技术详情："+err.Error())
-		return
-	}
-
-	account, err := h.adminService.GetAccount(c.Request.Context(), accountID)
-	if err != nil {
-		statusCode, status := infraerrors.ToHTTP(err)
-		response.ErrorWithDetails(c, statusCode, "保存模型测试模式失败：未能读取账号，请确认账号仍存在并刷新后重试。技术详情："+err.Error(), status.Reason, status.Metadata)
-		return
-	}
-	if account == nil || account.Platform != service.PlatformOpenAI {
-		platform := "unknown"
-		if account != nil {
-			platform = account.Platform
-		}
-		response.BadRequest(c, "保存模型测试模式失败：仅 OpenAI 账号支持该设置，请在 OpenAI 账号中使用模型测试。技术详情：account platform is "+platform)
-		return
-	}
-
-	// 仅合并 account_test_mode，保证其它 Extra 配置与运行态键不会被覆盖。
-	if err := h.adminService.UpdateAccountExtra(c.Request.Context(), accountID, map[string]any{accountTestModeExtraKey: req.Mode}); err != nil {
-		statusCode, status := infraerrors.ToHTTP(err)
-		response.ErrorWithDetails(c, statusCode, "保存模型测试模式失败：账号配置未写入，请检查数据库连接或稍后重试。技术详情："+err.Error(), status.Reason, status.Metadata)
-		return
-	}
-
-	updatedAccount, err := h.adminService.GetAccount(c.Request.Context(), accountID)
-	if err != nil {
-		statusCode, status := infraerrors.ToHTTP(err)
-		response.ErrorWithDetails(c, statusCode, "保存模型测试模式失败：配置已写入但无法返回最新账号信息，请刷新列表确认。技术详情："+err.Error(), status.Reason, status.Metadata)
-		return
-	}
-	response.Success(c, h.buildAccountResponseWithRuntime(c.Request.Context(), updatedAccount))
 }
 
 type SyncFromCRSRequest struct {
@@ -2826,7 +2723,7 @@ func (h *AccountHandler) BatchRefreshTier(c *gin.Context) {
 	accounts := make([]*service.Account, 0)
 
 	if len(req.AccountIDs) == 0 {
-		allAccounts, _, err := h.adminService.ListAccounts(ctx, 1, 10000, "gemini", "oauth", "", "", 0, "", 0, "name", "asc")
+		allAccounts, _, err := h.adminService.ListAccounts(ctx, 1, 10000, "gemini", "oauth", "", "", 0, "", "name", "asc")
 		if err != nil {
 			response.ErrorFrom(c, err)
 			return

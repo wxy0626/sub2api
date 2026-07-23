@@ -43,7 +43,6 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from '@/stores'
-import { normalizeDisplayErrorMessage } from '@/utils/errorMessage'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -104,7 +103,7 @@ onMounted(async () => {
   const errorDescription = readParam('error_description') || readParam('message')
 
   if (error) {
-    errorMessage.value = normalizeDisplayErrorMessage(errorDescription || error, t('auth.loginFailed'))
+    errorMessage.value = errorDescription || error
     return
   }
 

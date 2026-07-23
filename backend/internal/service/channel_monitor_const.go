@@ -93,9 +93,6 @@ const (
 	monitorAnthropicAPIVersion = "2023-06-01"
 	// monitorChallengeMaxTokens 单次 challenge 请求的 max_tokens（足够回答个位数算术）。
 	monitorChallengeMaxTokens = 50
-	// monitorResponsesChallengeMaxOutputTokens 为 Responses 健康检查预留推理与最终答案的输出额度。
-	// 推理模型在 50 token 上限下可能只返回 reasoning，导致最终文本为空而误报 challenge 失败。
-	monitorResponsesChallengeMaxOutputTokens = 256
 
 	// monitorRunOneBuffer runOne 的总超时缓冲（除请求超时与 ping 超时外的额外裕量）。
 	monitorRunOneBuffer = 10 * time.Second
@@ -155,12 +152,6 @@ var (
 	)
 	ErrChannelMonitorMissingPrimaryModel = infraerrors.BadRequest(
 		"CHANNEL_MONITOR_MISSING_PRIMARY_MODEL", "primary_model is required",
-	)
-	ErrChannelMonitorInvalidAccount = infraerrors.BadRequest(
-		"CHANNEL_MONITOR_INVALID_ACCOUNT", "account_id must be a positive account ID",
-	)
-	ErrChannelMonitorAccountTesterUnavailable = infraerrors.InternalServer(
-		"CHANNEL_MONITOR_ACCOUNT_TESTER_UNAVAILABLE", "account monitor tester is unavailable",
 	)
 	ErrChannelMonitorAPIKeyDecryptFailed = infraerrors.InternalServer(
 		"CHANNEL_MONITOR_KEY_DECRYPT_FAILED", "api key decryption failed; please re-edit the monitor with a fresh key",

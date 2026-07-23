@@ -8,54 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestNormalizeOpenAIAPIKeyResponsesStringInput 验证 API Key Responses 的字符串输入兼容转换。
-func TestNormalizeOpenAIAPIKeyResponsesStringInput(t *testing.T) {
-	// 测试用例：覆盖字符串、空字符串和已有数组三种输入形态。
-	tests := []struct {
-		name       string
-		input      any
-		wantChange bool
-		wantLength int
-	}{
-		{"字符串输入转换为单条消息", "hello", true, 1},
-		{"空字符串转换为空数组", "  ", true, 0},
-		{"已有数组保持原样", []any{map[string]any{"type": "message", "role": "user", "content": "hello"}}, false, 1},
-	}
-
-	for _, testCase := range tests {
-		t.Run(testCase.name, func(t *testing.T) {
-			// 测试请求体：只包含待验证的 input 字段，避免测试混入鉴权信息。
-			requestBody := map[string]any{"input": testCase.input}
-
-			// 转换结果：记录输入是否被处理，供失败时直接定位。
-			changed := normalizeOpenAIAPIKeyResponsesStringInput(requestBody)
-			// 上游输入项：确认最终形态始终为数组。
-			inputItems, isArray := requestBody["input"].([]any)
-			t.Logf("API Key Responses input 规范化: changed=%t input_is_array=%t item_count=%d", changed, isArray, len(inputItems))
-
-			require.Equal(t, testCase.wantChange, changed)
-			require.True(t, isArray)
-			require.Len(t, inputItems, testCase.wantLength)
-			if testCase.wantLength == 1 {
-				// 首条消息：确认上游会收到 Responses 规范的 message 与内容块。
-				message, ok := inputItems[0].(map[string]any)
-				require.True(t, ok)
-				require.Equal(t, "message", message["type"])
-				require.Equal(t, "user", message["role"])
-				if testCase.wantChange {
-					content, ok := message["content"].([]any)
-					require.True(t, ok)
-					require.Len(t, content, 1)
-					contentBlock, ok := content[0].(map[string]any)
-					require.True(t, ok)
-					require.Equal(t, "input_text", contentBlock["type"])
-					require.Equal(t, testCase.input, contentBlock["text"])
-				}
-			}
-		})
-	}
-}
-
 func TestApplyCodexOAuthTransform_ToolContinuationPreservesInput(t *testing.T) {
 	// 续链场景：保留 item_reference 与 id，但不再强制 store=true。
 
@@ -215,8 +167,48 @@ func TestApplyCodexOAuthTransform_BoundsLongCallIDsAndPreservesPairing(t *testin
 	}
 }
 
-func TestApplyCodexOAuthTransform_PreservesLongCallIDsWhenRequested(t *testing.T) {
-	callID := "call-" + strings.Repeat("x", 70)
+func TestApplyCodexOAuthTransform_PreservesCallIDsWithinLimitWhenRequested(t *testing.T) {
+	// preserve 模式下 ≤64 字符的 id 必须原样透传（含 64 字符等长边界），
+	// 不做任何前缀改写或压缩。
+	for _, tc := range []struct {
+		name   string
+		callID string
+	}{
+		{name: "anthropic toolu id", callID: "toolu_01ABCdefGHIjklMNOpqrsTUV"},
+		{name: "boundary 64 chars", callID: "toolu_" + strings.Repeat("x", codexCallIDMaxLength-len("toolu_"))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.LessOrEqual(t, len(tc.callID), codexCallIDMaxLength)
+			reqBody := map[string]any{
+				"model": "gpt-5.2",
+				"input": []any{
+					map[string]any{"type": "function_call", "call_id": tc.callID, "name": "shell"},
+					map[string]any{"type": "function_call_output", "call_id": tc.callID, "output": "done"},
+				},
+			}
+
+			applyCodexOAuthTransformWithOptions(reqBody, codexOAuthTransformOptions{
+				PreserveToolCallIDs: true,
+			})
+
+			input, ok := reqBody["input"].([]any)
+			require.True(t, ok)
+			call, ok := input[0].(map[string]any)
+			require.True(t, ok)
+			output, ok := input[1].(map[string]any)
+			require.True(t, ok)
+			require.Equal(t, tc.callID, call["call_id"])
+			require.Equal(t, tc.callID, output["call_id"])
+		})
+	}
+}
+
+func TestApplyCodexOAuthTransform_CompactsOverlongCallIDsWhenPreserveRequested(t *testing.T) {
+	// preserve 模式下超过 64 字符的 id 若原样透传，上游必然 400
+	// （"Invalid 'input[N].call_id': string too long"），需退回确定性压缩；
+	// function_call 与 function_call_output 两侧压缩结果一致，配对保持。
+	callID := "srvtoolu_" + strings.Repeat("x", 69) // 78 字符，对应生产环境真实报错长度
+	require.Len(t, callID, 78)
 	reqBody := map[string]any{
 		"model": "gpt-5.2",
 		"input": []any{
@@ -235,8 +227,13 @@ func TestApplyCodexOAuthTransform_PreservesLongCallIDsWhenRequested(t *testing.T
 	require.True(t, ok)
 	output, ok := input[1].(map[string]any)
 	require.True(t, ok)
-	require.Equal(t, callID, call["call_id"])
-	require.Equal(t, callID, output["call_id"])
+
+	compacted, ok := call["call_id"].(string)
+	require.True(t, ok)
+	require.Len(t, compacted, codexCallIDMaxLength)
+	require.True(t, strings.HasPrefix(compacted, codexCallIDPrefix))
+	require.Equal(t, compacted, output["call_id"], "两侧压缩结果必须一致以保持配对")
+	require.Equal(t, compactCodexCallID(callID), compacted, "压缩必须是确定性的")
 }
 
 func TestApplyCodexOAuthTransform_ToolSearchOutputPreservesCallID(t *testing.T) {

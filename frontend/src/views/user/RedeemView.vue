@@ -351,7 +351,6 @@ import { redeemAPI, authAPI, type RedeemHistoryItem } from '@/api'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { formatDateTime } from '@/utils/format'
-import { normalizeDisplayErrorMessage } from '@/utils/errorMessage'
 
 const { t } = useI18n()
 const authStore = useAuthStore()
@@ -469,7 +468,7 @@ const handleRedeem = async () => {
     // Show success toast
     appStore.showSuccess(t('redeem.codeRedeemSuccess'))
   } catch (error: any) {
-    errorMessage.value = normalizeDisplayErrorMessage(error.response?.data?.detail || error.message, t('redeem.failedToRedeem'))
+    errorMessage.value = error.response?.data?.detail || t('redeem.failedToRedeem')
 
     appStore.showError(t('redeem.redeemFailed'))
   } finally {

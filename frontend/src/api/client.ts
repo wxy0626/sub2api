@@ -6,7 +6,6 @@
 import axios, { AxiosInstance, AxiosError, InternalAxiosRequestConfig, AxiosResponse } from 'axios'
 import type { ApiResponse } from '@/types'
 import { getLocale } from '@/i18n'
-import { normalizeDisplayErrorMessage } from '@/utils/errorMessage'
 import {
   ADMIN_UI_REQUEST_HEADER,
   USER_UI_REQUEST_HEADER,
@@ -15,42 +14,6 @@ import {
 } from './adminUIRequest'
 import { getAPIBaseURL } from './url'
 export { buildApiUrl, buildGatewayUrl } from './url'
-
-interface APIClientErrorOptions {
-  status: number
-  code?: unknown
-  message: string
-  reason?: unknown
-  error?: unknown
-  metadata?: unknown
-  url?: string
-}
-
-// APIClientError 将后端结构化错误保留为 Error 实例，确保调用方能读取 message 与诊断字段。
-class APIClientError extends Error {
-  readonly status: number
-  readonly code?: unknown
-  readonly reason?: unknown
-  readonly error?: unknown
-  readonly metadata?: unknown
-  readonly url?: string
-
-  constructor(options: APIClientErrorOptions) {
-    super(options.message)
-    this.name = 'APIClientError'
-    this.status = options.status
-    this.code = options.code
-    this.reason = options.reason
-    this.error = options.error
-    this.metadata = options.metadata
-    this.url = options.url
-  }
-}
-
-// createAPIClientError 统一创建可供业务 catch 块可靠读取的 Axios 响应错误。
-function createAPIClientError(options: APIClientErrorOptions): APIClientError {
-  return new APIClientError(options)
-}
 
 // ==================== Axios Instance Configuration ====================
 
@@ -147,13 +110,13 @@ apiClient.interceptors.response.use(
       } else {
         // API error
         const resp = apiResponse as unknown as Record<string, unknown>
-        return Promise.reject(createAPIClientError({
+        return Promise.reject({
           status: response.status,
           code: apiResponse.code,
-          message: normalizeDisplayErrorMessage(apiResponse.message, '发生未知错误，请稍后重试。'),
+          message: apiResponse.message || 'Unknown error',
           reason: resp.reason,
           metadata: resp.metadata,
-        }))
+        })
       }
     }
     return response
@@ -193,12 +156,12 @@ apiClient.interceptors.response.use(
           window.location.href = '/admin/settings'
         }
 
-        return Promise.reject(createAPIClientError({
+        return Promise.reject({
           status,
           code: 'OPS_DISABLED',
-          message: normalizeDisplayErrorMessage(apiData.message || error.message, '当前功能不可用。'),
+          message: apiData.message || error.message,
           url
-        }))
+        })
       }
 
       if (status === 423 && apiData.code === 'ADMIN_COMPLIANCE_ACK_REQUIRED') {
@@ -210,12 +173,12 @@ apiClient.interceptors.response.use(
           // ignore event failures
         }
 
-        return Promise.reject(createAPIClientError({
+        return Promise.reject({
           status,
           code: apiData.code,
-          message: normalizeDisplayErrorMessage(apiData.message || error.message, '操作未完成，请稍后重试。'),
+          message: apiData.message || error.message,
           metadata: apiData.metadata,
-        }))
+        })
       }
 
       // 401: Try to refresh the token if we have a refresh token
@@ -240,11 +203,11 @@ apiClient.interceptors.response.use(
                   resolve(apiClient(originalRequest))
                 } else {
                   // Refresh failed, reject with original error
-                  reject(createAPIClientError({
+                  reject({
                     status,
                     code: apiData.code,
-                    message: normalizeDisplayErrorMessage(apiData.message || apiData.detail || error.message, '身份验证失败，请重新登录。')
-                  }))
+                    message: apiData.message || apiData.detail || error.message
+                  })
                 }
               })
             })
@@ -307,11 +270,11 @@ apiClient.interceptors.response.use(
               window.location.href = '/login'
             }
 
-            return Promise.reject(createAPIClientError({
+            return Promise.reject({
               status: 401,
               code: 'TOKEN_REFRESH_FAILED',
-              message: '登录状态已过期，请重新登录。'
-            }))
+              message: 'Session expired. Please log in again.'
+            })
           }
         }
 
@@ -340,21 +303,21 @@ apiClient.interceptors.response.use(
       }
 
       // Return structured error
-      return Promise.reject(createAPIClientError({
+      return Promise.reject({
         status,
         code: apiData.code,
         reason: apiData.reason,
         error: apiData.error,
-        message: normalizeDisplayErrorMessage(apiData.message || apiData.detail || error.message, '请求失败，请稍后重试。'),
+        message: apiData.message || apiData.detail || error.message,
         metadata: apiData.metadata,
-      }))
+      })
     }
 
     // Network error
-    return Promise.reject(createAPIClientError({
+    return Promise.reject({
       status: 0,
-      message: '网络连接失败，请检查网络、代理和服务状态后重试。'
-    }))
+      message: 'Network error. Please check your connection.'
+    })
   }
 )
 

@@ -308,39 +308,6 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 	return result
 }
 
-// normalizeOpenAIAPIKeyResponsesStringInput 将 API Key 的 Responses 字符串输入转换为消息数组。
-// 部分 OpenAI 兼容上游只接受数组形态；转换后的格式同时符合 OpenAI Responses API 的输入规范。
-func normalizeOpenAIAPIKeyResponsesStringInput(reqBody map[string]any) bool {
-	if reqBody == nil {
-		return false
-	}
-
-	// 原始输入：只在 input 明确是字符串时转换，数组和其他类型保持客户端原样。
-	inputText, ok := reqBody["input"].(string)
-	if !ok {
-		return false
-	}
-
-	if strings.TrimSpace(inputText) == "" {
-		reqBody["input"] = []any{}
-		return true
-	}
-
-	reqBody["input"] = []any{
-		map[string]any{
-			"type":    "message",
-			"role":    "user",
-			"content": []any{
-				map[string]any{
-					"type": "input_text",
-					"text": inputText,
-				},
-			},
-		},
-	}
-	return true
-}
-
 func normalizeCodexToolChoice(reqBody map[string]any) bool {
 	choice, ok := reqBody["tool_choice"]
 	if !ok || choice == nil {
@@ -1442,7 +1409,15 @@ func filterCodexInputWithOptions(input []any, opts codexInputFilterOptions) []an
 		// 若 item_reference 指向 legacy call_* 标识，则仅修正该引用本身。
 		fixCallIDPrefix := func(id string) string {
 			if opts.PreserveCallIDs {
-				return id
+				// preserve 模式尽量原样透传客户端 id 以维持 tool_use/tool_result
+				// 配对，但上游对 call_id 有 64 字符硬上限，超长原样透传必然被
+				// 400 拒绝（"Invalid 'input[N].call_id': string too long"）。
+				// 超长时退回确定性压缩：同一逻辑 id 在 function_call 与
+				// function_call_output 两侧结果一致，配对不受影响。
+				if len(id) <= codexCallIDMaxLength {
+					return id
+				}
+				return compactCodexCallID(id)
 			}
 			return normalizeCodexCallID(id)
 		}

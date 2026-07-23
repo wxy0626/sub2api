@@ -533,15 +533,11 @@ func buildGrokQuotaProbeBody(model string) ([]byte, error) {
 	if model == "" {
 		model = grokQuotaDefaultModel
 	}
-	payload := map[string]any{
+	return json.Marshal(map[string]any{
 		"model":  model,
 		"input":  grokQuotaProbeInput,
 		"stream": true,
-	}
-	if !grokModelRejectsReasoningEffort(model) {
-		payload["reasoning"] = map[string]string{"effort": modelTestReasoningEffort}
-	}
-	return json.Marshal(payload)
+	})
 }
 
 func maxInt(a, b int) int {

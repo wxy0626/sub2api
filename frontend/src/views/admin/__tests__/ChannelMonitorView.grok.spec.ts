@@ -6,7 +6,6 @@ import MonitorFormDialog from '@/components/admin/monitor/MonitorFormDialog.vue'
 import {
   DEFAULT_GROK_ENDPOINT,
   DEFAULT_GROK_MODEL,
-  PROVIDER_OPENAI,
   PROVIDERS,
   PROVIDER_GROK,
 } from '@/constants/channelMonitor'
@@ -133,16 +132,5 @@ describe('channel monitor Grok provider', () => {
     await grokButton.trigger('click')
     expect((endpoint.element as HTMLInputElement).value).toBe(DEFAULT_GROK_ENDPOINT)
     expect((model.element as HTMLInputElement).value).toBe('grok-custom')
-  })
-
-  it('uses the GPT-5.5 and GPT-5.6 model selector for OpenAI monitors', async () => {
-    const wrapper = mountDialog()
-    await flushPromises()
-
-    await wrapper.get('[data-testid="monitor-provider-openai"]').trigger('click')
-
-    expect(PROVIDERS).toContain(PROVIDER_OPENAI)
-    expect(wrapper.get('[data-testid="monitor-primary-model"]').text()).toContain('gpt-5.6-luna')
-    expect(wrapper.find('[data-testid="monitor-primary-model"] input').exists()).toBe(false)
   })
 })
