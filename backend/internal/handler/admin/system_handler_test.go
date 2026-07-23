@@ -102,11 +102,36 @@ func newSystemHandlerTestRouter(t *testing.T, updateSvc *systemHandlerUpdateServ
 	handler := NewSystemHandler(updateSvc, personalDeploymentSvc, lockSvc)
 
 	router := gin.New()
+	router.GET("/api/v1/admin/system/version", handler.GetVersion)
 	router.POST("/api/v1/admin/system/update", handler.PerformUpdate)
 	router.POST("/api/v1/admin/system/deployment/update", handler.DeployLatestPersonalVersion)
 	router.POST("/api/v1/admin/system/rollback", handler.Rollback)
 	router.GET("/api/v1/admin/system/deployment-versions", handler.GetPersonalDeploymentVersions)
 	return router
+}
+
+// TestSystemHandlerGetVersionReturnsCurrentBuildVersion 验证管理端版本接口原样返回后端构建版本。
+func TestSystemHandlerGetVersionReturnsCurrentBuildVersion(t *testing.T) {
+	// buildVersion 模拟由后端构建阶段注入并传入更新服务的版本号。
+	const buildVersion = "build-version"
+	updateSvc := &systemHandlerUpdateServiceStub{
+		updateInfo: &service.UpdateInfo{CurrentVersion: buildVersion},
+	}
+	router := newSystemHandlerTestRouter(t, updateSvc, &systemHandlerPersonalDeploymentStub{}, newMemoryIdempotencyRepoStub())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/system/version", nil)
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var response struct {
+		Data struct {
+			Version string `json:"version"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
+	require.Equal(t, buildVersion, response.Data.Version)
+	require.Equal(t, []bool{false}, updateSvc.checkForces)
 }
 
 func requireSystemLockStatus(t *testing.T, repo *memoryIdempotencyRepoStub, wantStatus string) {
