@@ -4063,7 +4063,7 @@ const form = reactive({
   type: 'oauth' as AccountType, // Will be 'oauth', 'setup-token', or 'apikey'
   credentials: {} as Record<string, unknown>,
   proxy_id: null as number | null,
-  concurrency: 10,
+  concurrency: 5,
   load_factor: null as number | null,
   priority: 1,
   rate_multiplier: 1,
@@ -4168,6 +4168,32 @@ watch(
   { immediate: true }
 )
 
+// 按账号类型同步代理默认值：OAuth 使用启用代理，API Key 不使用代理。
+const syncDefaultProxyByAccountType = () => {
+  if (form.type === 'apikey') {
+    form.proxy_id = null
+    return
+  }
+  if (form.type !== 'oauth') return
+  if (form.proxy_id !== null) return
+  // OAuth 依次优先日本家宽、日本、其他地区家宽，再回退任意启用代理。
+  const 启用代理列表 = props.proxies.filter((proxy) => proxy.status === 'active')
+  const 默认启用代理 =
+    启用代理列表.find((proxy) => proxy.name.includes('日本') && proxy.name.includes('家宽')) ??
+    启用代理列表.find((proxy) => proxy.name.includes('日本')) ??
+    启用代理列表.find((proxy) => proxy.name.includes('家宽')) ??
+    启用代理列表[0]
+  if (默认启用代理) {
+    form.proxy_id = 默认启用代理.id
+  }
+}
+
+watch(
+  [() => form.type, () => props.proxies],
+  syncDefaultProxyByAccountType,
+  { immediate: true }
+)
+
 // Reset platform-specific settings when platform changes
 watch(
   () => form.platform,
@@ -4204,7 +4230,7 @@ watch(
       accountCategory.value = 'oauth-based'
       addMethod.value = 'oauth'
       modelRestrictionMode.value = 'mapping'
-      form.concurrency = 1
+      form.concurrency = 5
       form.load_factor = null
     }
     if (newPlatform !== 'gemini' && newPlatform !== 'anthropic' && accountCategory.value === 'service_account') {
@@ -4613,7 +4639,7 @@ const resetForm = () => {
   form.type = 'oauth'
   form.credentials = {}
   form.proxy_id = null
-  form.concurrency = 10
+  form.concurrency = 5
   form.load_factor = null
   form.priority = 1
   form.rate_multiplier = 1

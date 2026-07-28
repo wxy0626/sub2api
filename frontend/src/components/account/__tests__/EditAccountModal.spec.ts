@@ -2,15 +2,24 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
 import { mount } from '@vue/test-utils'
 
-const { updateAccountMock, checkMixedChannelRiskMock, authIsSimpleMode } = vi.hoisted(() => ({
+// 同步上游模型失败展示的接口与提示测试 mock。
+const {
+  updateAccountMock,
+  checkMixedChannelRiskMock,
+  syncUpstreamModelsMock,
+  showErrorMock,
+  authIsSimpleMode
+} = vi.hoisted(() => ({
   updateAccountMock: vi.fn(),
   checkMixedChannelRiskMock: vi.fn(),
+  syncUpstreamModelsMock: vi.fn(),
+  showErrorMock: vi.fn(),
   authIsSimpleMode: { value: true }
 }))
 
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
-    showError: vi.fn(),
+    showError: showErrorMock,
     showSuccess: vi.fn(),
     showInfo: vi.fn()
   })
@@ -28,7 +37,8 @@ vi.mock('@/api/admin', () => ({
   adminAPI: {
     accounts: {
       update: updateAccountMock,
-      checkMixedChannelRisk: checkMixedChannelRiskMock
+      checkMixedChannelRisk: checkMixedChannelRiskMock,
+      syncUpstreamModels: syncUpstreamModelsMock
     },
     settings: {
       getWebSearchEmulationConfig: vi.fn().mockResolvedValue({ enabled: false, providers: [] }),
@@ -314,6 +324,8 @@ function mountModal(account = buildAccount()) {
 describe('EditAccountModal', () => {
   beforeEach(() => {
     authIsSimpleMode.value = true
+    showErrorMock.mockReset()
+    syncUpstreamModelsMock.mockReset()
   })
 
   it('reopening the same account rehydrates the OpenAI whitelist from props', async () => {
@@ -341,6 +353,19 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.model_mapping).toEqual({
       'gpt-5.2': 'gpt-5.2'
     })
+  })
+
+  it('uses concurrency 5 by default when editing an account', async () => {
+    const account = buildAccount()
+    account.concurrency = 10
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+
+    const wrapper = mountModal(account)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.concurrency).toBe(5)
   })
 
   it('preserves model mappings when editing the whitelist', async () => {
@@ -1016,5 +1041,24 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).not.toHaveProperty(
       'antigravity_project_id'
     )
+  })
+
+  it('uses the upstream response message without a second sync-error wrapper', async () => {
+    syncUpstreamModelsMock.mockRejectedValue({
+      message: '操作失败，请根据下方技术详情定位原因。 技术详情：The origin web server returned an invalid or incomplete response to Cloudflare.'
+    })
+    const wrapper = mountModal(buildAntigravityAccount())
+    const syncButton = wrapper
+      .findAll('button')
+      .find((candidate) => candidate.text().includes('admin.accounts.syncUpstreamModels'))
+
+    expect(syncButton).toBeDefined()
+    await syncButton?.trigger('click')
+
+    await vi.waitFor(() => {
+      expect(showErrorMock).toHaveBeenCalledWith(
+        '操作失败，请根据下方技术详情定位原因。 技术详情：The origin web server returned an invalid or incomplete response to Cloudflare.'
+      )
+    })
   })
 })
