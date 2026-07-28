@@ -85,9 +85,21 @@ const OAuthAuthorizationFlowStub = defineComponent({
   `,
 })
 
-function mountModal() {
+// 代理选择器桩组件，用于校验创建表单的默认代理值。
+const ProxySelectorStub = defineComponent({
+  name: 'ProxySelector',
+  props: {
+    modelValue: {
+      type: Number,
+      default: null,
+    },
+  },
+  template: '<span data-testid="proxy-value">{{ modelValue === null ? "none" : modelValue }}</span>',
+})
+
+function mountModal(proxies: any[] = []) {
   return mount(CreateAccountModal, {
-    props: { show: true, proxies: [], groups: [] },
+    props: { show: true, proxies, groups: [] },
     global: {
       stubs: {
         BaseDialog: BaseDialogStub,
@@ -96,7 +108,7 @@ function mountModal() {
         Select: true,
         Icon: true,
         PlatformIcon: true,
-        ProxySelector: true,
+        ProxySelector: ProxySelectorStub,
         ProxyAdBanner: true,
         GroupSelector: true,
         ModelWhitelistSelector: true,
@@ -166,6 +178,29 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
 
     expect(createAccountMock).toHaveBeenCalledTimes(1)
     expect(createAccountMock.mock.calls[0]?.[0]?.extra?.openai_long_context_billing_enabled).toBe(false)
+    expect(createAccountMock.mock.calls[0]?.[0]?.concurrency).toBe(5)
+  })
+
+  it('uses the OAuth proxy priority and clears it for API key accounts', async () => {
+    const wrapper = mountModal([
+      { id: 2, name: '新加坡家宽', status: 'active' },
+      { id: 3, name: '日本数据中心', status: 'active' },
+      { id: 1, name: '日本家宽', status: 'active' },
+    ])
+
+    expect(wrapper.get('[data-testid="proxy-value"]').text()).toBe('1')
+    await selectButtonByText(wrapper, 'OpenAI')
+    await selectButtonByText(wrapper, 'API Key')
+    expect(wrapper.get('[data-testid="proxy-value"]').text()).toBe('none')
+  })
+
+  it('prefers Japan over a non-Japan residential proxy when Japan residential is unavailable', () => {
+    const wrapper = mountModal([
+      { id: 2, name: '新加坡家宽', status: 'active' },
+      { id: 1, name: '日本数据中心', status: 'active' },
+    ])
+
+    expect(wrapper.get('[data-testid="proxy-value"]').text()).toBe('1')
   })
 
   it('enables upstream billing probes by default for new OpenAI API key accounts', async () => {

@@ -3138,7 +3138,7 @@ const form = reactive({
   name: '',
   notes: '',
   proxy_id: null as number | null,
-  concurrency: 1,
+  concurrency: 5,
   load_factor: null as number | null,
   priority: 1,
   rate_multiplier: 1,
@@ -3230,7 +3230,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   form.name = newAccount.name
   form.notes = newAccount.notes || ''
   form.proxy_id = newAccount.proxy_id
-  form.concurrency = newAccount.concurrency
+  // 编辑账号时统一以 5 作为并发初始值，保存后会覆盖旧的并发配置。
+  form.concurrency = 5
   form.load_factor = newAccount.load_factor ?? null
   form.priority = newAccount.priority
   form.rate_multiplier = newAccount.rate_multiplier ?? 1

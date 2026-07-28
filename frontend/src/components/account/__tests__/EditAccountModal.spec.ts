@@ -343,6 +343,19 @@ describe('EditAccountModal', () => {
     })
   })
 
+  it('uses concurrency 5 by default when editing an account', async () => {
+    const account = buildAccount()
+    account.concurrency = 10
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+
+    const wrapper = mountModal(account)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.concurrency).toBe(5)
+  })
+
   it('编辑没有模型映射的 OpenAI 账号时默认只开放 GPT-5.5', async () => {
     const account = buildAccount()
     delete account.credentials.model_mapping
