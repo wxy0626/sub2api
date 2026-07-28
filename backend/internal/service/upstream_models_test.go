@@ -365,7 +365,7 @@ func TestFetchUpstreamSupportedModelsParsesGrokAPIKeyResponse(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	require.Empty(t, models)
+	require.Equal(t, []string{"grok-4.5", "grok-imagine"}, models)
 	require.Equal(t, "https://xai.example.com/v1/models", upstream.lastReq.URL.String())
 	require.Equal(t, "Bearer xai-key", upstream.lastReq.Header.Get("Authorization"))
 }

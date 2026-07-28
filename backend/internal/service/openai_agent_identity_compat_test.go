@@ -490,6 +490,11 @@ func (r *accountTestAgentIdentityRepo) SetError(_ context.Context, _ int64, _ st
 	return nil
 }
 
+// SetSchedulable 为账户测试完成后的调度状态同步提供测试替身实现。
+func (r *accountTestAgentIdentityRepo) SetSchedulable(_ context.Context, _ int64, _ bool) error {
+	return nil
+}
+
 func (r *agentIdentityForwardRepo) GetByID(_ context.Context, _ int64) (*Account, error) {
 	return r.account, nil
 }

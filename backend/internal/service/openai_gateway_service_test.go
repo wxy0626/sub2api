@@ -36,6 +36,21 @@ type snapshotUpdateAccountRepo struct {
 	updateExtraCalls chan map[string]any
 }
 
+// SetSchedulable 为账户测试共用仓储替身提供调度状态写入，避免嵌入接口为空时发生调用链崩溃。
+func (r *snapshotUpdateAccountRepo) SetSchedulable(context.Context, int64, bool) error {
+	return nil
+}
+
+// SetError 为账户测试失败收尾提供状态写入。
+func (r *snapshotUpdateAccountRepo) SetError(context.Context, int64, string) error {
+	return nil
+}
+
+// ClearError 为账户测试成功收尾提供状态清理。
+func (r *snapshotUpdateAccountRepo) ClearError(context.Context, int64) error {
+	return nil
+}
+
 func (r *snapshotUpdateAccountRepo) UpdateExtra(ctx context.Context, id int64, updates map[string]any) error {
 	if r.updateExtraCalls != nil {
 		copied := make(map[string]any, len(updates))
