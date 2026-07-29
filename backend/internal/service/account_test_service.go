@@ -544,9 +544,14 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		testModelID = openai.DefaultTestModel
 	}
 
-	// Align test routing with gateway behavior: OpenAI accounts apply normal
-	// account model mapping, and compact mode applies compact-only mapping on top.
-	testModelID = account.GetMappedModel(testModelID)
+	// API Key 的普通 Responses 测试对齐 Codex++ Provider Doctor：使用供应商原始模型，
+	// 不应用账号模型映射。Compact、Chat Completions 和 OAuth 测试仍保持生产映射规则。
+	isAPIKeyResponsesDiagnostic := mode != AccountTestModeCompact &&
+		account.Type == AccountTypeAPIKey &&
+		(mode == AccountTestModeResponses || openai_compat.ShouldUseResponsesAPI(account.Extra))
+	if !isAPIKeyResponsesDiagnostic {
+		testModelID = account.GetMappedModel(testModelID)
+	}
 	if mode == AccountTestModeCompact {
 		testModelID = resolveOpenAICompactForwardModel(account, testModelID)
 		return s.testOpenAICompactConnection(c, account, testModelID)
@@ -627,10 +632,17 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	if isOAuth {
 		upstreamTestModelID = normalizeOpenAIModelForUpstream(credentialAccount, testModelID)
 	}
-	// API Key 连通性测试使用轻量探测负载，避免无关的 Codex 指令拖慢首个输出。
+	// API Key 供应商诊断使用 Codex++ 的最小非流式请求体，避免按客户端指纹或流式策略分流。
 	payload := createOpenAIAccountTestPayload(upstreamTestModelID, isOAuth, credentialAccount.Type == AccountTypeAPIKey)
+	if isAPIKeyResponsesDiagnostic {
+		payload = map[string]any{
+			"model":             upstreamTestModelID,
+			"input":             "hi",
+			"max_output_tokens": 16,
+		}
+	}
 	// API Key 测试请求必须复用真实转发的 Responses 输入兼容规则，避免上游仅接受数组时把可用账号误判为不可用。
-	if credentialAccount.Type == AccountTypeAPIKey {
+	if credentialAccount.Type == AccountTypeAPIKey && !isAPIKeyResponsesDiagnostic {
 		normalizeOpenAIAPIKeyResponsesStringInput(payload)
 	}
 	payloadBytes, _ := json.Marshal(payload)
@@ -650,10 +662,15 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	}
 	req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
 
-	// Set common headers
+	// API Key 供应商诊断严格使用 Codex++ 的普通 HTTP 指纹，不注入 Codex CLI 标识。
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
-	if !isOAuth {
+	if isAPIKeyResponsesDiagnostic {
+		req.Header.Set("Accept", "*/*")
+		req.Header.Set("User-Agent", "CodexPlusPlus/RelayTest")
+	} else {
+		req.Header.Set("Accept", "text/event-stream")
+	}
+	if !isOAuth && !isAPIKeyResponsesDiagnostic {
 		applyOpenAICodexProbeHeaders(req.Header)
 	}
 	if credentialAccount.IsOpenAIAgentIdentity() {
@@ -686,8 +703,10 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		enforceCodexIdentityHeaders(req.Header)
 	}
 
-	// 账号级请求头覆写：测试请求与真实转发保持一致的最终头
-	credentialAccount.ApplyHeaderOverrides(req.Header)
+	// OAuth 与其他探测保持账号级请求头覆写；Codex++ 诊断使用最小请求，避免覆盖其指纹。
+	if !isAPIKeyResponsesDiagnostic {
+		credentialAccount.ApplyHeaderOverrides(req.Header)
+	}
 
 	// Get proxy URL
 	proxyURL := ""
@@ -722,7 +741,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		}
 	}
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && (!isAPIKeyResponsesDiagnostic || resp.StatusCode >= http.StatusBadRequest) {
 		body, _ := io.ReadAll(resp.Body)
 		body = redactAgentIdentitySensitiveBodyForAccount(ctx, s.accountRepo, credentialAccount, body)
 		if !agentIdentityTaskRecoveryWasTried(ctx) && credentialAccount.IsOpenAIAgentIdentity() && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, body) {
@@ -748,6 +767,18 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			return s.sendErrorAndEnd(c, fmt.Sprintf("通过 /v1/responses 测试连接失败：上游返回 HTTP %d，请检查接口兼容性、模型权限和 API Key。原始技术详情：%s", resp.StatusCode, string(body)))
 		}
 		return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
+	}
+
+	if isAPIKeyResponsesDiagnostic {
+		// Codex++ 诊断是非流式 JSON 响应，HTTP 小于 400 即视为请求成功。
+		responsePreview, _ := io.ReadAll(io.LimitReader(resp.Body, 320))
+		if preview := strings.TrimSpace(string(responsePreview)); preview == "" {
+			s.sendEvent(c, TestEvent{Type: "content", Text: "Codex++ 诊断请求返回成功响应。"})
+		} else {
+			s.sendEvent(c, TestEvent{Type: "content", Text: fmt.Sprintf("Codex++ 诊断响应：%s", preview)})
+		}
+		s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+		return nil
 	}
 
 	// API Key 探测在收到首个有效文本后即可确认模型可用，不等待上游完成整段生成。

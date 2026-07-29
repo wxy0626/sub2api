@@ -568,12 +568,12 @@ func TestAccountTestService_OpenAIWorkspaceProbeMarksDeactivatedWorkspace(t *tes
 	require.Contains(t, recorder.Body.String(), `"code":"deactivated_workspace"`)
 }
 
-func TestAccountTestService_OpenAIAPIKeyResponsesUsesCodexProbeHeaders(t *testing.T) {
+func TestAccountTestService_OpenAIAPIKeyResponsesMatchesCodexPlusPlusDiagnostic(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := newTestContext()
 
 	resp := newJSONResponse(http.StatusOK, "")
-	resp.Body = io.NopCloser(strings.NewReader("data: {\"type\":\"response.completed\"}\n\n"))
+	resp.Body = io.NopCloser(strings.NewReader(`{"id":"resp_test","status":"completed"}`))
 	upstream := &queuedHTTPUpstream{responses: []*http.Response{resp}}
 	svc := &AccountTestService{
 		httpUpstream: upstream,
@@ -587,6 +587,9 @@ func TestAccountTestService_OpenAIAPIKeyResponsesUsesCodexProbeHeaders(t *testin
 		Credentials: map[string]any{
 			"api_key":  "sk-test",
 			"base_url": "https://compat-upstream.example/v1",
+			"model_mapping": map[string]any{
+				"gpt-5.4": "gpt-5.6-luna",
+			},
 		},
 		Extra: map[string]any{openai_compat.ExtraKeyResponsesSupported: true},
 	}
@@ -596,7 +599,18 @@ func TestAccountTestService_OpenAIAPIKeyResponsesUsesCodexProbeHeaders(t *testin
 	require.Len(t, upstream.requests, 1)
 	req := upstream.requests[0]
 	require.Equal(t, "https://compat-upstream.example/v1/responses", req.URL.String())
-	requireOpenAICodexProbeHeaders(t, req.Header)
+	require.Equal(t, "CodexPlusPlus/RelayTest", req.Header.Get("User-Agent"))
+	require.Equal(t, "*/*", req.Header.Get("Accept"))
+	require.Empty(t, req.Header.Get("Originator"))
+	require.Empty(t, req.Header.Get("X-Codex-Window-ID"))
+
+	body, readErr := io.ReadAll(req.Body)
+	require.NoError(t, readErr)
+	require.Equal(t, "gpt-5.4", gjson.GetBytes(body, "model").String(), "Codex++ 诊断不应应用账号模型映射")
+	require.Equal(t, "hi", gjson.GetBytes(body, "input").String())
+	require.Equal(t, int64(16), gjson.GetBytes(body, "max_output_tokens").Int())
+	require.False(t, gjson.GetBytes(body, "stream").Exists())
+	require.False(t, gjson.GetBytes(body, "instructions").Exists())
 }
 
 func TestAccountTestService_OpenAIAPIKeyResponsesUnsupportedUsesChatCompletionsPath(t *testing.T) {
@@ -655,9 +669,7 @@ func TestAccountTestService_OpenAIAPIKeyForcedResponsesTestIgnoresCapability(t *
 	gin.SetMode(gin.TestMode)
 	ctx, recorder := newTestContext()
 
-	upstream := &httpUpstreamRecorder{resp: newJSONResponse(http.StatusOK, `data: {"type":"response.completed"}
-
-`)}
+	upstream := &httpUpstreamRecorder{resp: newJSONResponse(http.StatusOK, `{"id":"resp_test","status":"completed"}`)}
 	svc := &AccountTestService{
 		httpUpstream: upstream,
 		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
@@ -679,15 +691,13 @@ func TestAccountTestService_OpenAIAPIKeyForcedResponsesTestIgnoresCapability(t *
 	require.NotNil(t, upstream.lastReq)
 	require.Equal(t, "https://compat-upstream.example/v1/responses", upstream.lastReq.URL.String())
 	require.Equal(t, "Bearer sk-test", upstream.lastReq.Header.Get("Authorization"))
-	require.Equal(t, "text/event-stream", upstream.lastReq.Header.Get("Accept"))
+	require.Equal(t, "*/*", upstream.lastReq.Header.Get("Accept"))
+	require.Equal(t, "CodexPlusPlus/RelayTest", upstream.lastReq.Header.Get("User-Agent"))
+	require.Empty(t, upstream.lastReq.Header.Get("Originator"))
 	require.Equal(t, "gpt-5.6-luna", gjson.GetBytes(upstream.lastBody, "model").String())
-	require.True(t, gjson.GetBytes(upstream.lastBody, "stream").Bool())
-	require.True(t, gjson.GetBytes(upstream.lastBody, "input").IsArray())
-	require.Equal(t, "message", gjson.GetBytes(upstream.lastBody, "input.0.type").String())
-	require.Equal(t, "user", gjson.GetBytes(upstream.lastBody, "input.0.role").String())
-	require.Equal(t, "input_text", gjson.GetBytes(upstream.lastBody, "input.0.content.0.type").String())
-	require.Equal(t, "hi", gjson.GetBytes(upstream.lastBody, "input.0.content.0.text").String())
-	require.Equal(t, int64(1), gjson.GetBytes(upstream.lastBody, "max_output_tokens").Int())
+	require.Equal(t, "hi", gjson.GetBytes(upstream.lastBody, "input").String())
+	require.Equal(t, int64(16), gjson.GetBytes(upstream.lastBody, "max_output_tokens").Int())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "stream").Exists())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "instructions").Exists())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "messages").Exists())
 	require.Equal(t, false, account.Extra[openai_compat.ExtraKeyResponsesSupported])
@@ -695,14 +705,12 @@ func TestAccountTestService_OpenAIAPIKeyForcedResponsesTestIgnoresCapability(t *
 	require.Contains(t, recorder.Body.String(), `"success":true`)
 }
 
-// TestAccountTestService_OpenAIAPIKeyProbeCompletesOnFirstText 验证轻量探测不等待上游完整收尾。
-func TestAccountTestService_OpenAIAPIKeyProbeCompletesOnFirstText(t *testing.T) {
+// TestAccountTestService_OpenAIAPIKeyDiagnosticCompletesOnJSON 验证 Codex++ 非流式诊断直接报告成功。
+func TestAccountTestService_OpenAIAPIKeyDiagnosticCompletesOnJSON(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, recorder := newTestContext()
 
-	upstream := &httpUpstreamRecorder{resp: newJSONResponse(http.StatusOK, `data: {"type":"response.output_text.delta","delta":"ok"}
-
-`)}
+	upstream := &httpUpstreamRecorder{resp: newJSONResponse(http.StatusOK, `{"id":"resp_test","status":"completed"}`)}
 	svc := &AccountTestService{
 		httpUpstream: upstream,
 		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
@@ -721,8 +729,7 @@ func TestAccountTestService_OpenAIAPIKeyProbeCompletesOnFirstText(t *testing.T) 
 
 	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.6-luna", "", AccountTestModeResponses)
 	require.NoError(t, err)
-	require.Contains(t, recorder.Body.String(), "ok")
-	require.Contains(t, recorder.Body.String(), "已收到首个模型输出，连接验证成功")
+	require.Contains(t, recorder.Body.String(), "Codex++ 诊断响应")
 	require.Contains(t, recorder.Body.String(), `"success":true`)
 }
 
