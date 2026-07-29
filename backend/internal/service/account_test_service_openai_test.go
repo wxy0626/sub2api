@@ -264,10 +264,12 @@ func TestAccountTestService_OpenAI429PersistsSnapshotAndRateLimitState(t *testin
 	upstream := &queuedHTTPUpstream{responses: []*http.Response{resp}}
 	svc := &AccountTestService{accountRepo: repo, httpUpstream: upstream}
 	account := &Account{
-		ID:          88,
-		Platform:    PlatformOpenAI,
-		Type:        AccountTypeOAuth,
-		Status:      StatusError,
+		ID:       88,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Status:   StatusError,
+		// 保留上游错误中断调度时的人工暂停状态，429 探测只恢复错误状态。
+		Schedulable: false,
 		Concurrency: 1,
 		Credentials: map[string]any{"access_token": "test-token"},
 	}
@@ -282,6 +284,7 @@ func TestAccountTestService_OpenAI429PersistsSnapshotAndRateLimitState(t *testin
 	require.Equal(t, StatusActive, account.Status)
 	require.Empty(t, account.ErrorMessage)
 	require.NotNil(t, account.RateLimitResetAt)
+	require.False(t, account.Schedulable, "429 探测不能自动重新开启调度")
 }
 
 func TestAccountTestService_OpenAI429BodyOnlyPersistsRateLimitAndClearsStaleError(t *testing.T) {
@@ -424,7 +427,7 @@ func TestAccountTestService_OpenAI401SetsPermanentErrorOnly(t *testing.T) {
 	require.Nil(t, account.RateLimitResetAt)
 }
 
-func TestAccountTestService_OpenAIAPIKeyResponsesUsesCodexProbeHeaders(t *testing.T) {
+func TestAccountTestService_OpenAIAPIKeyResponsesMatchesCodexPlusPlusDiagnostic(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := newTestContext()
 
@@ -443,6 +446,9 @@ func TestAccountTestService_OpenAIAPIKeyResponsesUsesCodexProbeHeaders(t *testin
 		Credentials: map[string]any{
 			"api_key":  "sk-test",
 			"base_url": "https://compat-upstream.example/v1",
+			"model_mapping": map[string]any{
+				"gpt-5.4": "gpt-5.6-luna",
+			},
 		},
 		Extra: map[string]any{openai_compat.ExtraKeyResponsesSupported: true},
 	}
@@ -452,7 +458,18 @@ func TestAccountTestService_OpenAIAPIKeyResponsesUsesCodexProbeHeaders(t *testin
 	require.Len(t, upstream.requests, 1)
 	req := upstream.requests[0]
 	require.Equal(t, "https://compat-upstream.example/v1/responses", req.URL.String())
-	requireOpenAICodexProbeHeaders(t, req.Header)
+	require.Equal(t, "CodexPlusPlus/RelayTest", req.Header.Get("User-Agent"))
+	require.Equal(t, "*/*", req.Header.Get("Accept"))
+	require.Empty(t, req.Header.Get("Originator"))
+	require.Empty(t, req.Header.Get("X-Codex-Window-ID"))
+
+	body, err := io.ReadAll(req.Body)
+	require.NoError(t, err)
+	require.Equal(t, "gpt-5.4", gjson.GetBytes(body, "model").String(), "Codex++ 诊断不应应用账号模型映射")
+	require.Equal(t, "hi", gjson.GetBytes(body, "input").String())
+	require.Equal(t, int64(16), gjson.GetBytes(body, "max_output_tokens").Int())
+	require.False(t, gjson.GetBytes(body, "stream").Exists())
+	require.False(t, gjson.GetBytes(body, "instructions").Exists())
 }
 
 func TestAccountTestService_OpenAIAPIKeyResponsesUnsupportedUsesChatCompletionsPath(t *testing.T) {
@@ -563,6 +580,33 @@ func TestAccountTestService_OpenAIChatCompletionsPathTimeout(t *testing.T) {
 	require.Contains(t, err.Error(), context.DeadlineExceeded.Error())
 	require.Contains(t, recorder.Body.String(), "/v1/chat/completions")
 	require.NotContains(t, recorder.Body.String(), `"success":true`)
+}
+
+func TestAccountTestService_OpenAIResponsesTimeoutReturnsActionableError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+
+	upstream := &httpUpstreamRecorder{err: context.DeadlineExceeded}
+	svc := &AccountTestService{
+		httpUpstream: upstream,
+		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+	}
+	account := &Account{
+		ID:          95,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-test",
+			"base_url": "https://compat-upstream.example",
+		},
+		Extra: map[string]any{openai_compat.ExtraKeyResponsesSupported: true},
+	}
+
+	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4", "", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "上游响应超时")
+	require.Contains(t, recorder.Body.String(), "60 秒")
 }
 
 func TestAccountTestService_OpenAIChatCompletionsPathRejectsNonJSONStream(t *testing.T) {

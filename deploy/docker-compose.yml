@@ -16,7 +16,15 @@ services:
   # Sub2API Application
   # ===========================================================================
   sub2api:
-    image: weishaw/sub2api:latest
+    # 本地优先：默认只使用当前源码构建出的镜像，禁止隐式拉取上游镜像。
+    image: ${SUB2API_IMAGE:-sub2api:local-main}
+    pull_policy: never
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${SUB2API_VERSION:-}
+        COMMIT: ${SUB2API_COMMIT:-local}
     container_name: sub2api
     restart: unless-stopped
     ulimits:
@@ -156,7 +164,9 @@ services:
       # Image Generation Stream & Concurrency
       # =======================================================================
       # OpenAI HTTP upstream protocol/timeout
-      - GATEWAY_OPENAI_RESPONSE_HEADER_TIMEOUT=${GATEWAY_OPENAI_RESPONSE_HEADER_TIMEOUT:-0}
+      - GATEWAY_OPENAI_RESPONSE_HEADER_TIMEOUT=${GATEWAY_OPENAI_RESPONSE_HEADER_TIMEOUT:-60}
+      - GATEWAY_OPENAI_FIRST_OUTPUT_TIMEOUT_SECONDS=${GATEWAY_OPENAI_FIRST_OUTPUT_TIMEOUT_SECONDS:-60}
+      - GATEWAY_OPENAI_HIGH_EFFORT_FIRST_OUTPUT_TIMEOUT_SECONDS=${GATEWAY_OPENAI_HIGH_EFFORT_FIRST_OUTPUT_TIMEOUT_SECONDS:-0}
       - GATEWAY_OPENAI_HTTP2_ENABLED=${GATEWAY_OPENAI_HTTP2_ENABLED:-true}
       - GATEWAY_OPENAI_HTTP2_ALLOW_PROXY_FALLBACK_TO_HTTP1=${GATEWAY_OPENAI_HTTP2_ALLOW_PROXY_FALLBACK_TO_HTTP1:-true}
       - GATEWAY_OPENAI_HTTP2_FALLBACK_ERROR_THRESHOLD=${GATEWAY_OPENAI_HTTP2_FALLBACK_ERROR_THRESHOLD:-2}
@@ -217,12 +227,12 @@ services:
       -c effective_cache_size=${POSTGRES_EFFECTIVE_CACHE_SIZE:-4GB}
       -c maintenance_work_mem=${POSTGRES_MAINTENANCE_WORK_MEM:-64MB}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      # 旧 PostgreSQL 18 数据位于镜像默认目录 /var/lib/postgresql/18/docker。
+      # postgres_data 是显式外部卷，避免 Compose 静默创建空卷并触发 initdb。
+      - postgres_data:/var/lib/postgresql
     environment:
-      # postgres:18-alpine 默认 PGDATA=/var/lib/postgresql/18/docker（位于镜像声明的匿名卷 /var/lib/postgresql 内）。
-      # 若不显式设置 PGDATA，则即使挂载了 postgres_data 到 /var/lib/postgresql/data，数据也不会落盘到该命名卷，
-      # docker compose down/up 后会触发 initdb 重新初始化，导致用户/密码等数据丢失。
-      - PGDATA=/var/lib/postgresql/data
+      # 保持旧容器的 PostgreSQL 18 默认数据目录，恢复已发现的历史匿名卷。
+      - PGDATA=${POSTGRES_DATA_DIRECTORY:-/var/lib/postgresql/18/docker}
       - POSTGRES_USER=${POSTGRES_USER:-sub2api}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       - POSTGRES_DB=${POSTGRES_DB:-sub2api}
@@ -287,7 +297,9 @@ volumes:
   sub2api_data:
     driver: local
   postgres_data:
-    driver: local
+    # 数据卷由运维显式指定且必须已存在，防止误建空 PostgreSQL 数据库。
+    name: ${POSTGRES_DATA_VOLUME:?POSTGRES_DATA_VOLUME is required}
+    external: true
   redis_data:
     driver: local
 

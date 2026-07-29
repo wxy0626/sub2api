@@ -1,0 +1,69 @@
+services:
+  sub2api:
+    image: ${SUB2API_IMAGE:?需要受限运行时配置中的 SUB2API_IMAGE}
+    container_name: sub2api
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./data:/app/data
+      # 仅供容器内排查与源码比对；不覆盖镜像内 /app，也不允许容器修改源码。
+      - ${SUB2API_SOURCE_DIR:?需要受限运行时配置中的 SUB2API_SOURCE_DIR}:/workspace/sub2api:ro
+    environment:
+      AUTO_SETUP: ${AUTO_SETUP}
+      SERVER_HOST: ${SERVER_HOST}
+      SERVER_PORT: ${SERVER_PORT}
+      SERVER_MODE: ${SERVER_MODE}
+      DATABASE_HOST: ${DATABASE_HOST}
+      DATABASE_PORT: ${DATABASE_PORT}
+      DATABASE_USER: ${DATABASE_USER}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
+      DATABASE_DBNAME: ${DATABASE_DBNAME}
+      DATABASE_SSLMODE: ${DATABASE_SSLMODE}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      JWT_SECRET: ${JWT_SECRET}
+      TOTP_ENCRYPTION_KEY: ${TOTP_ENCRYPTION_KEY}
+      TZ: ${TZ}
+      GATEWAY_OPENAI_HTTP2_ENABLED: ${GATEWAY_OPENAI_HTTP2_ENABLED}
+      GATEWAY_OPENAI_FIRST_OUTPUT_TIMEOUT_SECONDS: ${GATEWAY_OPENAI_FIRST_OUTPUT_TIMEOUT_SECONDS:-60}
+      GATEWAY_OPENAI_HIGH_EFFORT_FIRST_OUTPUT_TIMEOUT_SECONDS: ${GATEWAY_OPENAI_HIGH_EFFORT_FIRST_OUTPUT_TIMEOUT_SECONDS:-0}
+      HTTP_PROXY: ${HTTP_PROXY}
+      HTTPS_PROXY: ${HTTPS_PROXY}
+      NO_PROXY: ${NO_PROXY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  postgres:
+    image: ${POSTGRES_IMAGE:?需要受限运行时配置中的 POSTGRES_IMAGE}
+    container_name: sub2api-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sub2api -d sub2api"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: ${REDIS_IMAGE:?需要受限运行时配置中的 REDIS_IMAGE}
+    container_name: sub2api-redis
+    restart: unless-stopped
+    volumes:
+      - ./redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20

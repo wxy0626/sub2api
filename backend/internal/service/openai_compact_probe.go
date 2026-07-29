@@ -38,11 +38,17 @@ func createOpenAICompactProbePayload(model string) map[string]any {
 }
 
 func shouldMarkOpenAICompactUnsupported(status int, body []byte) bool {
+	lower := strings.ToLower(strings.TrimSpace(extractUpstreamErrorMessage(body) + " " + string(body)))
+	// 上游以 503 返回 model_not_found 时，表示当前账号池没有 Compact 渠道，
+	// 不是普通的瞬时网关故障，应从 Compact 调度候选中暂时排除该账号。
+	if strings.Contains(lower, "model_not_found") || strings.Contains(lower, "no available channel for model") {
+		return true
+	}
+
 	switch status {
 	case http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusNotImplemented:
 		return true
 	case http.StatusBadRequest, http.StatusForbidden, http.StatusUnprocessableEntity:
-		lower := strings.ToLower(strings.TrimSpace(extractUpstreamErrorMessage(body) + " " + string(body)))
 		if strings.Contains(lower, "compact") {
 			for _, keyword := range []string{
 				"unsupported",

@@ -28,6 +28,7 @@ api.sub2api.com {
 	# 反向代理配置
 	# =========================================================================
 	reverse_proxy localhost:8080 {
+		flush_interval -1
 		# 健康检查
 		health_uri /health
 		health_interval 30s
@@ -46,17 +47,13 @@ api.sub2api.com {
 		header_up X-Forwarded-Host {host}
 		# 连接池优化
 		transport http {
+			response_header_timeout 60s
 			keepalive 120s
 			keepalive_idle_conns 256
 			read_buffer 16KB
 			write_buffer 16KB
 			compression off
 		}
-
-		# 故障转移
-		fail_duration 30s
-		max_fails 3
-		unhealthy_status 500 502 503 504
 	}
 
 	# =========================================================================

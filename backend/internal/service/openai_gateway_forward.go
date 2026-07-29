@@ -15,6 +15,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
+	"go.uber.org/zap"
 )
 
 // Forward forwards request to OpenAI API
@@ -829,6 +830,19 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 					return nil, fmt.Errorf("agent identity task recovery failed: %w", err)
 				}
 				continue
+			}
+			// API Key 账号的异步能力探测尚未写入标记时，若上游明确不提供
+			// /v1/responses（404/405），在同一请求中改走既有 Chat Completions
+			// 回退。仅 unknown 命中，force_responses 与已探测支持账号仍保留原语义。
+			if account.Type == AccountTypeAPIKey &&
+				openai_compat.ResolveResponsesSupport(account.Extra) == openai_compat.ResponsesSupportUnknown &&
+				!isResponsesEndpointSupportedByStatus(resp.StatusCode) {
+				logger.L().Info("openai responses: /responses unsupported, falling back to raw chat completions",
+					zap.Int64("account_id", account.ID),
+					zap.Int("upstream_status", resp.StatusCode),
+					zap.String("upstream_message", upstreamMsg),
+				)
+				return s.forwardResponsesViaRawChatCompletions(ctx, c, account, body)
 			}
 			respBody = s.redactAgentIdentitySensitiveBody(ctx, account, respBody)
 			resp.Body = io.NopCloser(bytes.NewReader(respBody))

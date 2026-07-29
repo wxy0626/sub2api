@@ -36,7 +36,17 @@ var sseDataPrefix = regexp.MustCompile(`^data:\s*`)
 const (
 	testClaudeAPIURL   = "https://api.anthropic.com/v1/messages?beta=true"
 	chatgptCodexAPIURL = "https://chatgpt.com/backend-api/codex/responses"
+	// accountTestUpstreamTimeout 限制管理台账号测试等待上游的最长时间。
+	accountTestUpstreamTimeout = 60 * time.Second
 )
+
+// accountTestRequestErrorMessage 将账号测试的网络超时转换为可操作的提示。
+func accountTestRequestErrorMessage(err error) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "上游响应超时：账号测试在 60 秒内未收到响应，请检查上游渠道或稍后重试"
+	}
+	return fmt.Sprintf("Request failed: %s", err.Error())
+}
 
 // TestEvent represents a SSE event for account testing
 type TestEvent struct {
@@ -502,7 +512,8 @@ func (s *AccountTestService) testBedrockAccountConnection(c *gin.Context, ctx co
 
 // testOpenAIAccountConnection tests an OpenAI account's connection
 func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account *Account, modelID string, prompt string, mode string) error {
-	ctx := c.Request.Context()
+	ctx, cancel := context.WithTimeout(c.Request.Context(), accountTestUpstreamTimeout)
+	defer cancel()
 	mode = normalizeAccountTestMode(mode)
 
 	// Default to openai.DefaultTestModel for OpenAI testing
@@ -511,9 +522,15 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		testModelID = openai.DefaultTestModel
 	}
 
-	// Align test routing with gateway behavior: OpenAI accounts apply normal
-	// account model mapping, and compact mode applies compact-only mapping on top.
-	testModelID = account.GetMappedModel(testModelID)
+	// API Key 的 Responses 普通测试是供应商诊断，不做账号模型映射，
+	// 使其与 Codex++ 优先使用供应商原始 model 的规则保持一致。
+	// Compact 测试和其他协议仍沿用生产转发的模型映射。
+	isAPIKeyResponsesDiagnostic := mode != AccountTestModeCompact &&
+		account.Type == AccountTypeAPIKey &&
+		openai_compat.ShouldUseResponsesAPI(account.Extra)
+	if !isAPIKeyResponsesDiagnostic {
+		testModelID = account.GetMappedModel(testModelID)
+	}
 	if mode == AccountTestModeCompact {
 		testModelID = resolveOpenAICompactForwardModel(account, testModelID)
 		return s.testOpenAICompactConnection(c, account, testModelID)
@@ -608,10 +625,12 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	}
 	req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
 
-	// Set common headers
+	// API Key 的 Responses 连通性测试对齐 Codex++ Provider Doctor：不伪装为 Codex CLI，
+	// 也不附加账号自定义头，避免供应商按客户端指纹分流到不同渠道。
 	req.Header.Set("Content-Type", "application/json")
 	if !isOAuth {
-		applyOpenAICodexProbeHeaders(req.Header)
+		req.Header.Set("Accept", "*/*")
+		req.Header.Set("User-Agent", "CodexPlusPlus/RelayTest")
 	}
 	if credentialAccount.IsOpenAIAgentIdentity() {
 		authHeaders, authErr := buildAgentIdentityAuthenticationHeaders(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityTaskMu, credentialAccount)
@@ -643,8 +662,10 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		enforceCodexIdentityHeaders(req.Header)
 	}
 
-	// 账号级请求头覆写：测试请求与真实转发保持一致的最终头
-	credentialAccount.ApplyHeaderOverrides(req.Header)
+	// OAuth 仍使用真实转发的账号级请求头覆写；API Key 诊断保持与 Codex++ 相同的最小报文。
+	if isOAuth {
+		credentialAccount.ApplyHeaderOverrides(req.Header)
+	}
 
 	// Get proxy URL
 	proxyURL := ""
@@ -654,7 +675,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 
 	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 	if err != nil {
-		return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
+		return s.sendErrorAndEnd(c, accountTestRequestErrorMessage(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -685,6 +706,18 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
 		}
 		return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
+	}
+
+	if !isOAuth {
+		// 供应商诊断请求是非流式 Responses 响应，读取有限预览并直接报告成功。
+		responsePreview, _ := io.ReadAll(io.LimitReader(resp.Body, 320))
+		if preview := strings.TrimSpace(string(responsePreview)); preview == "" {
+			s.sendEvent(c, TestEvent{Type: "content", Text: "Codex++ 诊断请求返回 HTTP 200。"})
+		} else {
+			s.sendEvent(c, TestEvent{Type: "content", Text: fmt.Sprintf("Codex++ 诊断请求返回 HTTP 200：%s", preview)})
+		}
+		s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+		return nil
 	}
 
 	// Process SSE stream
@@ -965,7 +998,7 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 			_ = s.accountRepo.UpdateExtra(ctx, account.ID, updates)
 			mergeAccountExtra(account, updates)
 		}
-		return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
+		return s.sendErrorAndEnd(c, accountTestRequestErrorMessage(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -1424,8 +1457,17 @@ func (s *AccountTestService) processGeminiStream(c *gin.Context, body io.Reader)
 	}
 }
 
-// createOpenAITestPayload creates a test payload for OpenAI Responses API
+// createOpenAITestPayload creates a test payload for OpenAI Responses API.
+// API Key 测试严格对齐 Codex++ Provider Doctor；OAuth 仍保持 ChatGPT Codex 上游所需格式。
 func createOpenAITestPayload(modelID string, isOAuth bool) map[string]any {
+	if !isOAuth {
+		return map[string]any{
+			"model":             modelID,
+			"input":             "hi",
+			"max_output_tokens": 16,
+		}
+	}
+
 	payload := map[string]any{
 		"model": modelID,
 		"input": []map[string]any{

@@ -69,6 +69,16 @@ func TestBuildOpenAICompactProbeExtraUpdates_502DoesNotMarkUnsupported(t *testin
 	}
 }
 
+func TestBuildOpenAICompactProbeExtraUpdates_ModelNotFound503MarksUnsupported(t *testing.T) {
+	now := time.Date(2026, 4, 10, 10, 0, 0, 0, time.UTC)
+	body := []byte(`{"error":{"code":"model_not_found","message":"No available channel for model gpt-5.6-luna-openai-compact under group codex-pro号池 (distributor)"}}`)
+	updates := buildOpenAICompactProbeExtraUpdates(&http.Response{StatusCode: http.StatusServiceUnavailable}, body, nil, now)
+
+	if got := updates["openai_compact_supported"]; got != false {
+		t.Fatalf("openai_compact_supported = %v, want false", got)
+	}
+}
+
 func TestBuildOpenAICompactProbeExtraUpdates_RequestErrorDoesNotMarkUnsupported(t *testing.T) {
 	now := time.Date(2026, 4, 10, 10, 0, 0, 0, time.UTC)
 	updates := buildOpenAICompactProbeExtraUpdates(nil, nil, errors.New("dial tcp timeout"), now)
