@@ -880,7 +880,7 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 	payloadBytes, _ := json.Marshal(payload)
 
 	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
-	s.sendEvent(c, TestEvent{Type: "status", Text: "正在通过 /v1/chat/completions 测试连接"})
+	s.sendEvent(c, TestEvent{Type: "status", Text: "正在通过 /chat/completions 测试连接"})
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(payloadBytes))
 	if err != nil {
@@ -901,7 +901,7 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 
 	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 	if err != nil {
-		return s.sendErrorAndEnd(c, fmt.Sprintf("Chat Completions API (/v1/chat/completions) request failed: %s", err.Error()))
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Chat Completions API (/chat/completions) request failed: %s", err.Error()))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -914,7 +914,7 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 			errMsg := fmt.Sprintf("Chat Completions authentication failed (401): %s", string(body))
 			_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
 		}
-		return s.sendErrorAndEnd(c, fmt.Sprintf("Chat Completions API (/v1/chat/completions) returned %d: %s", resp.StatusCode, string(body)))
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Chat Completions API (/chat/completions) returned %d: %s", resp.StatusCode, string(body)))
 	}
 
 	return s.processOpenAIChatCompletionsStream(c, resp.Body)
