@@ -24,15 +24,7 @@ services:
   # Sub2API Application
   # ===========================================================================
   sub2api:
-    # 本地目录部署同样只使用本地镜像，不隐式拉取上游 latest。
-    image: ${SUB2API_IMAGE:-sub2api:local-main}
-    pull_policy: never
-    build:
-      context: ..
-      dockerfile: Dockerfile
-      args:
-        VERSION: ${SUB2API_VERSION:-}
-        COMMIT: ${SUB2API_COMMIT:-local}
+    image: ${SUB2API_IMAGE:-ghcr.io/wxy0626/sub2api:latest}
     container_name: sub2api
     restart: unless-stopped
     ulimits:
@@ -44,6 +36,8 @@ services:
     volumes:
       # Local directory mapping for easy migration
       - ./data:/app/data:Z
+      # 仅供管理员按已验证的个人 Git/OCI digest 镜像替换当前应用容器。
+      - /var/run/docker.sock:/var/run/docker.sock
       # Optional: Mount custom config.yaml (uncomment and create the file first)
       # Copy config.example.yaml to config.yaml, modify it, then uncomment:
       # - ./config.yaml:/app/data/config.yaml
@@ -62,6 +56,12 @@ services:
       - ENABLE_SERVER_TIMING=${ENABLE_SERVER_TIMING:-false}
       - RUN_MODE=${RUN_MODE:-standard}
       - UPDATE_GITHUB_TOKEN=${UPDATE_GITHUB_TOKEN:-}
+      - PERSONAL_DEPLOYMENT_GIT_REPOSITORY=${PERSONAL_DEPLOYMENT_GIT_REPOSITORY:-}
+      - PERSONAL_DEPLOYMENT_REGISTRY_IMAGE=${PERSONAL_DEPLOYMENT_REGISTRY_IMAGE:-}
+      - PERSONAL_DEPLOYMENT_GITHUB_TOKEN=${PERSONAL_DEPLOYMENT_GITHUB_TOKEN:-}
+      - PERSONAL_DEPLOYMENT_REGISTRY_USERNAME=${PERSONAL_DEPLOYMENT_REGISTRY_USERNAME:-}
+      - PERSONAL_DEPLOYMENT_REGISTRY_TOKEN=${PERSONAL_DEPLOYMENT_REGISTRY_TOKEN:-}
+      - PERSONAL_DEPLOYMENT_MAX_VERSIONS=${PERSONAL_DEPLOYMENT_MAX_VERSIONS:-3}
 
       # =======================================================================
       # Database Configuration (PostgreSQL)

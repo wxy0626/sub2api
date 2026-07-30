@@ -95,11 +95,13 @@
     <!-- Quick Actions -->
     <div class="mb-4 flex flex-wrap gap-2">
       <button
+        v-if="canSyncLatest"
         type="button"
-        @click="fillRelated"
-        class="rounded-lg border border-blue-200 px-3 py-1.5 text-sm text-blue-600 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-400 dark:hover:bg-blue-900/30"
+        @click="syncLatestSupportedModels"
+        :disabled="isSyncingLatest"
+        class="rounded-lg border border-blue-200 px-3 py-1.5 text-sm text-blue-600 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-blue-800 dark:text-blue-400 dark:hover:bg-blue-900/30"
       >
-        {{ t('admin.accounts.fillRelatedModels') }}
+        {{ isSyncingLatest ? t('admin.accounts.syncLatestModelsLoading') : t('admin.accounts.fillRelatedModels') }}
       </button>
       <button
         v-if="canSyncUpstream"
@@ -149,12 +151,12 @@ import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { accountsAPI } from '@/api/admin/accounts'
+import { syncPricingModels } from '@/api/admin/channels'
 import type { SyncUpstreamPreviewParams } from '@/api/admin/accounts'
-import { extractApiErrorMessage } from '@/utils/apiError'
 import { useClipboard } from '@/composables/useClipboard'
 import ModelIcon from '@/components/common/ModelIcon.vue'
 import Icon from '@/components/icons/Icon.vue'
-import { allModels, getModelsByPlatform } from '@/composables/useModelWhitelist'
+import { allModels, getModelsByPlatform, restrictSyncedModels } from '@/composables/useModelWhitelist'
 
 const { t } = useI18n()
 
@@ -163,6 +165,7 @@ const props = defineProps<{
   platform?: string
   platforms?: string[]
   accountId?: number
+  accountType?: string
   syncCredentials?: {
     platform: string
     type: string
@@ -182,6 +185,8 @@ const showDropdown = ref(false)
 const searchQuery = ref('')
 const customModel = ref('')
 const isComposing = ref(false)
+// isSyncingLatest 标识是否正在从服务端最新定价目录同步模型。
+const isSyncingLatest = ref(false)
 const isSyncingUpstream = ref(false)
 const normalizedPlatforms = computed(() => {
   const rawPlatforms =
@@ -201,8 +206,26 @@ const normalizedPlatforms = computed(() => {
 })
 
 const upstreamSyncPlatforms = new Set(['anthropic', 'openai', 'gemini', 'antigravity', 'grok'])
+// latestSyncPlatforms 是后端最新模型目录支持查询的平台集合。
+const latestSyncPlatforms = new Set(['anthropic', 'openai', 'gemini', 'antigravity', 'grok'])
+// latestSyncPlatformNames 是当前表单中可请求最新目录的平台名称。
+const latestSyncPlatformNames = computed(() =>
+  normalizedPlatforms.value.filter(platform => latestSyncPlatforms.has(platform.toLowerCase()))
+)
+// canSyncLatest 控制最新支持模型同步动作是否可用。
+const canSyncLatest = computed(() => latestSyncPlatformNames.value.length > 0)
+// canSyncSavedAccountUpstream 根据已保存账号的类型，阻止前端请求后端明确不支持的同步接口。
+const canSyncSavedAccountUpstream = computed(() => {
+  const accountType = props.accountType?.trim().toLowerCase()
+
+  return !(
+    normalizedPlatforms.value.some(platform => platform.toLowerCase() === 'openai') &&
+    accountType === 'oauth'
+  )
+})
 const canSyncUpstream = computed(() => {
   if (props.accountId) {
+    if (!canSyncSavedAccountUpstream.value) return false
     if (normalizedPlatforms.value.length === 0) return true
     return normalizedPlatforms.value.some(platform => upstreamSyncPlatforms.has(platform.toLowerCase()))
   }
@@ -271,16 +294,25 @@ const handleEnter = () => {
   if (!isComposing.value) addCustom()
 }
 
-const fillRelated = () => {
-  const newModels = [...props.modelValue]
-  for (const platform of normalizedPlatforms.value) {
-    for (const model of getModelsByPlatform(platform)) {
-      if (!newModels.includes(model)) {
-        newModels.push(model)
-      }
-    }
+// syncLatestSupportedModels 以服务端最新目录结果替换旧白名单，避免静态前端列表长期过期。
+const syncLatestSupportedModels = async () => {
+  if (isSyncingLatest.value || latestSyncPlatformNames.value.length === 0) return
+
+  isSyncingLatest.value = true
+  try {
+    const results = await Promise.all(
+      latestSyncPlatformNames.value.map(platform => syncPricingModels(platform))
+    )
+    // latestModels 仅保留当前允许同步的 GPT-5.5、GPT-5.6 和 GPT Image 系列。
+    const latestModels = restrictSyncedModels(results.flatMap(result => result.models))
+    emit('update:modelValue', latestModels)
+    appStore.showSuccess(t('admin.accounts.syncLatestModelsSuccess', { count: latestModels.length }))
+  } catch (error) {
+    const message = error instanceof Error ? error.message : t('admin.accounts.syncLatestModelsFailed')
+    appStore.showError(t('admin.accounts.syncLatestModelsError', { message }))
+  } finally {
+    isSyncingLatest.value = false
   }
-  emit('update:modelValue', newModels)
 }
 
 const syncUpstreamModels = async () => {
@@ -298,30 +330,19 @@ const syncUpstreamModels = async () => {
       return
     }
 
-    const upstreamModels = result.models.map(model => model.trim()).filter(Boolean)
+    // upstreamModels 是上游当前实际支持的模型，必须作为白名单的唯一来源。
+    const upstreamModels = restrictSyncedModels(result.models)
     if (upstreamModels.length === 0) {
       appStore.showInfo(t('admin.accounts.syncUpstreamModelsEmpty'))
       return
     }
 
-    const newModels = [...props.modelValue]
-    let addedCount = 0
-    for (const model of upstreamModels) {
-      if (!newModels.includes(model)) {
-        newModels.push(model)
-        addedCount += 1
-      }
-    }
-
-    emit('update:modelValue', newModels)
-    if (addedCount > 0) {
-      appStore.showSuccess(t('admin.accounts.syncUpstreamModelsSuccess', { count: addedCount, total: upstreamModels.length }))
-    } else {
-      appStore.showInfo(t('admin.accounts.syncUpstreamModelsNoChanges', { count: upstreamModels.length }))
-    }
+    // 以上游实时结果替换旧白名单，自动移除该账号已经不支持的模型。
+    emit('update:modelValue', upstreamModels)
+    appStore.showSuccess(t('admin.accounts.syncUpstreamModelsSuccess', { count: upstreamModels.length, total: upstreamModels.length }))
   } catch (error) {
-    const message = extractApiErrorMessage(error, t('admin.accounts.syncUpstreamModelsFailed'))
-    appStore.showError(message)
+    const message = error instanceof Error ? error.message : t('admin.accounts.syncUpstreamModelsFailed')
+    appStore.showError(t('admin.accounts.syncUpstreamModelsError', { message }))
   } finally {
     isSyncingUpstream.value = false
   }

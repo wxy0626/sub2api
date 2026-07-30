@@ -595,7 +595,7 @@
                   <span
                     class="rounded bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
                   >
-                    {{ t('admin.accounts.gemini.oauthType.badges.noGcp') }}
+                    {{ t('admin.accounts.gemini.oauthType.badges.projectFallback') }}
                   </span>
                 </div>
               </div>
@@ -3170,7 +3170,7 @@
         :show-manual-option="true"
         :initial-input-method="'manual'"
         :platform="form.platform"
-        :show-project-id="geminiOAuthType === 'code_assist'"
+        :show-project-id="geminiOAuthType === 'code_assist' || geminiOAuthType === 'google_one'"
         @generate-url="handleGenerateUrl"
         @cookie-auth="handleCookieAuth"
         @validate-refresh-token="handleValidateRefreshToken"
@@ -4168,15 +4168,13 @@ watch(
   { immediate: true }
 )
 
-// 按账号类型同步代理默认值：OAuth 使用启用代理，API Key 不使用代理。
+// 按账号类型同步代理默认值：OAuth 依次优先日本家宽、日本、其他地区家宽和其他启用代理；API Key 不使用代理。
 const syncDefaultProxyByAccountType = () => {
   if (form.type === 'apikey') {
     form.proxy_id = null
     return
   }
-  if (form.type !== 'oauth') return
-  if (form.proxy_id !== null) return
-  // OAuth 依次优先日本家宽、日本、其他地区家宽，再回退任意启用代理。
+  if (form.type !== 'oauth' || form.proxy_id !== null) return
   const 启用代理列表 = props.proxies.filter((proxy) => proxy.status === 'active')
   const 默认启用代理 =
     启用代理列表.find((proxy) => proxy.name.includes('日本') && proxy.name.includes('家宽')) ??

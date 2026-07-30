@@ -27,6 +27,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/tidwall/gjson"
 )
 
 // sseDataPrefix matches SSE data lines with optional whitespace after colon.
@@ -36,17 +37,9 @@ var sseDataPrefix = regexp.MustCompile(`^data:\s*`)
 const (
 	testClaudeAPIURL   = "https://api.anthropic.com/v1/messages?beta=true"
 	chatgptCodexAPIURL = "https://chatgpt.com/backend-api/codex/responses"
-	// accountTestUpstreamTimeout 限制管理台账号测试等待上游的最长时间。
-	accountTestUpstreamTimeout = 60 * time.Second
+	// openAIWorkspaceDeactivatedErrorMessage 是管理员界面展示的工作区停用说明。
+	openAIWorkspaceDeactivatedErrorMessage = "ChatGPT 工作区已停用（402）：该工作区已被停用"
 )
-
-// accountTestRequestErrorMessage 将账号测试的网络超时转换为可操作的提示。
-func accountTestRequestErrorMessage(err error) string {
-	if errors.Is(err, context.DeadlineExceeded) {
-		return "上游响应超时：账号测试在 60 秒内未收到响应，请检查上游渠道或稍后重试"
-	}
-	return fmt.Sprintf("Request failed: %s", err.Error())
-}
 
 // TestEvent represents a SSE event for account testing
 type TestEvent struct {
@@ -186,8 +179,9 @@ func createTestPayload(modelID string) (map[string]any, error) {
 // TestAccountConnection tests an account's connection by sending a test request
 // All account types use full Claude Code client characteristics, only auth header differs
 // modelID is optional - if empty, defaults to claude.DefaultTestModel
-// mode is optional - "compact" routes OpenAI accounts to the /responses/compact probe path
-func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int64, modelID string, prompt string, mode string) error {
+// mode is optional - "responses" forces API Key accounts through /v1/responses once,
+// while "compact" routes OpenAI accounts to the /responses/compact probe path.
+func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int64, modelID string, prompt string, mode string) (err error) {
 	ctx := c.Request.Context()
 
 	// Get account
@@ -196,19 +190,28 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 		return s.sendErrorAndEnd(c, "Account not found")
 	}
 
-	// Synthetic UI load-test accounts exercise the real SSE parsing and modal
-	// interactions, but intentionally do not send their placeholder credentials
-	// to an upstream provider.
-	if account.IsSyntheticUITest() {
-		testModelID := modelID
-		if testModelID == "" {
-			testModelID = claude.DefaultTestModel
+	// 统一同步测试结果与调度状态，保证每个账号结束后立即反映在列表和调度器。
+	defer func() {
+		if s.accountRepo == nil {
+			return
 		}
-		s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
-		s.sendEvent(c, TestEvent{Type: "content", Text: "Synthetic Anthropic OAuth account is healthy and interactive."})
-		s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
-		return nil
-	}
+		if err != nil {
+			if setErrorErr := s.accountRepo.SetError(ctx, account.ID, err.Error()); setErrorErr != nil {
+				log.Printf("failed to mark tested account as error: account_id=%d error=%v", account.ID, setErrorErr)
+			}
+			return
+		}
+
+		// 测试成功后先清除旧错误，再明确开启调度。
+		if account.Status == StatusError {
+			if clearErrorErr := s.accountRepo.ClearError(ctx, account.ID); clearErrorErr != nil {
+				log.Printf("failed to clear tested account error: account_id=%d error=%v", account.ID, clearErrorErr)
+			}
+		}
+		if setSchedulableErr := s.accountRepo.SetSchedulable(ctx, account.ID, true); setSchedulableErr != nil {
+			log.Printf("failed to enable tested account scheduling: account_id=%d error=%v", account.ID, setSchedulableErr)
+		}
+	}()
 
 	// Route to platform-specific test method
 	if account.IsOpenAI() {
@@ -526,9 +529,14 @@ func (s *AccountTestService) testBedrockAccountConnection(c *gin.Context, ctx co
 
 // testOpenAIAccountConnection tests an OpenAI account's connection
 func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account *Account, modelID string, prompt string, mode string) error {
-	ctx, cancel := context.WithTimeout(c.Request.Context(), accountTestUpstreamTimeout)
-	defer cancel()
+	ctx := c.Request.Context()
 	mode = normalizeAccountTestMode(mode)
+
+	// 工作区测活固定使用文本模型，确保请求始终走 ChatGPT Codex Responses 链路。
+	if mode == AccountTestModeWorkspace {
+		modelID = openai.DefaultTestModel
+		prompt = ""
+	}
 
 	// Default to openai.DefaultTestModel for OpenAI testing
 	testModelID := modelID
@@ -536,12 +544,11 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		testModelID = openai.DefaultTestModel
 	}
 
-	// API Key 的 Responses 普通测试是供应商诊断，不做账号模型映射，
-	// 使其与 Codex++ 优先使用供应商原始 model 的规则保持一致。
-	// Compact 测试和其他协议仍沿用生产转发的模型映射。
+	// API Key 的普通 Responses 测试对齐 Codex++ Provider Doctor：使用供应商原始模型，
+	// 不应用账号模型映射。Compact、Chat Completions 和 OAuth 测试仍保持生产映射规则。
 	isAPIKeyResponsesDiagnostic := mode != AccountTestModeCompact &&
 		account.Type == AccountTypeAPIKey &&
-		openai_compat.ShouldUseResponsesAPI(account.Extra)
+		(mode == AccountTestModeResponses || openai_compat.ShouldUseResponsesAPI(account.Extra))
 	if !isAPIKeyResponsesDiagnostic {
 		testModelID = account.GetMappedModel(testModelID)
 	}
@@ -550,8 +557,8 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		return s.testOpenAICompactConnection(c, account, testModelID)
 	}
 
-	// Route to image generation test if an image model is selected
-	if isOpenAIImageModel(testModelID) {
+	// 强制 /responses 测试优先验证指定端点；图片模型也不改走图片专用测试。
+	if mode != AccountTestModeResponses && isOpenAIImageModel(testModelID) {
 		imagePrompt := strings.TrimSpace(prompt)
 		if imagePrompt == "" {
 			imagePrompt = defaultOpenAIImageTestPrompt
@@ -603,7 +610,8 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		if err != nil {
 			return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
 		}
-		if !openai_compat.ShouldUseResponsesAPI(account.Extra) {
+		// /responses 测试只影响本次请求，忽略 capability 缓存且不回写账号 Extra。
+		if mode != AccountTestModeResponses && !openai_compat.ShouldUseResponsesAPI(account.Extra) {
 			return s.testOpenAIChatCompletionsConnection(c, account, testModelID, prompt, normalizedBaseURL, authToken)
 		}
 		apiURL = buildOpenAIResponsesURL(normalizedBaseURL)
@@ -624,13 +632,28 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	if isOAuth {
 		upstreamTestModelID = normalizeOpenAIModelForUpstream(credentialAccount, testModelID)
 	}
-	payload := createOpenAITestPayload(upstreamTestModelID, isOAuth)
+	// API Key 供应商诊断使用 Codex++ 的最小非流式请求体，避免按客户端指纹或流式策略分流。
+	payload := createOpenAIAccountTestPayload(upstreamTestModelID, isOAuth, credentialAccount.Type == AccountTypeAPIKey)
+	if isAPIKeyResponsesDiagnostic {
+		payload = map[string]any{
+			"model":             upstreamTestModelID,
+			"input":             "hi",
+			"max_output_tokens": 16,
+		}
+	}
+	// API Key 测试请求必须复用真实转发的 Responses 输入兼容规则，避免上游仅接受数组时把可用账号误判为不可用。
+	if credentialAccount.Type == AccountTypeAPIKey && !isAPIKeyResponsesDiagnostic {
+		normalizeOpenAIAPIKeyResponsesStringInput(payload)
+	}
 	payloadBytes, _ := json.Marshal(payload)
 
 	// Send test_start event once. A task-invalid Agent Identity response may
 	// restart this probe after registering a replacement task.
 	if !agentIdentityTaskRecoveryWasTried(ctx) {
 		s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
+	}
+	if mode == AccountTestModeResponses {
+		s.sendEvent(c, TestEvent{Type: "status", Text: "正在通过 /v1/responses 测试连接"})
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(payloadBytes))
@@ -639,12 +662,16 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	}
 	req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
 
-	// API Key 的 Responses 连通性测试对齐 Codex++ Provider Doctor：不伪装为 Codex CLI，
-	// 也不附加账号自定义头，避免供应商按客户端指纹分流到不同渠道。
+	// API Key 供应商诊断严格使用 Codex++ 的普通 HTTP 指纹，不注入 Codex CLI 标识。
 	req.Header.Set("Content-Type", "application/json")
-	if !isOAuth {
+	if isAPIKeyResponsesDiagnostic {
 		req.Header.Set("Accept", "*/*")
 		req.Header.Set("User-Agent", "CodexPlusPlus/RelayTest")
+	} else {
+		req.Header.Set("Accept", "text/event-stream")
+	}
+	if !isOAuth && !isAPIKeyResponsesDiagnostic {
+		applyOpenAICodexProbeHeaders(req.Header)
 	}
 	if credentialAccount.IsOpenAIAgentIdentity() {
 		authHeaders, authErr := buildAgentIdentityAuthenticationHeaders(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityTaskMu, credentialAccount)
@@ -676,8 +703,8 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		enforceCodexIdentityHeaders(req.Header)
 	}
 
-	// OAuth 仍使用真实转发的账号级请求头覆写；API Key 诊断保持与 Codex++ 相同的最小报文。
-	if isOAuth {
+	// OAuth 与其他探测保持账号级请求头覆写；Codex++ 诊断使用最小请求，避免覆盖其指纹。
+	if !isAPIKeyResponsesDiagnostic {
 		credentialAccount.ApplyHeaderOverrides(req.Header)
 	}
 
@@ -688,8 +715,22 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	}
 
 	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+	if err != nil && isOAuth && isRetryableOpenAIAccountTestTransportError(err) {
+		log.Printf("OpenAI account test transport retry: account_id=%d error=%v", account.ID, err)
+		s.sendEvent(c, TestEvent{Type: "status", Text: "上游连接意外中断，正在自动重试一次"})
+
+		retryReq, retryErr := cloneOpenAIAccountTestRequest(req)
+		if retryErr != nil {
+			return s.sendErrorAndEnd(c, "请求失败：重建重试请求时发生错误")
+		}
+		resp, err = s.httpUpstream.DoWithTLS(retryReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+	}
 	if err != nil {
-		return s.sendErrorAndEnd(c, accountTestRequestErrorMessage(err))
+		log.Printf("OpenAI account test request failed: account_id=%d error=%v", account.ID, err)
+		if mode == AccountTestModeResponses {
+			return s.sendErrorAndEnd(c, fmt.Sprintf("通过 /v1/responses 测试连接失败：无法连接上游服务，请检查 API Base URL、网络和 API Key。原始技术详情：%s", err.Error()))
+		}
+		return s.sendErrorAndEnd(c, openAIAccountTestTransportErrorMessage(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -700,7 +741,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		}
 	}
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && (!isAPIKeyResponsesDiagnostic || resp.StatusCode >= http.StatusBadRequest) {
 		body, _ := io.ReadAll(resp.Body)
 		body = redactAgentIdentitySensitiveBodyForAccount(ctx, s.accountRepo, credentialAccount, body)
 		if !agentIdentityTaskRecoveryWasTried(ctx) && credentialAccount.IsOpenAIAgentIdentity() && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, body) {
@@ -714,28 +755,34 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		if resp.StatusCode == http.StatusTooManyRequests {
 			s.reconcileOpenAI429State(ctx, account, resp.Header, body)
 		}
+		if s.isOpenAIWorkspaceDeactivated(resp.StatusCode, body) {
+			return s.sendWorkspaceDeactivatedAndEnd(c, ctx, account)
+		}
 		// 401 Unauthorized: 标记账号为永久错误
 		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil {
 			errMsg := fmt.Sprintf("Authentication failed (401): %s", string(body))
 			_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
 		}
+		if mode == AccountTestModeResponses {
+			return s.sendErrorAndEnd(c, fmt.Sprintf("通过 /v1/responses 测试连接失败：上游返回 HTTP %d，请检查接口兼容性、模型权限和 API Key。原始技术详情：%s", resp.StatusCode, string(body)))
+		}
 		return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
 	}
 
-	if !isOAuth {
-		// 供应商诊断请求是非流式 Responses 响应，读取有限预览并直接报告成功。
+	if isAPIKeyResponsesDiagnostic {
+		// Codex++ 诊断是非流式 JSON 响应，HTTP 小于 400 即视为请求成功。
 		responsePreview, _ := io.ReadAll(io.LimitReader(resp.Body, 320))
 		if preview := strings.TrimSpace(string(responsePreview)); preview == "" {
-			s.sendEvent(c, TestEvent{Type: "content", Text: "Codex++ 诊断请求返回 HTTP 200。"})
+			s.sendEvent(c, TestEvent{Type: "content", Text: "Codex++ 诊断请求返回成功响应。"})
 		} else {
-			s.sendEvent(c, TestEvent{Type: "content", Text: fmt.Sprintf("Codex++ 诊断请求返回 HTTP 200：%s", preview)})
+			s.sendEvent(c, TestEvent{Type: "content", Text: fmt.Sprintf("Codex++ 诊断响应：%s", preview)})
 		}
 		s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
 		return nil
 	}
 
-	// Process SSE stream
-	return s.processOpenAIStream(c, resp.Body)
+	// API Key 探测在收到首个有效文本后即可确认模型可用，不等待上游完成整段生成。
+	return s.processOpenAIStream(c, resp.Body, credentialAccount.Type == AccountTypeAPIKey)
 }
 
 // testGrokAccountConnection tests a Grok OAuth or API-key account through xAI's Responses API.
@@ -854,7 +901,7 @@ func (s *AccountTestService) testGrokAccountConnection(c *gin.Context, account *
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Grok Responses API returned %d: %s", resp.StatusCode, string(body)))
 	}
 
-	return s.processOpenAIStream(c, resp.Body)
+	return s.processOpenAIStream(c, resp.Body, false)
 }
 
 // testOpenAIChatCompletionsConnection tests an OpenAI-compatible APIKey account
@@ -880,7 +927,7 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 	payloadBytes, _ := json.Marshal(payload)
 
 	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
-	s.sendEvent(c, TestEvent{Type: "status", Text: "正在通过 /chat/completions 测试连接"})
+	s.sendEvent(c, TestEvent{Type: "status", Text: "正在通过 /v1/chat/completions 测试连接"})
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(payloadBytes))
 	if err != nil {
@@ -901,7 +948,7 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 
 	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 	if err != nil {
-		return s.sendErrorAndEnd(c, fmt.Sprintf("Chat Completions API (/chat/completions) request failed: %s", err.Error()))
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Chat Completions API (/v1/chat/completions) request failed: %s", err.Error()))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -914,10 +961,11 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 			errMsg := fmt.Sprintf("Chat Completions authentication failed (401): %s", string(body))
 			_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
 		}
-		return s.sendErrorAndEnd(c, fmt.Sprintf("Chat Completions API (/chat/completions) returned %d: %s", resp.StatusCode, string(body)))
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Chat Completions API (/v1/chat/completions) returned %d: %s", resp.StatusCode, string(body)))
 	}
 
-	return s.processOpenAIChatCompletionsStream(c, resp.Body)
+	// Chat Completions 连通性测试同样以首个有效文本作为成功条件。
+	return s.processOpenAIChatCompletionsStream(c, resp.Body, true)
 }
 
 // testOpenAICompactConnection probes /responses/compact and persists the
@@ -1022,7 +1070,7 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 			_ = s.accountRepo.UpdateExtra(ctx, account.ID, updates)
 			mergeAccountExtra(account, updates)
 		}
-		return s.sendErrorAndEnd(c, accountTestRequestErrorMessage(err))
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -1056,6 +1104,9 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil {
 			errMsg := fmt.Sprintf("Authentication failed (401): %s", string(body))
 			_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
+		}
+		if s.isOpenAIWorkspaceDeactivated(resp.StatusCode, body) {
+			return s.sendWorkspaceDeactivatedAndEnd(c, ctx, account)
 		}
 		return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
 	}
@@ -1166,6 +1217,9 @@ func (s *AccountTestService) testGeminiAccountConnection(c *gin.Context, account
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode == http.StatusNotFound {
+			return s.sendErrorAndEnd(c, fmt.Sprintf("Model %q is not available for this account or project (upstream returned 404): %s", testModelID, string(body)))
+		}
 		return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
 	}
 
@@ -1481,17 +1535,8 @@ func (s *AccountTestService) processGeminiStream(c *gin.Context, body io.Reader)
 	}
 }
 
-// createOpenAITestPayload creates a test payload for OpenAI Responses API.
-// API Key 测试严格对齐 Codex++ Provider Doctor；OAuth 仍保持 ChatGPT Codex 上游所需格式。
+// createOpenAITestPayload 创建 ChatGPT OAuth 与用量查询使用的完整 Responses 请求体。
 func createOpenAITestPayload(modelID string, isOAuth bool) map[string]any {
-	if !isOAuth {
-		return map[string]any{
-			"model":             modelID,
-			"input":             "hi",
-			"max_output_tokens": 16,
-		}
-	}
-
 	payload := map[string]any{
 		"model": modelID,
 		"input": []map[string]any{
@@ -1517,6 +1562,21 @@ func createOpenAITestPayload(modelID string, isOAuth bool) map[string]any {
 	payload["instructions"] = openai.DefaultInstructions
 
 	return payload
+}
+
+// createOpenAIAccountTestPayload 创建账号连通性探测请求体。
+// API Key 探测不携带业务转发所需的长指令，并限制输出为一个 token，降低上游排队与收尾耗时。
+func createOpenAIAccountTestPayload(modelID string, isOAuth bool, lightweightProbe bool) map[string]any {
+	if !lightweightProbe {
+		return createOpenAITestPayload(modelID, isOAuth)
+	}
+
+	return map[string]any{
+		"model":             modelID,
+		"input":             "hi",
+		"stream":            true,
+		"max_output_tokens": 1,
+	}
 }
 
 func createOpenAIChatCompletionsTestPayload(modelID string, prompt string) map[string]any {
@@ -1593,7 +1653,7 @@ func (s *AccountTestService) processClaudeStream(c *gin.Context, body io.Reader)
 
 // processOpenAIChatCompletionsStream processes SSE chunks from the
 // OpenAI-compatible Chat Completions API.
-func (s *AccountTestService) processOpenAIChatCompletionsStream(c *gin.Context, body io.Reader) error {
+func (s *AccountTestService) processOpenAIChatCompletionsStream(c *gin.Context, body io.Reader, completeOnFirstText bool) error {
 	reader := bufio.NewReader(body)
 	seenJSON := false
 	seenFinish := false
@@ -1653,11 +1713,21 @@ func (s *AccountTestService) processOpenAIChatCompletionsStream(c *gin.Context, 
 			if delta, ok := choice["delta"].(map[string]any); ok {
 				if text, ok := delta["content"].(string); ok && text != "" {
 					s.sendEvent(c, TestEvent{Type: "content", Text: text})
+					if completeOnFirstText {
+						s.sendEvent(c, TestEvent{Type: "status", Text: "已收到首个模型输出，连接验证成功"})
+						s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+						return nil
+					}
 				}
 			}
 			if message, ok := choice["message"].(map[string]any); ok {
 				if text, ok := message["content"].(string); ok && text != "" {
 					s.sendEvent(c, TestEvent{Type: "content", Text: text})
+					if completeOnFirstText {
+						s.sendEvent(c, TestEvent{Type: "status", Text: "已收到首个模型输出，连接验证成功"})
+						s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+						return nil
+					}
 				}
 			}
 			if finishReason, ok := choice["finish_reason"].(string); ok && finishReason != "" {
@@ -1668,7 +1738,7 @@ func (s *AccountTestService) processOpenAIChatCompletionsStream(c *gin.Context, 
 }
 
 // processOpenAIStream processes the SSE stream from OpenAI Responses API
-func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader) error {
+func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader, completeOnFirstText bool) error {
 	reader := bufio.NewReader(body)
 	seenCompleted := false
 
@@ -1711,6 +1781,11 @@ func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader)
 			// OpenAI Responses API uses "delta" field for text content
 			if delta, ok := data["delta"].(string); ok && delta != "" {
 				s.sendEvent(c, TestEvent{Type: "content", Text: delta})
+				if completeOnFirstText {
+					s.sendEvent(c, TestEvent{Type: "status", Text: "已收到首个模型输出，连接验证成功"})
+					s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+					return nil
+				}
 			}
 		case "response.completed", "response.done":
 			s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
@@ -1973,6 +2048,63 @@ func (s *AccountTestService) sendErrorAndEnd(c *gin.Context, errorMsg string) er
 	log.Printf("Account test error: %s", errorMsg)
 	s.sendEvent(c, TestEvent{Type: "error", Error: errorMsg})
 	return fmt.Errorf("%s", errorMsg)
+}
+
+// isRetryableOpenAIAccountTestTransportError 判断账号测试的请求前连接中断是否可安全重试。
+func isRetryableOpenAIAccountTestTransportError(err error) bool {
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
+}
+
+// openAIAccountTestTransportErrorMessage 将常见的 OpenAI 传输错误转换为管理员可读的中文提示。
+func openAIAccountTestTransportErrorMessage(err error) string {
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return "请求失败：与 ChatGPT 上游服务的连接意外中断（EOF）"
+	}
+	return "请求失败：无法连接到上游服务，请检查代理、网络和账号配置"
+}
+
+// cloneOpenAIAccountTestRequest 为传输层重试重新创建独立且可读取的请求体。
+func cloneOpenAIAccountTestRequest(req *http.Request) (*http.Request, error) {
+	if req == nil {
+		return nil, errors.New("request is nil")
+	}
+
+	retryReq := req.Clone(req.Context())
+	if req.Body == nil || req.GetBody == nil {
+		return retryReq, nil
+	}
+
+	retryBody, err := req.GetBody()
+	if err != nil {
+		return nil, err
+	}
+	retryReq.Body = retryBody
+	return retryReq, nil
+}
+
+// isOpenAIWorkspaceDeactivated 判断上游响应是否表示 ChatGPT 工作区已被停用。
+func (s *AccountTestService) isOpenAIWorkspaceDeactivated(statusCode int, responseBody []byte) bool {
+	return statusCode == http.StatusPaymentRequired &&
+		gjson.GetBytes(responseBody, "detail.code").String() == "deactivated_workspace"
+}
+
+// sendWorkspaceDeactivatedAndEnd 记录工作区停用状态并向测试界面发送结构化事件。
+func (s *AccountTestService) sendWorkspaceDeactivatedAndEnd(c *gin.Context, ctx context.Context, account *Account) error {
+	const errorMessage = openAIWorkspaceDeactivatedErrorMessage
+
+	if s.accountRepo != nil && account != nil {
+		if err := s.accountRepo.SetError(ctx, account.ID, errorMessage); err != nil {
+			log.Printf("failed to mark deactivated workspace account as error: %v", err)
+		}
+	}
+
+	log.Printf("Account test workspace deactivated: account_id=%d", account.ID)
+	s.sendEvent(c, TestEvent{
+		Type:  "workspace_deactivated",
+		Code:  "deactivated_workspace",
+		Error: errorMessage,
+	})
+	return fmt.Errorf("%s", errorMessage)
 }
 
 // RunTestBackground executes an account test in-memory (no real HTTP client),

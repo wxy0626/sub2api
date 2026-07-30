@@ -4,18 +4,10 @@
 
 // OpenAI
 const openaiModels = [
-  // GPT-5.2 系列
-  'gpt-5.2', 'gpt-5.2-2025-12-11', 'gpt-5.2-chat-latest',
-  'gpt-5.2-pro', 'gpt-5.2-pro-2025-12-11',
   // GPT-5.6 系列
   'gpt-5.6', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna',
   // GPT-5.5 系列
   'gpt-5.5',
-  // GPT-5.4 系列
-  'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.4-2026-03-05',
-  // GPT-5.3 / Codex 系列
-  'gpt-5.3-codex-spark', 'codex-auto-review',
-  'gpt-4o-audio-preview', 'gpt-4o-realtime-preview',
   // GPT Image 系列
   'gpt-image-1', 'gpt-image-1.5', 'gpt-image-2'
 ]
@@ -407,6 +399,45 @@ export const commonErrorCodes = [
 // =====================
 // 辅助函数
 // =====================
+
+// 同步白名单允许的模型前缀，仅保留 GPT-5.5、GPT-5.6 和 GPT Image 系列。
+const syncedModelAllowedPrefixes = ['gpt-5.5', 'gpt-5.6', 'gpt-image']
+
+// 默认 OpenAI 模型白名单只开放最低的 GPT-5.5 系列，避免空白名单等价于全模型放行。
+const defaultOpenAIModelWhitelist = ['gpt-5.5']
+
+// isAllowedSyncedModel 判断模型是否可由“同步最新支持模型”或“同步上游支持的模型”写入白名单。
+export function isAllowedSyncedModel(model: string): boolean {
+  const normalizedModel = model.trim().toLowerCase()
+  return syncedModelAllowedPrefixes.some(prefix =>
+    normalizedModel === prefix || normalizedModel.startsWith(`${prefix}-`)
+  )
+}
+
+// restrictSyncedModels 清理同步结果和已有白名单，去重后只保留允许的模型系列。
+export function restrictSyncedModels(models: string[]): string[] {
+  // uniqueModels 用于按原始模型标识去重，保持首个有效条目的顺序。
+  const uniqueModels = new Set<string>()
+  // restrictedModels 是清理后可写入模型白名单的结果。
+  const restrictedModels: string[] = []
+
+  for (const rawModel of models) {
+    const model = rawModel.trim()
+    if (!isAllowedSyncedModel(model) || uniqueModels.has(model)) continue
+    uniqueModels.add(model)
+    restrictedModels.push(model)
+  }
+
+  return restrictedModels
+}
+
+// getDefaultModelWhitelist 返回指定平台在编辑时应采用的最小默认模型白名单。
+export function getDefaultModelWhitelist(platform: string): string[] {
+  if (platform.trim().toLowerCase() === 'openai') {
+    return [...defaultOpenAIModelWhitelist]
+  }
+  return []
+}
 
 // 按平台获取模型
 export function getModelsByPlatform(platform: string): string[] {

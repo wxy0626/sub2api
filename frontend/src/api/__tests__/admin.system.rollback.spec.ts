@@ -12,7 +12,12 @@ vi.mock('../client', () => ({
   },
 }))
 
-import { getRollbackVersions, rollback, type RollbackVersionInfo } from '@/api/admin/system'
+import {
+  deployLatestPersonalVersion,
+  getPersonalDeploymentVersions,
+  rollback,
+  type PersonalDeploymentVersion
+} from '@/api/admin/system'
 
 describe('admin system rollback API', () => {
   beforeEach(() => {
@@ -20,36 +25,47 @@ describe('admin system rollback API', () => {
     post.mockReset()
   })
 
-  it('getRollbackVersions fetches the rollback version list', async () => {
-    const versions: RollbackVersionInfo[] = [
+  it('getPersonalDeploymentVersions fetches the verified personal image list', async () => {
+    const versions: PersonalDeploymentVersion[] = [
       {
-        version: '0.1.146',
-        published_at: '2026-07-07T00:00:00Z',
-        html_url: 'https://github.com/Wei-Shaw/sub2api/releases/tag/v0.1.146'
+        tag: 'v0.1.162-custom.1',
+        commit: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        reference: 'ghcr.io/example/sub2api@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
       }
     ]
     get.mockResolvedValue({ data: { versions } })
 
-    const result = await getRollbackVersions()
+    const result = await getPersonalDeploymentVersions()
 
-    expect(get).toHaveBeenCalledWith('/admin/system/rollback-versions')
+    expect(get).toHaveBeenCalledWith('/admin/system/deployment-versions')
     expect(result.versions).toEqual(versions)
   })
 
-  it('rollback posts the target version in the request body', async () => {
-    post.mockResolvedValue({ data: { message: 'ok', need_restart: true } })
+  it('deployLatestPersonalVersion invokes the distinct personal update endpoint', async () => {
+    post.mockResolvedValue({ data: { message: 'ok', need_restart: false, restart_scheduled: true } })
 
-    const result = await rollback('0.1.146')
+    await deployLatestPersonalVersion()
 
-    expect(post).toHaveBeenCalledWith('/admin/system/rollback', { version: '0.1.146' })
-    expect(result.need_restart).toBe(true)
+    expect(post).toHaveBeenCalledWith(
+      '/admin/system/deployment/update',
+      undefined,
+      { timeout: 15 * 60 * 1000 }
+    )
   })
 
-  it('rollback without a version posts no body (legacy backup rollback)', async () => {
+  it('rollback posts the allowlisted personal tag and digest in the request body', async () => {
     post.mockResolvedValue({ data: { message: 'ok', need_restart: true } })
+    const tag = 'v0.1.162-custom.1'
+    const digest = 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 
-    await rollback()
+    const result = await rollback(tag, digest)
 
-    expect(post).toHaveBeenCalledWith('/admin/system/rollback', undefined)
+    expect(post).toHaveBeenCalledWith(
+      '/admin/system/rollback',
+	  { tag, digest },
+      { timeout: 15 * 60 * 1000 }
+    )
+    expect(result.need_restart).toBe(true)
   })
 })

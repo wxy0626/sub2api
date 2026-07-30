@@ -6,7 +6,6 @@
 .git
 .gitignore
 .gitattributes
-.codex/
 
 # Documentation
 *.md

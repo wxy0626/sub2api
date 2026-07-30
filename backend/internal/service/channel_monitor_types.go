@@ -28,11 +28,15 @@ const (
 
 // ChannelMonitor 渠道监控配置（service 层模型，不直接暴露 ent 类型）。
 type ChannelMonitor struct {
-	ID              int64
-	Name            string
-	Provider        string
-	APIMode         string
-	Endpoint        string
+	ID       int64
+	Name     string
+	Provider string
+	APIMode  string
+	Endpoint string
+	// AccountID 非空时表示直接检测已保存账号，不向外部 endpoint 发送 API Key。
+	AccountID *int64
+	// APIKeyID 记录通过“使用我的 Key”选择的用户 API Key，用于编辑界面回填展示。
+	APIKeyID        *int64
 	APIKey          string // 解密后的明文 API Key（仅在 service 内部使用，handler 层不应直接序列化返回）
 	PrimaryModel    string
 	ExtraModels     []string
@@ -73,10 +77,14 @@ type ChannelMonitorListParams struct {
 
 // ChannelMonitorCreateParams 创建参数。
 type ChannelMonitorCreateParams struct {
-	Name             string
-	Provider         string
-	APIMode          string
-	Endpoint         string
+	Name     string
+	Provider string
+	APIMode  string
+	Endpoint string
+	// AccountID 选择已有账号作为渠道监控来源；非空时忽略 Endpoint 和 APIKey。
+	AccountID *int64
+	// APIKeyID 是可选的用户 API Key 关联，仅用于界面展示，不参与上游请求。
+	APIKeyID         *int64
 	APIKey           string
 	PrimaryModel     string
 	ExtraModels      []string
@@ -93,10 +101,16 @@ type ChannelMonitorCreateParams struct {
 
 // ChannelMonitorUpdateParams 更新参数（指针字段表示"未提供则不更新"）。
 type ChannelMonitorUpdateParams struct {
-	Name            *string
-	Provider        *string
-	APIMode         *string
-	Endpoint        *string
+	Name     *string
+	Provider *string
+	APIMode  *string
+	Endpoint *string
+	// AccountID 非空时切换为账号来源；ClearAccount=true 时切换为外部渠道来源。
+	AccountID    *int64
+	ClearAccount bool
+	APIKeyID     *int64
+	// ClearAPIKeyID 在手动填写 API Key 后清除此前的“我的 Key”关联。
+	ClearAPIKeyID   bool
 	APIKey          *string // 空字符串表示不修改；非空字符串覆盖
 	PrimaryModel    *string
 	ExtraModels     *[]string
@@ -202,6 +216,7 @@ type ChannelMonitorLatest struct {
 	Status        string
 	LatencyMs     *int
 	PingLatencyMs *int
+	Message       string
 	CheckedAt     time.Time
 }
 
@@ -221,6 +236,7 @@ type ChannelMonitorAvailability struct {
 type MonitorStatusSummary struct {
 	PrimaryStatus    string // 空字符串表示无历史
 	PrimaryLatencyMs *int
+	PrimaryMessage   string  // 主模型最近一次检测的诊断说明
 	Availability7d   float64 // 0-100，无历史时为 0
 	ExtraModels      []ExtraModelStatus
 }

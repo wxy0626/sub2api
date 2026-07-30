@@ -7,6 +7,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Toast, ToastType, PublicSettings } from '@/types'
 import { i18n } from '@/i18n'
+import { normalizeDisplayErrorMessage } from '@/utils/errorMessage'
 import {
   checkUpdates as checkUpdatesAPI,
   type VersionInfo,
@@ -143,7 +144,7 @@ export const useAppStore = defineStore('app', () => {
    * @param duration - Auto-dismiss duration in ms (default: 5000)
    */
   function showError(message: string, duration: number = 5000): string {
-    return showToast('error', message, duration)
+    return showToast('error', normalizeDisplayErrorMessage(message, '发生未知错误，请稍后重试。'), duration)
   }
 
   /**

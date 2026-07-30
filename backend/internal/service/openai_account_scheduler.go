@@ -425,6 +425,14 @@ func (s *defaultOpenAIAccountScheduler) Select(
 		}
 		if escapedSticky {
 			req.PreserveStickyBinding = true
+			// 粘性逃逸只对当前请求生效，排除原账号以免负载层立即重新选回。
+			req.ExcludedIDs = cloneExcludedAccountIDs(req.ExcludedIDs)
+			if req.ExcludedIDs == nil {
+				req.ExcludedIDs = make(map[int64]struct{})
+			}
+			if req.StickyAccountID > 0 {
+				req.ExcludedIDs[req.StickyAccountID] = struct{}{}
+			}
 		}
 	}
 
@@ -509,7 +517,10 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		return nil, true, nil
 	}
 	result, acquireErr := s.service.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
-	if acquireErr == nil && result != nil && result.Acquired {
+	if acquireErr != nil {
+		return nil, false, acquireErr
+	}
+	if result != nil && result.Acquired {
 		_ = s.service.refreshStickySessionTTL(ctx, req.GroupID, sessionHash, s.service.openAIWSSessionStickyTTL())
 		return &AccountSelectionResult{
 			Account:     account,
@@ -518,8 +529,20 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		}, false, nil
 	}
 
-	// 粘性账号槽位已满时交给负载调度继续尝试其他账号；只有所有候选
-	// 都满时，负载调度的兜底阶段才会生成等待计划。
+	if s.service.concurrencyService != nil {
+		if escapeCfg.enabled && acquireErr == nil && result != nil && !result.Acquired {
+			errorRate, ttft, _ := s.stats.snapshot(accountID)
+			slog.Info("sticky_escape_triggered",
+				"account_id", accountID,
+				"reason", "concurrency_full",
+				"error_rate", errorRate,
+				"ttft", ttft,
+			)
+			return nil, true, nil
+		}
+		// 粘性账号满载时回退到负载调度，避免把请求继续排在已满账号上。
+		return nil, false, nil
+	}
 	return nil, false, nil
 }
 
@@ -607,17 +630,23 @@ func (h *openAIAccountCandidateHeap) Pop() any {
 }
 
 func isOpenAIAccountCandidateBetter(left openAIAccountCandidateScore, right openAIAccountCandidateScore) bool {
-	if left.score != right.score {
-		return left.score > right.score
-	}
 	if left.account.Priority != right.account.Priority {
 		return left.account.Priority < right.account.Priority
+	}
+	if (left.account.LastUsedAt == nil) != (right.account.LastUsedAt == nil) {
+		return left.account.LastUsedAt == nil
 	}
 	if left.loadInfo.LoadRate != right.loadInfo.LoadRate {
 		return left.loadInfo.LoadRate < right.loadInfo.LoadRate
 	}
+	if left.account.LastUsedAt != nil && right.account.LastUsedAt != nil && !left.account.LastUsedAt.Equal(*right.account.LastUsedAt) {
+		return left.account.LastUsedAt.Before(*right.account.LastUsedAt)
+	}
 	if left.loadInfo.WaitingCount != right.loadInfo.WaitingCount {
 		return left.loadInfo.WaitingCount < right.loadInfo.WaitingCount
+	}
+	if left.score != right.score {
+		return left.score > right.score
 	}
 	return left.account.ID < right.account.ID
 }
@@ -765,6 +794,33 @@ func buildOpenAIWeightedSelectionOrder(
 		weights = append(weights[:selectedIdx], weights[selectedIdx+1:]...)
 	}
 	return order
+}
+
+// buildOpenAIHardTierSelectionOrder 保持优先级、未使用状态和负载率的硬顺序，仅在完全同层候选间加权打散。
+func buildOpenAIHardTierSelectionOrder(
+	ranked []openAIAccountCandidateScore,
+	req OpenAIAccountScheduleRequest,
+) []openAIAccountCandidateScore {
+	ordered := make([]openAIAccountCandidateScore, 0, len(ranked))
+	for start := 0; start < len(ranked); {
+		end := start + 1
+		for end < len(ranked) && sameOpenAIHardSchedulingTier(ranked[start], ranked[end]) {
+			end++
+		}
+		ordered = append(ordered, buildOpenAIWeightedSelectionOrder(ranked[start:end], req)...)
+		start = end
+	}
+	return ordered
+}
+
+// sameOpenAIHardSchedulingTier 判断两个候选是否属于同一硬调度层。
+func sameOpenAIHardSchedulingTier(left openAIAccountCandidateScore, right openAIAccountCandidateScore) bool {
+	if left.account == nil || right.account == nil || left.loadInfo == nil || right.loadInfo == nil {
+		return false
+	}
+	return left.account.Priority == right.account.Priority &&
+		(left.account.LastUsedAt == nil) == (right.account.LastUsedAt == nil) &&
+		left.loadInfo.LoadRate == right.loadInfo.LoadRate
 }
 
 func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
@@ -967,7 +1023,7 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 	plan openAIAccountLoadPlan,
 ) []openAIAccountCandidateScore {
 	buildSelectionOrder := func(pool []openAIAccountCandidateScore) []openAIAccountCandidateScore {
-		if len(pool) == 0 || plan.topK <= 0 {
+		if len(pool) == 0 {
 			return nil
 		}
 		groupTopK := plan.topK
@@ -994,7 +1050,7 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 			}
 		}
 		if len(primary) == 0 {
-			primary = buildOpenAIWeightedSelectionOrder(ranked, req)
+			primary = buildOpenAIHardTierSelectionOrder(ranked, req)
 		}
 		if !plan.includeOverflowFallback || groupTopK >= len(pool) {
 			return primary
@@ -1510,28 +1566,6 @@ func (s *defaultOpenAIAccountScheduler) trySelectByLoadBalancePool(
 		return attempt
 	}
 
-	// 首轮 TopK 没有抢到槽位时，暂不立即为 TopK 内账号生成等待计划。
-	// 先扩展一次排序并探测 TopK 外账号，确保一个满载账号不会阻断同组其他账号。
-	tryOverflow := func(basePlan openAIAccountLoadPlan) (*AccountSelectionResult, bool, error) {
-		expandedPlan := basePlan
-		expandedPlan.includeOverflowFallback = true
-		expandedOrder := s.buildOpenAISelectionOrder(req, expandedPlan)
-		overflowOrder := openAISelectionOrderOverflow(basePlan.selectionOrder, expandedOrder)
-		if len(overflowOrder) == 0 {
-			return nil, false, nil
-		}
-		if budget != nil {
-			budget.enableLimit()
-		}
-		result, compactBlocked, err := s.tryAcquireOpenAISelectionOrderWithBudget(ctx, req, overflowOrder, budget)
-		attempt.selectionOrder = append(append([]openAIAccountCandidateScore(nil), basePlan.selectionOrder...), overflowOrder...)
-		attempt.candidateCount = basePlan.candidateCount
-		attempt.topK = basePlan.topK
-		attempt.loadSkew = basePlan.loadSkew
-		attempt.compactBlocked = attempt.compactBlocked || compactBlocked
-		return result, compactBlocked, err
-	}
-
 	lastPlan := plan
 	if s.service.concurrencyService != nil && !budget.acquireExhausted() {
 		loadReq := buildOpenAIAccountLoadRequest(filtered)
@@ -1563,8 +1597,28 @@ func (s *defaultOpenAIAccountScheduler) trySelectByLoadBalancePool(
 			}
 		}
 	}
+
+	// 首轮 TopK 没有抢到槽位时，暂不立即为 TopK 内账号生成等待计划。
+	// 先扩展一次排序并探测 TopK 外账号，确保一个满载账号不会阻断同组其他账号。
+	tryOverflow := func(basePlan openAIAccountLoadPlan) (*AccountSelectionResult, error) {
+		expandedPlan := basePlan
+		expandedPlan.includeOverflowFallback = true
+		expandedOrder := s.buildOpenAISelectionOrder(req, expandedPlan)
+		overflowOrder := openAISelectionOrderOverflow(basePlan.selectionOrder, expandedOrder)
+		if len(overflowOrder) == 0 {
+			return nil, nil
+		}
+		budget.enableLimit()
+		result, compactBlocked, err := s.tryAcquireOpenAISelectionOrderWithBudget(ctx, req, overflowOrder, budget)
+		attempt.selectionOrder = append(append([]openAIAccountCandidateScore(nil), basePlan.selectionOrder...), overflowOrder...)
+		attempt.candidateCount = basePlan.candidateCount
+		attempt.topK = basePlan.topK
+		attempt.loadSkew = basePlan.loadSkew
+		attempt.compactBlocked = attempt.compactBlocked || compactBlocked
+		return result, err
+	}
 	if !budget.acquireExhausted() {
-		if overflowResult, _, overflowErr := tryOverflow(lastPlan); overflowErr != nil {
+		if overflowResult, overflowErr := tryOverflow(lastPlan); overflowErr != nil {
 			attempt.err = overflowErr
 			return attempt
 		} else if overflowResult != nil {

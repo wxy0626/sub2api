@@ -48,7 +48,7 @@
         class="invisible absolute left-0 top-full z-[100] mt-1.5 min-w-[200px] max-w-[300px] rounded-lg bg-gray-800 px-3 py-2 text-xs text-white opacity-0 shadow-xl transition-all duration-200 group-hover/error:visible group-hover/error:opacity-100 dark:bg-gray-900"
       >
         <div class="whitespace-pre-wrap break-words leading-relaxed text-gray-300">
-          {{ account.error_message }}
+          {{ displayErrorMessage }}
         </div>
         <!-- 上方小三角 -->
         <div
@@ -56,6 +56,18 @@
         ></div>
       </div>
     </div>
+
+    <button
+      type="button"
+      class="inline-flex h-6 w-6 flex-shrink-0 items-center justify-center rounded text-blue-600 transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-blue-400 dark:hover:bg-blue-900/30"
+      :disabled="testing"
+      :aria-label="t('admin.accounts.runTestNow')"
+      :title="t('admin.accounts.runTestNow')"
+      data-testid="account-status-quick-test"
+      @click="emit('quick-test', account)"
+    >
+      <Icon name="refresh" size="xs" :class="{ 'animate-spin': testing }" />
+    </button>
 
     <!-- Rate Limit Indicator (429) -->
     <div v-if="isRateLimited" class="group relative">
@@ -158,6 +170,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
+import { normalizeDisplayErrorMessage } from '@/utils/errorMessage'
 import type { Account } from '@/types'
 import { formatCountdown, formatDateTime, formatDateTimeToMinute, formatCountdownWithSuffix, formatTime } from '@/utils/format'
 
@@ -165,10 +178,13 @@ const { t } = useI18n()
 
 const props = defineProps<{
   account: Account
+  /** 当前账号是否正在执行连接检测。 */
+  testing?: boolean
 }>()
 
 const emit = defineEmits<{
   (e: 'show-temp-unsched', account: Account): void
+  (e: 'quick-test', account: Account): void
 }>()
 
 // Computed: is rate limited (429)
@@ -275,6 +291,11 @@ const isTempUnschedulable = computed(() => {
 // Computed: has error status
 const hasError = computed(() => {
   return props.account.status === 'error'
+})
+
+// displayErrorMessage 将账号错误转换为中文说明并保留管理员后端返回的技术详情。
+const displayErrorMessage = computed(() => {
+  return normalizeDisplayErrorMessage(props.account.error_message, t('admin.accounts.testFailed'))
 })
 
 const isQuotaExceeded = computed(() => {

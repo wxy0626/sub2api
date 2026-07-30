@@ -87,6 +87,7 @@ type schedulerTestConcurrencyCache struct {
 	loadBatchErr    error
 	loadMap         map[int64]*AccountLoadInfo
 	acquireResults  map[int64]bool
+	acquireErrors   map[int64]error // 按账号注入的槽位获取错误。
 	waitCounts      map[int64]int
 	skipDefaultLoad bool
 	acquiredIDs     *[]int64
@@ -96,6 +97,9 @@ type schedulerTestConcurrencyCache struct {
 func (c schedulerTestConcurrencyCache) AcquireAccountSlot(ctx context.Context, accountID int64, maxConcurrency int, requestID string) (bool, error) {
 	if c.acquiredIDs != nil {
 		*c.acquiredIDs = append(*c.acquiredIDs, accountID)
+	}
+	if err, ok := c.acquireErrors[accountID]; ok {
+		return false, err
 	}
 	if c.acquireResults != nil {
 		if result, ok := c.acquireResults[accountID]; ok {
@@ -2996,24 +3000,8 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_FullTopKFallsBackToOver
 	ctx := context.Background()
 	groupID := int64(12)
 	accounts := []Account{
-		{
-			ID:          3011,
-			Platform:    PlatformOpenAI,
-			Type:        AccountTypeAPIKey,
-			Status:      StatusActive,
-			Schedulable: true,
-			Concurrency: 1,
-			Priority:    0,
-		},
-		{
-			ID:          3012,
-			Platform:    PlatformOpenAI,
-			Type:        AccountTypeAPIKey,
-			Status:      StatusActive,
-			Schedulable: true,
-			Concurrency: 1,
-			Priority:    10,
-		},
+		{ID: 3011, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 0, GroupIDs: []int64{groupID}},
+		{ID: 3012, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 10, GroupIDs: []int64{groupID}},
 	}
 	cfg := &config.Config{}
 	cfg.Gateway.OpenAIWS.LBTopK = 1
@@ -3034,9 +3022,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_FullTopKFallsBackToOver
 		concurrencyService: NewConcurrencyService(loadCache),
 	}
 
-	selection, decision, err := svc.SelectAccountWithScheduler(
-		ctx, &groupID, "", "", "gpt-5.1", nil, OpenAIUpstreamTransportAny, false,
-	)
+	selection, decision, err := svc.SelectAccountWithScheduler(ctx, &groupID, "", "", "gpt-5.1", nil, OpenAIUpstreamTransportAny, false)
 	require.NoError(t, err)
 	require.NotNil(t, selection)
 	require.NotNil(t, selection.Account)
@@ -3044,9 +3030,34 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_FullTopKFallsBackToOver
 	require.Equal(t, int64(3012), selection.Account.ID)
 	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
 	require.Equal(t, 1, decision.TopK)
+	t.Logf("TopK 内账号 3011 满载，已切换到 TopK 外账号 %d", selection.Account.ID)
 	if selection.ReleaseFunc != nil {
 		selection.ReleaseFunc()
 	}
+}
+
+// 并发存储异常必须直接透传，不能伪装成账号满载并生成等待计划。
+func TestOpenAIGatewayService_SelectAccountWithScheduler_并发存储错误直接返回(t *testing.T) {
+	ctx := context.Background()
+	groupID := int64(13)
+	account := Account{ID: 3021, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, GroupIDs: []int64{groupID}}
+	// expectedErr 用于确认并发存储错误未被调度器转换。
+	expectedErr := errors.New("concurrency storage unavailable")
+	concurrencyCache := schedulerTestConcurrencyCache{
+		loadMap:       map[int64]*AccountLoadInfo{account.ID: {AccountID: account.ID, LoadRate: 0}},
+		acquireErrors: map[int64]error{account.ID: expectedErr},
+	}
+	svc := &OpenAIGatewayService{
+		accountRepo:        schedulerTestOpenAIAccountRepo{accounts: []Account{account}},
+		cache:              &schedulerTestGatewayCache{},
+		cfg:                &config.Config{},
+		rateLimitService:   newOpenAIAdvancedSchedulerRateLimitService("true"),
+		concurrencyService: NewConcurrencyService(concurrencyCache),
+	}
+
+	selection, _, err := svc.SelectAccountWithScheduler(ctx, &groupID, "", "", "gpt-5.1", nil, OpenAIUpstreamTransportAny, false)
+	require.ErrorIs(t, err, expectedErr)
+	require.Nil(t, selection)
 }
 
 // Regression: TopK initial filter must drop quota-auto-paused accounts. Otherwise
@@ -3247,15 +3258,28 @@ func TestSelectTopKOpenAICandidates(t *testing.T) {
 
 	top2 := selectTopKOpenAICandidates(candidates, 2)
 	require.Len(t, top2, 2)
-	require.Equal(t, int64(13), top2[0].account.ID)
-	require.Equal(t, int64(11), top2[1].account.ID)
+	require.Equal(t, int64(14), top2[0].account.ID)
+	require.Equal(t, int64(12), top2[1].account.ID)
 
 	topAll := selectTopKOpenAICandidates(candidates, 8)
 	require.Len(t, topAll, len(candidates))
-	require.Equal(t, int64(13), topAll[0].account.ID)
-	require.Equal(t, int64(11), topAll[1].account.ID)
-	require.Equal(t, int64(12), topAll[2].account.ID)
-	require.Equal(t, int64(14), topAll[3].account.ID)
+	require.Equal(t, int64(14), topAll[0].account.ID)
+	require.Equal(t, int64(12), topAll[1].account.ID)
+	require.Equal(t, int64(13), topAll[2].account.ID)
+	require.Equal(t, int64(11), topAll[3].account.ID)
+}
+
+func TestSelectTopKOpenAICandidates_UsesStrictPriorityThenNeverUsedThenLoad(t *testing.T) {
+	lastUsed := time.Now().Add(-time.Hour)
+	candidates := []openAIAccountCandidateScore{
+		{account: &Account{ID: 1, Priority: 1, LastUsedAt: &lastUsed}, loadInfo: &AccountLoadInfo{AccountID: 1, LoadRate: 5}, score: 1},
+		{account: &Account{ID: 2, Priority: 1}, loadInfo: &AccountLoadInfo{AccountID: 2, LoadRate: 80}, score: 0},
+		{account: &Account{ID: 3, Priority: 2}, loadInfo: &AccountLoadInfo{AccountID: 3, LoadRate: 0}, score: 999},
+	}
+
+	ordered := selectTopKOpenAICandidates(candidates, len(candidates))
+	require.Equal(t, []int64{2, 1, 3}, []int64{ordered[0].account.ID, ordered[1].account.ID, ordered[2].account.ID})
+	t.Logf("高级调度顺序：未使用的 1 级账号 %d，已使用的 1 级账号 %d，2 级账号 %d", ordered[0].account.ID, ordered[1].account.ID, ordered[2].account.ID)
 }
 
 func TestBuildOpenAIWeightedSelectionOrder_DeterministicBySessionSeed(t *testing.T) {

@@ -18,8 +18,7 @@ ARG GOSUMDB=sum.golang.google.cn
 FROM ${NODE_IMAGE} AS frontend-builder
 
 WORKDIR /app/frontend
-# NODE_OPTIONS 为 Vue 类型检查与生产打包预留足够的 Node.js 堆内存。
-ENV NODE_OPTIONS=--max-old-space-size=4096
+ENV NODE_OPTIONS=--max-old-space-size=1536
 
 # Install pnpm. Keep this pinned to the lockfile-compatible major version so
 # Docker builds remain reproducible when pnpm changes config validation rules.
@@ -87,7 +86,7 @@ FROM ${ALPINE_IMAGE}
 # Labels
 LABEL maintainer="Wei-Shaw <github.com/Wei-Shaw>"
 LABEL description="Sub2API - AI API Gateway Platform"
-LABEL org.opencontainers.image.source="https://github.com/Wei-Shaw/sub2api"
+LABEL org.opencontainers.image.source="https://github.com/wxy0626/sub2api"
 
 # Install runtime dependencies
 RUN apk add --no-cache \

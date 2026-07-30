@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -37,8 +38,10 @@ type stubAdminService struct {
 	getAccountResult                    *service.Account
 	updateAccountCalls                  int
 	updateAccountExtraCalls             int
-	checkMixedErr                       error
-	lastMixedCheck                      struct {
+	// lastAccountExtraUpdate 记录专用 Extra 更新，用于断言键级合并请求。
+	lastAccountExtraUpdate map[string]any
+	checkMixedErr          error
+	lastMixedCheck         struct {
 		accountID int64
 		platform  string
 		groupIDs  []int64
@@ -50,6 +53,7 @@ type stubAdminService struct {
 		search      string
 		groupID     int64
 		privacyMode string
+		proxyID     int64
 		sortBy      string
 		sortOrder   string
 		calls       int
@@ -398,13 +402,14 @@ func (s *stubAdminService) BatchSetGroupRPMOverrides(_ context.Context, _ int64,
 	return nil
 }
 
-func (s *stubAdminService) ListAccounts(ctx context.Context, page, pageSize int, platform, accountType, status, search string, groupID int64, privacyMode string, sortBy, sortOrder string) ([]service.Account, int64, error) {
+func (s *stubAdminService) ListAccounts(ctx context.Context, page, pageSize int, platform, accountType, status, search string, groupID int64, privacyMode string, proxyID int64, sortBy, sortOrder string) ([]service.Account, int64, error) {
 	s.lastListAccounts.platform = platform
 	s.lastListAccounts.accountType = accountType
 	s.lastListAccounts.status = status
 	s.lastListAccounts.search = search
 	s.lastListAccounts.groupID = groupID
 	s.lastListAccounts.privacyMode = privacyMode
+	s.lastListAccounts.proxyID = proxyID
 	s.lastListAccounts.sortBy = sortBy
 	s.lastListAccounts.sortOrder = sortOrder
 	s.lastListAccounts.calls++
@@ -427,7 +432,7 @@ func (s *stubAdminService) ListAccounts(ctx context.Context, page, pageSize int,
 	return accounts[start:end], int64(total), nil
 }
 
-func (s *stubAdminService) ListAccountsForSchedulerScoreFilter(_ context.Context, platform, accountType, status, search string, groupID int64, privacyMode string) ([]service.Account, error) {
+func (s *stubAdminService) ListAccountsForSchedulerScoreFilter(_ context.Context, platform, accountType, status, search string, groupID int64, privacyMode string, proxyID int64) ([]service.Account, error) {
 	s.schedulerScoreFilterCalls++
 	if s.accountSchedulerScoreFilterAccounts != nil {
 		return s.accountSchedulerScoreFilterAccounts, nil
@@ -510,6 +515,15 @@ func (s *stubAdminService) UpdateAccount(ctx context.Context, id int64, input *s
 
 func (s *stubAdminService) UpdateAccountExtra(ctx context.Context, id int64, updates map[string]any) error {
 	s.updateAccountExtraCalls++
+	s.lastAccountExtraUpdate = maps.Clone(updates)
+	if s.getAccountResult != nil {
+		if s.getAccountResult.Extra == nil {
+			s.getAccountResult.Extra = map[string]any{}
+		}
+		for key, value := range updates {
+			s.getAccountResult.Extra[key] = value
+		}
+	}
 	return nil
 }
 

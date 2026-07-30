@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,9 +32,11 @@ type updateServiceGitHubClientStub struct {
 	release        *GitHubRelease
 	recentReleases []*GitHubRelease
 	recentErr      error
+	latestCalls    int
 }
 
 func (s *updateServiceGitHubClientStub) FetchLatestRelease(context.Context, string) (*GitHubRelease, error) {
+	s.latestCalls++
 	return s.release, nil
 }
 
@@ -67,6 +70,65 @@ func TestUpdateServicePerformUpdateNoUpdateReturnsSentinel(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, errors.Is(err, ErrNoUpdateAvailable))
 	require.ErrorIs(t, err, ErrNoUpdateAvailable)
+}
+
+// TestUpdateServiceCheckUpdateComparesReleaseBaseVersion 验证更新接口只比较发布基础语义版本。
+func TestUpdateServiceCheckUpdateComparesReleaseBaseVersion(t *testing.T) {
+	// 版本比较测试用例覆盖 v 前缀、开发构建后缀，以及上游版本的高低关系。
+	versionComparisonCases := []struct {
+		name      string
+		current   string
+		latest    string
+		hasUpdate bool
+	}{
+		{
+			name:      "开发构建与相同发布版本相等",
+			current:   "0.1.162-dev.26.g2063c2202",
+			latest:    "v0.1.162",
+			hasUpdate: false,
+		},
+		{
+			name:      "带 v 前缀的当前版本与相同发布版本相等",
+			current:   "v0.1.162-dev.26.g2063c2202",
+			latest:    "0.1.162",
+			hasUpdate: false,
+		},
+		{
+			name:      "本地标签构建与相同发布版本相等",
+			current:   "v0.1.168-local-1",
+			latest:    "v0.1.168",
+			hasUpdate: false,
+		},
+		{
+			name:      "上游基础版本更高时提示更新",
+			current:   "0.1.162-dev.26.g2063c2202",
+			latest:    "v0.1.163",
+			hasUpdate: true,
+		},
+		{
+			name:      "上游基础版本更低时不提示更新",
+			current:   "0.1.162-dev.26.g2063c2202",
+			latest:    "v0.1.161",
+			hasUpdate: false,
+		},
+	}
+
+	for _, testCase := range versionComparisonCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			// 更新服务桩模拟 GitHub Release，确保断言覆盖 API 返回字段的来源。
+			githubClient := &updateServiceGitHubClientStub{
+				release: &GitHubRelease{TagName: testCase.latest},
+			}
+			svc := NewUpdateService(&updateServiceCacheStub{}, githubClient, testCase.current, "source")
+
+			info, err := svc.CheckUpdate(context.Background(), true)
+
+			require.NoError(t, err)
+			require.Equal(t, 1, githubClient.latestCalls, "检查更新仍应调用 GitHub Release 客户端")
+			require.Equal(t, strings.TrimPrefix(testCase.latest, "v"), info.LatestVersion)
+			require.Equal(t, testCase.hasUpdate, info.HasUpdate)
+		})
+	}
 }
 
 func newRollbackTestService(current string, releases []*GitHubRelease) *UpdateService {

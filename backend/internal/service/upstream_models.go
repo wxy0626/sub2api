@@ -16,6 +16,9 @@ import (
 
 const upstreamModelsBodyLimit int64 = 8 << 20
 
+// 同步白名单允许的模型前缀，仅保留 GPT-5.5、GPT-5.6 和 GPT Image 系列。
+var syncedModelAllowedPrefixes = []string{"gpt-5.5", "gpt-5.6", "gpt-image"}
+
 // UpstreamModelSyncErrorKind classifies model sync failures for safe HTTP mapping.
 type UpstreamModelSyncErrorKind string
 
@@ -82,7 +85,11 @@ func (s *AccountTestService) FetchUpstreamSupportedModels(ctx context.Context, a
 	}
 
 	if account.Platform == PlatformAntigravity && account.Type != AccountTypeAPIKey {
-		return s.fetchAntigravityOAuthUpstreamModels(ctx, account)
+		models, err := s.fetchAntigravityOAuthUpstreamModels(ctx, account)
+		if err != nil {
+			return nil, err
+		}
+		return filterSyncedModelIDs(models), nil
 	}
 
 	if s.httpUpstream == nil {
@@ -128,7 +135,12 @@ func (s *AccountTestService) FetchUpstreamSupportedModels(ctx context.Context, a
 		return nil, newUpstreamModelSyncUpstreamError("Upstream returned no supported models", nil)
 	}
 
-	return models, nil
+	if account.IsOpenAI() {
+		return filterSyncedModelIDs(models), nil
+	}
+
+	// Grok、Gemini 和 Anthropic 的模型命名不遵循 OpenAI GPT 白名单，保留其上游结果。
+	return dedupeAndSortModelIDs(models), nil
 }
 
 func (s *AccountTestService) buildUpstreamModelsRequest(ctx context.Context, account *Account) (*http.Request, error) {
@@ -607,4 +619,23 @@ func dedupeAndSortModelIDs(models []string) []string {
 	}
 	sort.Strings(result)
 	return result
+}
+
+// filterSyncedModelIDs 清理上游模型列表，确保同步接口不会返回白名单策略之外的模型。
+func filterSyncedModelIDs(models []string) []string {
+	// filteredModels 是通过同步白名单策略的上游模型标识。
+	filteredModels := make([]string, 0, len(models))
+	for _, model := range models {
+		// normalizedModel 保留上游原始大小写，但移除意外空白。
+		normalizedModel := strings.TrimSpace(model)
+		// lowercaseModel 用于不区分大小写地匹配受支持系列。
+		lowercaseModel := strings.ToLower(normalizedModel)
+		for _, prefix := range syncedModelAllowedPrefixes {
+			if lowercaseModel == prefix || strings.HasPrefix(lowercaseModel, prefix+"-") {
+				filteredModels = append(filteredModels, normalizedModel)
+				break
+			}
+		}
+	}
+	return dedupeAndSortModelIDs(filteredModels)
 }

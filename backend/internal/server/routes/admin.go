@@ -347,6 +347,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 	accounts := admin.Group("/accounts")
 	{
 		accounts.GET("", h.Admin.Account.List)
+		accounts.GET("/filter-options", h.Admin.Account.ListFilterOptions)
 		accounts.GET("/upstream-billing-probe/settings", h.Admin.Account.GetUpstreamBillingProbeSettings)
 		accounts.PUT("/upstream-billing-probe/settings", h.Admin.Account.UpdateUpstreamBillingProbeSettings)
 		accounts.POST("/upstream-billing-probe/batch", h.Admin.Account.ProbeUpstreamBillingBatch)
@@ -360,6 +361,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.POST("/sync/crs", h.Admin.Account.SyncFromCRS)
 		accounts.POST("/sync/crs/preview", h.Admin.Account.PreviewFromCRS)
 		accounts.PUT("/:id", h.Admin.Account.Update)
+		accounts.PUT("/:id/test-mode", h.Admin.Account.UpdateTestMode)
 		accounts.PUT("/:id/upstream-billing-probe", h.Admin.Account.SetUpstreamBillingProbeEnabled)
 		accounts.POST("/:id/upstream-billing-probe", h.Admin.Account.ProbeUpstreamBilling)
 		accounts.GET("/:id/ollama-cloud-usage", h.Admin.Account.GetOllamaCloudUsage)
@@ -626,7 +628,8 @@ func registerSystemRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	{
 		system.GET("/version", h.Admin.System.GetVersion)
 		system.GET("/check-updates", h.Admin.System.CheckUpdates)
-		system.GET("/rollback-versions", h.Admin.System.GetRollbackVersions)
+		system.GET("/deployment-versions", h.Admin.System.GetPersonalDeploymentVersions)
+		system.POST("/deployment/update", h.Admin.System.DeployLatestPersonalVersion)
 		system.POST("/update", h.Admin.System.PerformUpdate)
 		system.POST("/rollback", h.Admin.System.Rollback)
 		system.POST("/restart", h.Admin.System.RestartService)

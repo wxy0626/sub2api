@@ -92,10 +92,10 @@ func (m *mockAccountRepoForPlatform) Delete(ctx context.Context, id int64) error
 func (m *mockAccountRepoForPlatform) List(ctx context.Context, params pagination.PaginationParams) ([]Account, *pagination.PaginationResult, error) {
 	return nil, nil, nil
 }
-func (m *mockAccountRepoForPlatform) ListWithFilters(ctx context.Context, params pagination.PaginationParams, platform, accountType, status, search string, groupID int64, privacyMode string) ([]Account, *pagination.PaginationResult, error) {
+func (m *mockAccountRepoForPlatform) ListWithFilters(ctx context.Context, params pagination.PaginationParams, platform, accountType, status, search string, groupID int64, privacyMode string, proxyID int64) ([]Account, *pagination.PaginationResult, error) {
 	return nil, nil, nil
 }
-func (m *mockAccountRepoForPlatform) ListAllWithFilters(ctx context.Context, platform, accountType, status, search string, groupID int64, privacyMode string) ([]Account, error) {
+func (m *mockAccountRepoForPlatform) ListAllWithFilters(ctx context.Context, platform, accountType, status, search string, groupID int64, privacyMode string, proxyID int64) ([]Account, error) {
 	return nil, nil
 }
 func (m *mockAccountRepoForPlatform) ListByGroup(ctx context.Context, groupID int64) ([]Account, error) {
@@ -2024,6 +2024,7 @@ type mockConcurrencyCache struct {
 	acquireAccountCalls int
 	loadBatchCalls      int
 	acquireResults      map[int64]bool
+	acquireErrors       map[int64]error // 按账号注入的槽位获取错误。
 	loadBatchErr        error
 	loadMap             map[int64]*AccountLoadInfo
 	waitCounts          map[int64]int
@@ -2032,6 +2033,9 @@ type mockConcurrencyCache struct {
 
 func (m *mockConcurrencyCache) AcquireAccountSlot(ctx context.Context, accountID int64, maxConcurrency int, requestID string) (bool, error) {
 	m.acquireAccountCalls++
+	if err, ok := m.acquireErrors[accountID]; ok {
+		return false, err
+	}
 	if m.acquireResults != nil {
 		if result, ok := m.acquireResults[accountID]; ok {
 			return result, nil
@@ -2505,7 +2509,7 @@ func TestGatewayService_SelectAccountWithLoadAwareness(t *testing.T) {
 		require.Equal(t, int64(2), result.Account.ID, "应跳过过载账号，选择可用账号")
 	})
 
-	t.Run("单账号槽位满-返回等待计划", func(t *testing.T) {
+	t.Run("粘性账号槽位满-所有账号满载后等待", func(t *testing.T) {
 		repo := &mockAccountRepoForPlatform{
 			accounts: []Account{
 				{ID: 1, Platform: PlatformAnthropic, Priority: 1, Status: StatusActive, Schedulable: true, Concurrency: 5},
@@ -2541,7 +2545,7 @@ func TestGatewayService_SelectAccountWithLoadAwareness(t *testing.T) {
 		require.NotNil(t, result)
 		require.NotNil(t, result.WaitPlan)
 		require.Equal(t, int64(1), result.Account.ID)
-		require.Greater(t, concurrencyCache.loadBatchCalls, 0)
+		require.Equal(t, 1, concurrencyCache.loadBatchCalls, "满载后需要进入负载调度确认没有其他可用账号")
 	})
 
 	t.Run("负载批量查询失败-降级旧顺序选择", func(t *testing.T) {
@@ -2580,7 +2584,7 @@ func TestGatewayService_SelectAccountWithLoadAwareness(t *testing.T) {
 		require.Equal(t, int64(2), cache.sessionBindings["legacy"])
 	})
 
-	t.Run("模型路由-粘性账号满时切换可用账号", func(t *testing.T) {
+	t.Run("模型路由-粘性账号满载切换可用账号", func(t *testing.T) {
 		groupID := int64(20)
 		sessionHash := "route-sticky"
 
@@ -2634,11 +2638,10 @@ func TestGatewayService_SelectAccountWithLoadAwareness(t *testing.T) {
 		result, err := svc.SelectAccountWithLoadAwareness(ctx, &groupID, sessionHash, "claude-3-5-sonnet-20241022", nil, "", int64(0))
 		require.NoError(t, err)
 		require.NotNil(t, result)
-		require.Nil(t, result.WaitPlan)
 		require.True(t, result.Acquired)
-		require.Equal(t, int64(2), result.Account.ID)
+		require.Nil(t, result.WaitPlan)
+		require.Equal(t, int64(2), result.Account.ID, "路由内粘性账号满载时应切换到其他可用账号")
 		require.Equal(t, int64(2), cache.sessionBindings[sessionHash])
-		t.Logf("模型路由中的满载粘性账号 1 已切换到可用账号 %d", result.Account.ID)
 		if result.ReleaseFunc != nil {
 			result.ReleaseFunc()
 		}
@@ -2865,7 +2868,8 @@ func TestGatewayService_SelectAccountWithLoadAwareness(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.NotNil(t, result.WaitPlan)
-		require.Equal(t, int64(1), result.Account.ID)
+		require.Contains(t, []int64{1, 2}, result.Account.ID)
+		require.Equal(t, result.Account.ID, result.WaitPlan.AccountID)
 	})
 
 	t.Run("模型路由-路由账号全满-回退普通选择", func(t *testing.T) {
@@ -3216,6 +3220,93 @@ func TestGatewayService_SelectAccountWithLoadAwareness(t *testing.T) {
 		require.NotNil(t, result)
 		require.NotNil(t, result.WaitPlan)
 		require.Equal(t, int64(1), result.Account.ID)
+	})
+
+	t.Run("分层调度-同优先级未使用账号优先于更低负载的已使用账号", func(t *testing.T) {
+		lastUsed := time.Now().Add(-time.Hour)
+		repo := &mockAccountRepoForPlatform{
+			accounts: []Account{
+				{ID: 1, Platform: PlatformAnthropic, Priority: 1, Status: StatusActive, Schedulable: true, Concurrency: 5, LastUsedAt: &lastUsed},
+				{ID: 2, Platform: PlatformAnthropic, Priority: 1, Status: StatusActive, Schedulable: true, Concurrency: 5},
+			},
+			accountsByID: map[int64]*Account{},
+		}
+		for i := range repo.accounts {
+			repo.accountsByID[repo.accounts[i].ID] = &repo.accounts[i]
+		}
+		concurrencyCache := &mockConcurrencyCache{
+			loadMap: map[int64]*AccountLoadInfo{
+				1: {AccountID: 1, LoadRate: 5},
+				2: {AccountID: 2, LoadRate: 80},
+			},
+		}
+		cfg := testConfig()
+		cfg.Gateway.Scheduling.LoadBatchEnabled = true
+		svc := &GatewayService{accountRepo: repo, cache: &mockGatewayCacheForPlatform{}, cfg: cfg, concurrencyService: NewConcurrencyService(concurrencyCache)}
+
+		result, err := svc.SelectAccountWithLoadAwareness(ctx, nil, "", "claude-3-5-sonnet-20241022", nil, "", int64(0))
+		require.NoError(t, err)
+		require.Equal(t, int64(2), result.Account.ID)
+		t.Logf("同优先级未使用账号 %d 优先于低负载已使用账号", result.Account.ID)
+	})
+
+	t.Run("分层调度-当前优先级全满后进入下一优先级", func(t *testing.T) {
+		repo := &mockAccountRepoForPlatform{
+			accounts: []Account{
+				{ID: 1, Platform: PlatformAnthropic, Priority: 1, Status: StatusActive, Schedulable: true, Concurrency: 5},
+				{ID: 2, Platform: PlatformAnthropic, Priority: 1, Status: StatusActive, Schedulable: true, Concurrency: 5},
+				{ID: 3, Platform: PlatformAnthropic, Priority: 2, Status: StatusActive, Schedulable: true, Concurrency: 5},
+			},
+			accountsByID: map[int64]*Account{},
+		}
+		for i := range repo.accounts {
+			repo.accountsByID[repo.accounts[i].ID] = &repo.accounts[i]
+		}
+		concurrencyCache := &mockConcurrencyCache{
+			loadMap: map[int64]*AccountLoadInfo{
+				1: {AccountID: 1, CurrentConcurrency: 5, LoadRate: 100},
+				2: {AccountID: 2, CurrentConcurrency: 5, LoadRate: 100},
+				3: {AccountID: 3, CurrentConcurrency: 1, LoadRate: 20},
+			},
+		}
+		cfg := testConfig()
+		cfg.Gateway.Scheduling.LoadBatchEnabled = true
+		svc := &GatewayService{accountRepo: repo, cache: &mockGatewayCacheForPlatform{}, cfg: cfg, concurrencyService: NewConcurrencyService(concurrencyCache)}
+
+		result, err := svc.SelectAccountWithLoadAwareness(ctx, nil, "", "claude-3-5-sonnet-20241022", nil, "", int64(0))
+		require.NoError(t, err)
+		require.Equal(t, int64(3), result.Account.ID)
+		t.Logf("优先级 1 全满后切换到优先级 2 账号 %d", result.Account.ID)
+	})
+
+	t.Run("并发存储错误直接返回", func(t *testing.T) {
+		repo := &mockAccountRepoForPlatform{
+			accounts: []Account{
+				{ID: 1, Platform: PlatformAnthropic, Priority: 1, Status: StatusActive, Schedulable: true, Concurrency: 5},
+			},
+			accountsByID: map[int64]*Account{},
+		}
+		for i := range repo.accounts {
+			repo.accountsByID[repo.accounts[i].ID] = &repo.accounts[i]
+		}
+		// expectedErr 用于确认并发存储错误未被网关转换。
+		expectedErr := errors.New("concurrency storage unavailable")
+		concurrencyCache := &mockConcurrencyCache{
+			loadMap:       map[int64]*AccountLoadInfo{1: {AccountID: 1, LoadRate: 0}},
+			acquireErrors: map[int64]error{1: expectedErr},
+		}
+		cfg := testConfig()
+		cfg.Gateway.Scheduling.LoadBatchEnabled = true
+		svc := &GatewayService{
+			accountRepo:        repo,
+			cache:              &mockGatewayCacheForPlatform{},
+			cfg:                cfg,
+			concurrencyService: NewConcurrencyService(concurrencyCache),
+		}
+
+		result, err := svc.SelectAccountWithLoadAwareness(ctx, nil, "", "claude-3-5-sonnet-20241022", nil, "", int64(0))
+		require.ErrorIs(t, err, expectedErr)
+		require.Nil(t, result)
 	})
 
 	t.Run("负载信息缺失-使用默认负载", func(t *testing.T) {

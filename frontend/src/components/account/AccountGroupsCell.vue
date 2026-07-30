@@ -23,7 +23,7 @@
       <span
         v-if="hiddenCount > 0"
         ref="moreButtonRef"
-        class="inline-flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-xs font-medium bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-300 dark:hover:bg-dark-500 transition-colors cursor-pointer whitespace-nowrap"
+        class="inline-flex cursor-pointer items-center gap-0.5 whitespace-nowrap rounded-md bg-gray-100 px-1.5 py-0.5 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-300 dark:hover:bg-dark-500"
       >
         <span>+{{ hiddenCount }}</span>
       </span>
@@ -43,7 +43,7 @@
         <div
           v-if="showPopover"
           ref="popoverRef"
-          class="fixed z-50 w-80 rounded-lg border border-gray-200 bg-white p-3 shadow-lg dark:border-dark-600 dark:bg-dark-800"
+          class="fixed z-50 w-[min(42rem,calc(100vw-2rem))] rounded-lg border border-gray-200 bg-white p-3 shadow-lg dark:border-dark-600 dark:bg-dark-800"
           :style="popoverStyle"
           @click.stop
         >
@@ -52,8 +52,10 @@
               {{ t('admin.accounts.groupCountTotal', { count: selectedGroupIDs.length }) }}
             </span>
             <button
-              @click="showPopover = false"
+              type="button"
+              aria-label="Close group selector"
               class="rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-dark-700 dark:hover:text-gray-300"
+              @click="showPopover = false"
             >
               <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -99,7 +101,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import GroupBadge from '@/components/common/GroupBadge.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
@@ -176,25 +178,29 @@ const saveGroups = () => {
   showPopover.value = false
 }
 
-// Popover 位置样式
+// Popover 位置样式：按加宽后的浮层和当前视口计算左右边界。
 const popoverStyle = computed(() => {
   const anchor = moreButtonRef.value || triggerRef.value
   if (!anchor) return {}
   const rect = anchor.getBoundingClientRect()
   const viewportHeight = window.innerHeight
   const viewportWidth = window.innerWidth
+  const popoverMaxWidth = 672
+  const viewportPadding = 8
+  const popoverWidth = Math.min(popoverMaxWidth, Math.max(0, viewportWidth - viewportPadding * 2))
+  const popoverHeight = 320
 
   let top = rect.bottom + 8
   let left = rect.left
 
-  // 如果下方空间不足，显示在上方
-  if (top + 280 > viewportHeight) {
-    top = Math.max(8, rect.top - 280)
+  // 如果下方空间不足，显示在上方。
+  if (top + popoverHeight > viewportHeight) {
+    top = Math.max(viewportPadding, rect.top - popoverHeight)
   }
 
-  // 如果右侧空间不足，向左偏移
-  if (left + 384 > viewportWidth) {
-    left = Math.max(8, viewportWidth - 392)
+  // 如果右侧空间不足，向左偏移并保留视口边距。
+  if (left + popoverWidth > viewportWidth - viewportPadding) {
+    left = Math.max(viewportPadding, viewportWidth - popoverWidth - viewportPadding)
   }
 
   return {

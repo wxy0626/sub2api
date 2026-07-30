@@ -100,12 +100,7 @@ func writeOpenAICompactSSEFailure(c *gin.Context, statusCode int, errorBody []by
 	if message == "" {
 		message = "Upstream compact request failed with HTTP " + strconv.Itoa(statusCode)
 	}
-	// 上下文超限保留标准错误码，其他 compact 错误继续使用通用错误码。
-	errType := strings.TrimSpace(gjson.GetBytes(errorBody, "error.code").String())
-	if errType != openAIContextWindowErrorCode {
-		errType = "upstream_error"
-	}
-	writeOpenAICompactSSEFailureMessage(c, statusCode, errType, message)
+	writeOpenAICompactSSEFailureMessage(c, statusCode, "upstream_error", message)
 }
 
 // writeOpenAICompactSSEFailureMessage 写出 response.failed 终止事件。Codex 对

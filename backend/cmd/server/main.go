@@ -20,7 +20,9 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/Wei-Shaw/sub2api/internal/setup"
+	"github.com/Wei-Shaw/sub2api/internal/util/logredact"
 	"github.com/Wei-Shaw/sub2api/internal/web"
 
 	"github.com/gin-gonic/gin"
@@ -53,6 +55,14 @@ func init() {
 // initLogger configures the default slog handler based on gin.Mode().
 // In non-release mode, Debug level logs are enabled.
 func main() {
+	// 自有镜像部署 helper 必须在加载配置和启动 HTTP 服务前执行，避免占用应用端口。
+	if len(os.Args) == 2 && os.Args[1] == "--personal-image-deploy-helper" {
+		if err := service.RunPersonalImageDeploymentHelper(context.Background()); err != nil {
+			log.Printf("自有 Git 镜像部署任务失败：%s", logredact.RedactText(err.Error(), "authorization", "cookie", "api_key", "apikey", "token", "secret", "password"))
+		}
+		return
+	}
+
 	logger.InitBootstrap()
 	defer logger.Sync()
 

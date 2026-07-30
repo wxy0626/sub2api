@@ -24,6 +24,7 @@ import (
 
 type queuedHTTPUpstream struct {
 	responses []*http.Response
+	errors    []error
 	requests  []*http.Request
 	tlsFlags  []bool
 }
@@ -35,6 +36,11 @@ func (u *queuedHTTPUpstream) Do(_ *http.Request, _ string, _ int64, _ int) (*htt
 func (u *queuedHTTPUpstream) DoWithTLS(req *http.Request, _ string, _ int64, _ int, profile *tlsfingerprint.Profile) (*http.Response, error) {
 	u.requests = append(u.requests, req)
 	u.tlsFlags = append(u.tlsFlags, profile != nil)
+	if len(u.errors) > 0 {
+		err := u.errors[0]
+		u.errors = u.errors[1:]
+		return nil, err
+	}
 	if len(u.responses) == 0 {
 		return nil, fmt.Errorf("no mocked response")
 	}
@@ -71,6 +77,8 @@ type openAIAccountTestRepo struct {
 	clearedErrorID     int64
 	setErrorID         int64
 	setErrorMsg        string
+	setSchedulableID   int64
+	setSchedulable     bool
 }
 
 func (r *openAIAccountTestRepo) UpdateExtra(_ context.Context, _ int64, updates map[string]any) error {
@@ -98,6 +106,13 @@ func (r *openAIAccountTestRepo) ClearError(_ context.Context, id int64) error {
 func (r *openAIAccountTestRepo) SetError(_ context.Context, id int64, errorMsg string) error {
 	r.setErrorID = id
 	r.setErrorMsg = errorMsg
+	return nil
+}
+
+// SetSchedulable 记录测试收尾时同步的调度开关，验证成功和失败都能即时更新。
+func (r *openAIAccountTestRepo) SetSchedulable(_ context.Context, id int64, schedulable bool) error {
+	r.setSchedulableID = id
+	r.setSchedulable = schedulable
 	return nil
 }
 
@@ -248,6 +263,37 @@ func TestAccountTestService_OpenAIStreamEOFBeforeCompletedFails(t *testing.T) {
 	require.NotContains(t, recorder.Body.String(), `"success":true`)
 }
 
+func TestAccountTestService_OpenAIOAuthRetriesEOFBeforeReceivingResponse(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+
+	resp := newJSONResponse(http.StatusOK, "")
+	resp.Body = io.NopCloser(strings.NewReader(`data: {"type":"response.completed"}
+
+`))
+	upstream := &queuedHTTPUpstream{
+		errors:    []error{io.EOF},
+		responses: []*http.Response{resp},
+	}
+	svc := &AccountTestService{httpUpstream: upstream}
+	account := &Account{
+		ID:          91,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Concurrency: 1,
+		Credentials: map[string]any{"access_token": "test-token"},
+	}
+
+	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4", "", "")
+	require.NoError(t, err)
+	require.Len(t, upstream.requests, 2)
+	retryBody, readErr := io.ReadAll(upstream.requests[1].Body)
+	require.NoError(t, readErr)
+	require.Equal(t, "gpt-5.4", gjson.GetBytes(retryBody, "model").String())
+	require.Contains(t, recorder.Body.String(), "正在自动重试一次")
+	require.Contains(t, recorder.Body.String(), `"success":true`)
+}
+
 func TestAccountTestService_OpenAI429PersistsSnapshotAndRateLimitState(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := newTestContext()
@@ -264,12 +310,10 @@ func TestAccountTestService_OpenAI429PersistsSnapshotAndRateLimitState(t *testin
 	upstream := &queuedHTTPUpstream{responses: []*http.Response{resp}}
 	svc := &AccountTestService{accountRepo: repo, httpUpstream: upstream}
 	account := &Account{
-		ID:       88,
-		Platform: PlatformOpenAI,
-		Type:     AccountTypeOAuth,
-		Status:   StatusError,
-		// 保留上游错误中断调度时的人工暂停状态，429 探测只恢复错误状态。
-		Schedulable: false,
+		ID:          88,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Status:      StatusError,
 		Concurrency: 1,
 		Credentials: map[string]any{"access_token": "test-token"},
 	}
@@ -284,7 +328,6 @@ func TestAccountTestService_OpenAI429PersistsSnapshotAndRateLimitState(t *testin
 	require.Equal(t, StatusActive, account.Status)
 	require.Empty(t, account.ErrorMessage)
 	require.NotNil(t, account.RateLimitResetAt)
-	require.False(t, account.Schedulable, "429 探测不能自动重新开启调度")
 }
 
 func TestAccountTestService_OpenAI429BodyOnlyPersistsRateLimitAndClearsStaleError(t *testing.T) {
@@ -427,12 +470,110 @@ func TestAccountTestService_OpenAI401SetsPermanentErrorOnly(t *testing.T) {
 	require.Nil(t, account.RateLimitResetAt)
 }
 
+// TestAccountTestService_OpenAI403MarksTestedAccountAsError 验证任意测试失败都会更新被测账号状态，批量测试可继续处理其他账号。
+func TestAccountTestService_OpenAI403MarksTestedAccountAsError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+
+	// 额度不足是当前批量测试中需要明确落为错误状态的上游失败场景。
+	account := &Account{
+		ID:          81,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Concurrency: 1,
+		Credentials: map[string]any{"access_token": "test-token"},
+	}
+	repo := &openAIAccountTestRepo{
+		mockAccountRepoForGemini: mockAccountRepoForGemini{
+			accountsByID: map[int64]*Account{account.ID: account},
+		},
+	}
+	upstream := &queuedHTTPUpstream{responses: []*http.Response{
+		newJSONResponse(http.StatusForbidden, `{"error":{"code":"INSUFFICIENT_BALANCE","message":"Insufficient account balance"}}`),
+	}}
+	svc := &AccountTestService{accountRepo: repo, httpUpstream: upstream}
+
+	err := svc.TestAccountConnection(ctx, account.ID, "gpt-5.4", "", AccountTestModeDefault)
+
+	require.Error(t, err)
+	require.Equal(t, account.ID, repo.setErrorID)
+	require.Contains(t, repo.setErrorMsg, "API returned 403")
+	require.Contains(t, repo.setErrorMsg, "INSUFFICIENT_BALANCE")
+	require.Zero(t, repo.setSchedulableID, "测试失败由 SetError 关闭调度，不应再尝试开启")
+	require.Contains(t, recorder.Body.String(), `"type":"error"`)
+}
+
+// TestAccountTestService_OpenAISuccessEnablesScheduling 验证测试成功会清除旧错误并重新参与调度。
+func TestAccountTestService_OpenAISuccessEnablesScheduling(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := newTestContext()
+
+	account := &Account{
+		ID:          83,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Status:      StatusError,
+		Concurrency: 1,
+		Credentials: map[string]any{"access_token": "test-token"},
+	}
+	repo := &openAIAccountTestRepo{
+		mockAccountRepoForGemini: mockAccountRepoForGemini{
+			accountsByID: map[int64]*Account{account.ID: account},
+		},
+	}
+	upstream := &queuedHTTPUpstream{responses: []*http.Response{
+		newJSONResponse(http.StatusOK, `data: {"type":"response.completed"}
+
+`),
+	}}
+	svc := &AccountTestService{accountRepo: repo, httpUpstream: upstream}
+
+	err := svc.TestAccountConnection(ctx, account.ID, "gpt-5.6-luna", "", AccountTestModeDefault)
+
+	require.NoError(t, err)
+	require.Equal(t, account.ID, repo.clearedErrorID)
+	require.Equal(t, account.ID, repo.setSchedulableID)
+	require.True(t, repo.setSchedulable)
+}
+
+func TestAccountTestService_OpenAIWorkspaceProbeMarksDeactivatedWorkspace(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+
+	repo := &openAIAccountTestRepo{}
+	upstream := &queuedHTTPUpstream{responses: []*http.Response{
+		newJSONResponse(http.StatusPaymentRequired, `{"detail":{"code":"deactivated_workspace"}}`),
+	}}
+	svc := &AccountTestService{accountRepo: repo, httpUpstream: upstream}
+	account := &Account{
+		ID:          82,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Concurrency: 1,
+		Credentials: map[string]any{"access_token": "test-token"},
+	}
+
+	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4", "", AccountTestModeWorkspace)
+	require.Error(t, err)
+	require.Len(t, upstream.requests, 1)
+	// 工作区测活必须复用用户实际报错的 ChatGPT Codex Responses 端点。
+	require.Equal(t, chatgptCodexAPIURL, upstream.requests[0].URL.String())
+	requestBody, readErr := io.ReadAll(upstream.requests[0].Body)
+	require.NoError(t, readErr)
+	require.Equal(t, "gpt-5.4", gjson.GetBytes(requestBody, "model").String())
+	require.Equal(t, account.ID, repo.setErrorID)
+	require.Equal(t, openAIWorkspaceDeactivatedErrorMessage, repo.setErrorMsg)
+	require.Contains(t, recorder.Body.String(), `"type":"workspace_deactivated"`)
+	require.Contains(t, recorder.Body.String(), `"code":"deactivated_workspace"`)
+}
+
 func TestAccountTestService_OpenAIAPIKeyResponsesMatchesCodexPlusPlusDiagnostic(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := newTestContext()
 
 	resp := newJSONResponse(http.StatusOK, "")
-	resp.Body = io.NopCloser(strings.NewReader("data: {\"type\":\"response.completed\"}\n\n"))
+	resp.Body = io.NopCloser(strings.NewReader(`{"id":"resp_test","status":"completed"}`))
 	upstream := &queuedHTTPUpstream{responses: []*http.Response{resp}}
 	svc := &AccountTestService{
 		httpUpstream: upstream,
@@ -463,8 +604,8 @@ func TestAccountTestService_OpenAIAPIKeyResponsesMatchesCodexPlusPlusDiagnostic(
 	require.Empty(t, req.Header.Get("Originator"))
 	require.Empty(t, req.Header.Get("X-Codex-Window-ID"))
 
-	body, err := io.ReadAll(req.Body)
-	require.NoError(t, err)
+	body, readErr := io.ReadAll(req.Body)
+	require.NoError(t, readErr)
 	require.Equal(t, "gpt-5.4", gjson.GetBytes(body, "model").String(), "Codex++ 诊断不应应用账号模型映射")
 	require.Equal(t, "hi", gjson.GetBytes(body, "input").String())
 	require.Equal(t, int64(16), gjson.GetBytes(body, "max_output_tokens").Int())
@@ -518,9 +659,109 @@ func TestAccountTestService_OpenAIAPIKeyResponsesUnsupportedUsesChatCompletionsP
 	require.False(t, gjson.GetBytes(upstream.lastBody, "input").Exists())
 	body := recorder.Body.String()
 	require.Contains(t, body, "pong")
-	require.Contains(t, body, "已通过 /v1/chat/completions 验证")
+	require.Contains(t, body, "已收到首个模型输出，连接验证成功")
 	require.Contains(t, body, `"success":true`)
 	require.NotContains(t, body, "当前测试接口仅支持 Responses API 路径")
+}
+
+// TestAccountTestService_OpenAIAPIKeyForcedResponsesTestIgnoresCapability 验证手动 /responses 测试不会受 capability 缓存影响或写入 Extra。
+func TestAccountTestService_OpenAIAPIKeyForcedResponsesTestIgnoresCapability(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+
+	upstream := &httpUpstreamRecorder{resp: newJSONResponse(http.StatusOK, `{"id":"resp_test","status":"completed"}`)}
+	svc := &AccountTestService{
+		httpUpstream: upstream,
+		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+	}
+	account := &Account{
+		ID:          95,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-test",
+			"base_url": "https://compat-upstream.example/v1",
+		},
+		Extra: map[string]any{openai_compat.ExtraKeyResponsesSupported: false},
+	}
+
+	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.6-luna", "ignored prompt", AccountTestModeResponses)
+	require.NoError(t, err)
+	require.NotNil(t, upstream.lastReq)
+	require.Equal(t, "https://compat-upstream.example/v1/responses", upstream.lastReq.URL.String())
+	require.Equal(t, "Bearer sk-test", upstream.lastReq.Header.Get("Authorization"))
+	require.Equal(t, "*/*", upstream.lastReq.Header.Get("Accept"))
+	require.Equal(t, "CodexPlusPlus/RelayTest", upstream.lastReq.Header.Get("User-Agent"))
+	require.Empty(t, upstream.lastReq.Header.Get("Originator"))
+	require.Equal(t, "gpt-5.6-luna", gjson.GetBytes(upstream.lastBody, "model").String())
+	require.Equal(t, "hi", gjson.GetBytes(upstream.lastBody, "input").String())
+	require.Equal(t, int64(16), gjson.GetBytes(upstream.lastBody, "max_output_tokens").Int())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "stream").Exists())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "instructions").Exists())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "messages").Exists())
+	require.Equal(t, false, account.Extra[openai_compat.ExtraKeyResponsesSupported])
+	require.Contains(t, recorder.Body.String(), "正在通过 /v1/responses 测试连接")
+	require.Contains(t, recorder.Body.String(), `"success":true`)
+}
+
+// TestAccountTestService_OpenAIAPIKeyDiagnosticCompletesOnJSON 验证 Codex++ 非流式诊断直接报告成功。
+func TestAccountTestService_OpenAIAPIKeyDiagnosticCompletesOnJSON(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+
+	upstream := &httpUpstreamRecorder{resp: newJSONResponse(http.StatusOK, `{"id":"resp_test","status":"completed"}`)}
+	svc := &AccountTestService{
+		httpUpstream: upstream,
+		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+	}
+	account := &Account{
+		ID:          97,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-test",
+			"base_url": "https://compat-upstream.example/v1",
+		},
+		Extra: map[string]any{openai_compat.ExtraKeyResponsesSupported: true},
+	}
+
+	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.6-luna", "", AccountTestModeResponses)
+	require.NoError(t, err)
+	require.Contains(t, recorder.Body.String(), "Codex++ 诊断响应")
+	require.Contains(t, recorder.Body.String(), `"success":true`)
+}
+
+// TestAccountTestService_OpenAIAPIKeyForcedResponsesTestKeepsUpstreamFailure 验证 /responses 测试提供中文说明且保留原始上游详情。
+func TestAccountTestService_OpenAIAPIKeyForcedResponsesTestKeepsUpstreamFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+
+	upstream := &httpUpstreamRecorder{resp: newJSONResponse(http.StatusBadRequest, `{"error":{"message":"responses not supported"}}`)}
+	svc := &AccountTestService{
+		httpUpstream: upstream,
+		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+	}
+	account := &Account{
+		ID:          96,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-test",
+			"base_url": "https://compat-upstream.example",
+		},
+		Extra: map[string]any{openai_compat.ExtraKeyResponsesSupported: false},
+	}
+
+	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.6-luna", "", AccountTestModeResponses)
+	require.Error(t, err)
+	require.Equal(t, "https://compat-upstream.example/v1/responses", upstream.lastReq.URL.String())
+	require.Contains(t, err.Error(), "通过 /v1/responses 测试连接失败")
+	require.Contains(t, err.Error(), "responses not supported")
+	require.Contains(t, recorder.Body.String(), "通过 /v1/responses 测试连接失败")
+	require.NotContains(t, recorder.Body.String(), `"success":true`)
 }
 
 func TestAccountTestService_OpenAIChatCompletionsPathReturns4xx(t *testing.T) {
@@ -580,33 +821,6 @@ func TestAccountTestService_OpenAIChatCompletionsPathTimeout(t *testing.T) {
 	require.Contains(t, err.Error(), context.DeadlineExceeded.Error())
 	require.Contains(t, recorder.Body.String(), "/v1/chat/completions")
 	require.NotContains(t, recorder.Body.String(), `"success":true`)
-}
-
-func TestAccountTestService_OpenAIResponsesTimeoutReturnsActionableError(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	ctx, recorder := newTestContext()
-
-	upstream := &httpUpstreamRecorder{err: context.DeadlineExceeded}
-	svc := &AccountTestService{
-		httpUpstream: upstream,
-		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
-	}
-	account := &Account{
-		ID:          95,
-		Platform:    PlatformOpenAI,
-		Type:        AccountTypeAPIKey,
-		Concurrency: 1,
-		Credentials: map[string]any{
-			"api_key":  "sk-test",
-			"base_url": "https://compat-upstream.example",
-		},
-		Extra: map[string]any{openai_compat.ExtraKeyResponsesSupported: true},
-	}
-
-	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4", "", "")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "上游响应超时")
-	require.Contains(t, recorder.Body.String(), "60 秒")
 }
 
 func TestAccountTestService_OpenAIChatCompletionsPathRejectsNonJSONStream(t *testing.T) {

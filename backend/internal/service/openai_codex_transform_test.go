@@ -1,13 +1,60 @@
 package service
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+// TestNormalizeOpenAIAPIKeyResponsesStringInput 验证 API Key Responses 的字符串输入兼容转换。
+func TestNormalizeOpenAIAPIKeyResponsesStringInput(t *testing.T) {
+	// 测试用例：覆盖字符串、空字符串和已有数组三种输入形态。
+	tests := []struct {
+		name       string
+		input      any
+		wantChange bool
+		wantLength int
+	}{
+		{"字符串输入转换为单条消息", "hello", true, 1},
+		{"空字符串转换为空数组", "  ", true, 0},
+		{"已有数组保持原样", []any{map[string]any{"type": "message", "role": "user", "content": "hello"}}, false, 1},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			// 测试请求体：只包含待验证的 input 字段，避免测试混入鉴权信息。
+			requestBody := map[string]any{"input": testCase.input}
+
+			// 转换结果：记录输入是否被处理，供失败时直接定位。
+			changed := normalizeOpenAIAPIKeyResponsesStringInput(requestBody)
+			// 上游输入项：确认最终形态始终为数组。
+			inputItems, isArray := requestBody["input"].([]any)
+			t.Logf("API Key Responses input 规范化: changed=%t input_is_array=%t item_count=%d", changed, isArray, len(inputItems))
+
+			require.Equal(t, testCase.wantChange, changed)
+			require.True(t, isArray)
+			require.Len(t, inputItems, testCase.wantLength)
+			if testCase.wantLength == 1 {
+				// 首条消息：确认上游会收到 Responses 规范的 message 与内容块。
+				message, ok := inputItems[0].(map[string]any)
+				require.True(t, ok)
+				require.Equal(t, "message", message["type"])
+				require.Equal(t, "user", message["role"])
+				if testCase.wantChange {
+					content, ok := message["content"].([]any)
+					require.True(t, ok)
+					require.Len(t, content, 1)
+					contentBlock, ok := content[0].(map[string]any)
+					require.True(t, ok)
+					require.Equal(t, "input_text", contentBlock["type"])
+					require.Equal(t, testCase.input, contentBlock["text"])
+				}
+			}
+		})
+	}
+}
 
 func TestApplyCodexOAuthTransform_ToolContinuationPreservesInput(t *testing.T) {
 	// 续链场景：保留 item_reference 与 id，但不再强制 store=true。
@@ -1572,24 +1619,6 @@ func TestExtractSystemMessagesFromInput(t *testing.T) {
 		require.Equal(t, "developer", msg["role"])
 	})
 
-	t.Run("identical existing instructions are not repeated", func(t *testing.T) {
-		const systemPrompt = "Keep this instruction exactly once."
-		reqBody := map[string]any{
-			"input": []any{
-				map[string]any{"role": "system", "content": systemPrompt},
-			},
-			"instructions": "  " + systemPrompt + "  ",
-		}
-
-		result := extractSystemMessagesFromInput(reqBody, true)
-
-		require.True(t, result)
-		require.Equal(t, "  "+systemPrompt+"  ", reqBody["instructions"])
-		input, ok := reqBody["input"].([]any)
-		require.True(t, ok)
-		require.Empty(t, input)
-	})
-
 	t.Run("omit losslessly promoted text-only messages", func(t *testing.T) {
 		reqBody := map[string]any{
 			"input": []any{
@@ -1644,34 +1673,6 @@ func TestExtractSystemMessagesFromInput(t *testing.T) {
 		require.True(t, ok)
 		require.Equal(t, "developer", developer["role"])
 		require.Len(t, developer["content"], 2)
-	})
-
-	t.Run("omit only removes lossless system messages", func(t *testing.T) {
-		// 这些 item 代表真实续链上下文，验证 system 去重不会删除 reasoning 或工具结果。
-		reqBody := map[string]any{
-			"model": "gpt-5.5",
-			"input": []any{
-				map[string]any{"type": "message", "role": "system", "content": "Do not duplicate me."},
-				map[string]any{"type": "reasoning", "encrypted_content": "encrypted-reasoning", "summary": []any{}},
-				map[string]any{"type": "function_call", "call_id": "fc_1", "name": "lookup", "arguments": "{}"},
-				map[string]any{"type": "function_call_output", "call_id": "fc_1", "output": "tool-result"},
-			},
-		}
-
-		result := applyCodexOAuthTransformWithOptions(reqBody, codexOAuthTransformOptions{
-			OmitPromotedSystemMessagesFromInput: true,
-		})
-
-		require.True(t, result.Modified)
-		require.Equal(t, "Do not duplicate me.", reqBody["instructions"])
-		input, ok := reqBody["input"].([]any)
-		require.True(t, ok)
-		require.Len(t, input, 3)
-		require.Equal(t, "reasoning", input[0].(map[string]any)["type"])
-		require.Equal(t, "function_call", input[1].(map[string]any)["type"])
-		require.Equal(t, "function_call_output", input[2].(map[string]any)["type"])
-		require.Equal(t, "encrypted-reasoning", input[0].(map[string]any)["encrypted_content"])
-		require.Equal(t, "tool-result", input[2].(map[string]any)["output"])
 	})
 }
 
@@ -1731,14 +1732,18 @@ func TestApplyCodexOAuthTransform_ExtractsSystemMessages(t *testing.T) {
 
 	input, ok := reqBody["input"].([]any)
 	require.True(t, ok)
-	require.Len(t, input, 1)
-	user, ok := input[0].(map[string]any)
+	require.Len(t, input, 2)
+	system, ok := input[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "developer", system["role"])
+	require.Equal(t, "You are a coding assistant.", system["content"])
+	user, ok := input[1].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "user", user["role"])
 	require.Equal(t, "You are a coding assistant.", reqBody["instructions"])
 }
 
-func TestApplyCodexOAuthTransform_JsonObjectDoesNotDuplicateJsonInstruction(t *testing.T) {
+func TestApplyCodexOAuthTransform_JsonObjectKeepsJsonInstructionInInput(t *testing.T) {
 	reqBody := map[string]any{
 		"model": "gpt-5.4",
 		"input": []any{
@@ -1766,13 +1771,14 @@ func TestApplyCodexOAuthTransform_JsonObjectDoesNotDuplicateJsonInstruction(t *t
 	require.Contains(t, instructions, "JSON")
 	input, ok := reqBody["input"].([]any)
 	require.True(t, ok)
-	require.Len(t, input, 1)
-	user, ok := input[0].(map[string]any)
+	require.Len(t, input, 2)
+	developer, ok := input[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "developer", developer["role"])
+	require.Contains(t, developer["content"], "JSON")
+	user, ok := input[1].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "user", user["role"])
-	encoded, err := json.Marshal(reqBody)
-	require.NoError(t, err)
-	require.Equal(t, 1, strings.Count(string(encoded), "You are an assistant. Output JSON only."))
 }
 
 func TestIsInstructionsEmpty(t *testing.T) {

@@ -169,6 +169,29 @@ const toRFC3339 = (value: string) => {
   return d.toISOString()
 }
 
+// 将当前相对筛选时间转换为清理接口所需的明确时间范围，避免无条件删除。
+const buildCleanupTimeRange = () => {
+  const startTime = toRFC3339(filters.start_time)
+  const endTime = toRFC3339(filters.end_time)
+  if (startTime || endTime) {
+    return { start_time: startTime, end_time: endTime }
+  }
+
+  // 相对时间范围对应的毫秒数。
+  const timeRangeMilliseconds: Record<typeof filters.time_range, number> = {
+    '5m': 5 * 60 * 1000,
+    '30m': 30 * 60 * 1000,
+    '1h': 60 * 60 * 1000,
+    '6h': 6 * 60 * 60 * 1000,
+    '24h': 24 * 60 * 60 * 1000,
+    '7d': 7 * 24 * 60 * 60 * 1000,
+    '30d': 30 * 24 * 60 * 60 * 1000
+  }
+  const end = new Date()
+  const start = new Date(end.getTime() - timeRangeMilliseconds[filters.time_range])
+  return { start_time: start.toISOString(), end_time: end.toISOString() }
+}
+
 const buildQuery = () => {
   const query: Record<string, any> = {
     page: page.value,
@@ -292,9 +315,10 @@ const cleanupCurrentFilter = async () => {
   const ok = window.confirm(t('admin.ops.systemLogs.cleanupConfirm'))
   if (!ok) return
   try {
+    // 清理请求必须携带时间或其他筛选条件，默认使用当前相对时间范围。
+    const cleanupTimeRange = buildCleanupTimeRange()
     const payload = {
-      start_time: toRFC3339(filters.start_time),
-      end_time: toRFC3339(filters.end_time),
+      ...cleanupTimeRange,
       host: filters.host.trim() || undefined,
       level: filters.level.trim() || undefined,
       component: filters.component.trim() || undefined,

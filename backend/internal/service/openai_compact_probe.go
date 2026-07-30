@@ -10,14 +10,22 @@ import (
 const (
 	// AccountTestModeDefault drives the standard /responses connection test.
 	AccountTestModeDefault = "default"
+	// AccountTestModeResponses 强制 API Key 账号使用 /v1/responses 测试，不受账号能力缓存影响。
+	AccountTestModeResponses = "responses"
 	// AccountTestModeCompact drives the /responses/compact compact-probe test.
 	AccountTestModeCompact = "compact"
+	// AccountTestModeWorkspace 使用最小 Responses 请求检测 ChatGPT 工作区是否已被停用。
+	AccountTestModeWorkspace = "workspace"
 )
 
 func normalizeAccountTestMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case AccountTestModeResponses:
+		return AccountTestModeResponses
 	case AccountTestModeCompact:
 		return AccountTestModeCompact
+	case AccountTestModeWorkspace:
+		return AccountTestModeWorkspace
 	default:
 		return AccountTestModeDefault
 	}
@@ -38,17 +46,11 @@ func createOpenAICompactProbePayload(model string) map[string]any {
 }
 
 func shouldMarkOpenAICompactUnsupported(status int, body []byte) bool {
-	lower := strings.ToLower(strings.TrimSpace(extractUpstreamErrorMessage(body) + " " + string(body)))
-	// 上游以 503 返回 model_not_found 时，表示当前账号池没有 Compact 渠道，
-	// 不是普通的瞬时网关故障，应从 Compact 调度候选中暂时排除该账号。
-	if strings.Contains(lower, "model_not_found") || strings.Contains(lower, "no available channel for model") {
-		return true
-	}
-
 	switch status {
 	case http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusNotImplemented:
 		return true
 	case http.StatusBadRequest, http.StatusForbidden, http.StatusUnprocessableEntity:
+		lower := strings.ToLower(strings.TrimSpace(extractUpstreamErrorMessage(body) + " " + string(body)))
 		if strings.Contains(lower, "compact") {
 			for _, keyword := range []string{
 				"unsupported",

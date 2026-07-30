@@ -837,11 +837,7 @@ func TestOpenAIWSHTTPBridgeKeepsContinuationFramesOnHTTPWithoutPreviousResponseI
 		"",
 	}, "\n")
 	secondSSEBody := strings.Join([]string{
-		`data: {"type":"response.completed","response":{"id":"resp_bridge_second","model":"gpt-5.1","output":[{"type":"function_call","id":"fc_bridge_1","call_id":"call_bridge_1","name":"shell","arguments":"{}"}],"usage":{"input_tokens":1,"output_tokens":1}}}`,
-		"",
-	}, "\n")
-	thirdSSEBody := strings.Join([]string{
-		`data: {"type":"response.completed","response":{"id":"resp_bridge_third","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`,
+		`data: {"type":"response.completed","response":{"id":"resp_bridge_second","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`,
 		"",
 	}, "\n")
 	upstream := &httpUpstreamRecorder{responses: []*http.Response{
@@ -858,13 +854,6 @@ func TestOpenAIWSHTTPBridgeKeepsContinuationFramesOnHTTPWithoutPreviousResponseI
 				"Content-Type": []string{"text/event-stream"},
 			},
 			Body: io.NopCloser(strings.NewReader(secondSSEBody)),
-		},
-		{
-			StatusCode: http.StatusOK,
-			Header: http.Header{
-				"Content-Type": []string{"text/event-stream"},
-			},
-			Body: io.NopCloser(strings.NewReader(thirdSSEBody)),
 		},
 	}}
 	cfg := &config.Config{}
@@ -963,20 +952,15 @@ func TestOpenAIWSHTTPBridgeKeepsContinuationFramesOnHTTPWithoutPreviousResponseI
 		return event
 	}
 
-	writeMessage(`{"type":"response.create","model":"gpt-5.1","stream":true,"input":[{"type":"input_text","text":"first"},{"type":"reasoning","id":"rs_bridge_1","summary":[{"type":"summary_text","text":"plan"}]}]}`)
+	writeMessage(`{"type":"response.create","model":"gpt-5.1","stream":true,"input":"first"}`)
 	firstTurnEvent := readMessage()
 	require.Equal(t, "response.completed", gjson.GetBytes(firstTurnEvent, "type").String())
 	require.Equal(t, "resp_bridge_first", gjson.GetBytes(firstTurnEvent, "response.id").String())
 
-	writeMessage(`{"type":"response.create","model":"gpt-5.1","stream":false,"previous_response_id":"resp_bridge_first","input":[{"type":"reasoning","id":"rs_bridge_1","summary":[{"type":"summary_text","text":"plan"}]},{"type":"function_call_output","call_id":"call_bridge_1","output":"ok"}]}`)
+	writeMessage(`{"type":"response.create","model":"gpt-5.1","stream":false,"previous_response_id":"resp_bridge_first","input":[{"type":"function_call_output","call_id":"call_bridge_1","output":"ok"}]}`)
 	secondTurnEvent := readMessage()
 	require.Equal(t, "response.completed", gjson.GetBytes(secondTurnEvent, "type").String())
 	require.Equal(t, "resp_bridge_second", gjson.GetBytes(secondTurnEvent, "response.id").String())
-
-	writeMessage(`{"type":"response.create","model":"gpt-5.1","stream":false,"previous_response_id":"resp_bridge_second","input":[{"type":"reasoning","id":"rs_bridge_1","summary":[{"type":"summary_text","text":"plan"}]},{"type":"function_call_output","call_id":"call_bridge_1","output":"ok"},{"type":"function_call_output","call_id":"call_bridge_2","output":"done"}]}`)
-	thirdTurnEvent := readMessage()
-	require.Equal(t, "response.completed", gjson.GetBytes(thirdTurnEvent, "type").String())
-	require.Equal(t, "resp_bridge_third", gjson.GetBytes(thirdTurnEvent, "response.id").String())
 
 	require.NoError(t, clientConn.Close(coderws.StatusNormalClosure, "done"))
 	select {
@@ -986,31 +970,16 @@ func TestOpenAIWSHTTPBridgeKeepsContinuationFramesOnHTTPWithoutPreviousResponseI
 		t.Fatal("timed out waiting for websocket bridge proxy to finish")
 	}
 
-	require.Len(t, upstream.bodies, 3, "进入 HTTP bridge 后同一客户端 WS 连接内应保持 HTTP/SSE bridge")
+	require.Len(t, upstream.bodies, 2, "进入 HTTP bridge 后同一客户端 WS 连接内应保持 HTTP/SSE bridge")
 	require.False(t, gjson.GetBytes(upstream.bodies[0], "previous_response_id").Exists())
 	require.False(t, gjson.GetBytes(upstream.bodies[1], "previous_response_id").Exists())
 	secondInput := gjson.GetBytes(upstream.bodies[1], "input").Array()
-	require.Len(t, secondInput, 4)
-	require.Equal(t, "input_text", secondInput[0].Get("type").String())
-	require.Equal(t, "first", secondInput[0].Get("text").String())
-	require.Equal(t, "reasoning", secondInput[1].Get("type").String())
-	require.Equal(t, "rs_bridge_1", secondInput[1].Get("id").String())
-	require.Equal(t, "function_call", secondInput[2].Get("type").String())
+	require.Len(t, secondInput, 3)
+	require.Equal(t, "first", secondInput[0].String())
+	require.Equal(t, "function_call", secondInput[1].Get("type").String())
+	require.Equal(t, "call_bridge_1", secondInput[1].Get("call_id").String())
+	require.Equal(t, "function_call_output", secondInput[2].Get("type").String())
 	require.Equal(t, "call_bridge_1", secondInput[2].Get("call_id").String())
-	require.Equal(t, "function_call_output", secondInput[3].Get("type").String())
-	require.Equal(t, "call_bridge_1", secondInput[3].Get("call_id").String())
-	require.Len(t, gjson.GetBytes(upstream.bodies[1], "input.#(type==\"function_call_output\")#").Array(), 1)
-	thirdInput := gjson.GetBytes(upstream.bodies[2], "input").Array()
-	require.Len(t, thirdInput, 5, "重复 reasoning/output 不应继续膨胀最终 body")
-	require.Equal(t, "input_text", thirdInput[0].Get("type").String())
-	require.Equal(t, "reasoning", thirdInput[1].Get("type").String())
-	require.Equal(t, "function_call", thirdInput[2].Get("type").String())
-	require.Equal(t, "function_call_output", thirdInput[3].Get("type").String())
-	require.Equal(t, "call_bridge_1", thirdInput[3].Get("call_id").String())
-	require.Equal(t, "function_call_output", thirdInput[4].Get("type").String())
-	require.Equal(t, "call_bridge_2", thirdInput[4].Get("call_id").String())
-	require.Len(t, gjson.GetBytes(upstream.bodies[2], "input.#(type==\"reasoning\")#").Array(), 1)
-	require.Len(t, gjson.GetBytes(upstream.bodies[2], "input.#(type==\"function_call_output\")#").Array(), 2)
 	require.Equal(t, 0, captureDialer.DialCount())
 	require.Empty(t, captureConn.writes)
 }

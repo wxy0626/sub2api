@@ -15,7 +15,6 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
-	"go.uber.org/zap"
 )
 
 // Forward forwards request to OpenAI API
@@ -263,9 +262,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 	instructions := gjson.GetBytes(body, "instructions")
 	instructionsEmpty := !instructions.Exists() || instructions.Type != gjson.String || strings.TrimSpace(instructions.String()) == ""
-	// 仅 OAuth 的 ChatGPT/Codex 兼容路径需要补齐默认 Codex 指令；API Key 上游的
-	// Responses body 应保持客户端语义，不能凭空增加约 24KB 的 system prompt。
-	if account.Type == AccountTypeOAuth && instructionsEmpty && !compatMessagesBridge {
+	if instructionsEmpty && !compatMessagesBridge {
 		markPatchSet("instructions", defaultCodexSynthInstructions(reqModel))
 	}
 
@@ -392,13 +389,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			ensureCodexOAuthInstructionsField(decoded)
 			markDecodedModified()
 		} else {
-			// 纯文本 system 已经无损提升到 instructions，不再在 input 重复计费；
-			// reasoning、工具调用和工具结果不属于此分支，继续由通用过滤逻辑保留。
-			codexResult = applyCodexOAuthTransformWithOptions(decoded, codexOAuthTransformOptions{
-				IsCodexCLI:                          isCodexCLI,
-				IsCompact:                           isCompactRequest,
-				OmitPromotedSystemMessagesFromInput: true,
-			})
+			codexResult = applyCodexOAuthTransform(decoded, isCodexCLI, isCompactRequest)
 		}
 		if codexResult.Modified {
 			markDecodedModified()
@@ -412,6 +403,16 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 		if codexResult.PromptCacheKey != "" {
 			promptCacheKey = codexResult.PromptCacheKey
+		}
+	} else if account.Type == AccountTypeAPIKey {
+		// API Key 请求体：只做第三方 Responses 上游所需的 input 形态归一化。
+		decoded, decodeErr := ensureReqBody()
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		if normalizeOpenAIAPIKeyResponsesStringInput(decoded) {
+			markDecodedModified()
+			logger.LegacyPrintf("service.openai_gateway", "[OpenAI] API Key Responses input normalized from string to message array: account=%d", account.ID)
 		}
 	}
 
@@ -861,19 +862,6 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 					return nil, fmt.Errorf("agent identity task recovery failed: %w", err)
 				}
 				continue
-			}
-			// API Key 账号的异步能力探测尚未写入标记时，若上游明确不提供
-			// /v1/responses（404/405），在同一请求中改走既有 Chat Completions
-			// 回退。仅 unknown 命中，force_responses 与已探测支持账号仍保留原语义。
-			if account.Type == AccountTypeAPIKey &&
-				openai_compat.ResolveResponsesSupport(account.Extra) == openai_compat.ResponsesSupportUnknown &&
-				!isResponsesEndpointSupportedByStatus(resp.StatusCode) {
-				logger.L().Info("openai responses: /responses unsupported, falling back to raw chat completions",
-					zap.Int64("account_id", account.ID),
-					zap.Int("upstream_status", resp.StatusCode),
-					zap.String("upstream_message", upstreamMsg),
-				)
-				return s.forwardResponsesViaRawChatCompletions(ctx, c, account, body)
 			}
 			respBody = s.redactAgentIdentitySensitiveBody(ctx, account, respBody)
 			resp.Body = io.NopCloser(bytes.NewReader(respBody))

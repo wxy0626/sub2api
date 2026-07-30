@@ -2,7 +2,6 @@ package admin
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -18,8 +17,9 @@ import (
 
 // SystemHandler handles system-related operations
 type SystemHandler struct {
-	updateSvc systemUpdateService
-	lockSvc   *service.SystemOperationLockService
+	updateSvc             systemUpdateService
+	personalDeploymentSvc systemPersonalDeploymentService
+	lockSvc               *service.SystemOperationLockService
 }
 
 // systemUpdateTimeout bounds a full in-place update or rollback: the release
@@ -46,16 +46,21 @@ func systemUpdateContext(ctx context.Context) (context.Context, context.CancelFu
 type systemUpdateService interface {
 	CheckUpdate(ctx context.Context, force bool) (*service.UpdateInfo, error)
 	PerformUpdate(ctx context.Context) error
-	Rollback() error
-	ListRollbackVersions(ctx context.Context) ([]service.RollbackVersion, error)
-	RollbackToVersion(ctx context.Context, version string) error
+}
+
+// systemPersonalDeploymentService 是用户自有 Git tag 与 OCI digest 驱动的受限部署接口。
+type systemPersonalDeploymentService interface {
+	ListVersions(ctx context.Context) ([]service.PersonalDeploymentVersion, error)
+	ScheduleDeployment(ctx context.Context, tag, digest string) error
+	ScheduleLatestDeployment(ctx context.Context) (service.PersonalDeploymentVersion, error)
 }
 
 // NewSystemHandler creates a new SystemHandler
-func NewSystemHandler(updateSvc systemUpdateService, lockSvc *service.SystemOperationLockService) *SystemHandler {
+func NewSystemHandler(updateSvc systemUpdateService, personalDeploymentSvc systemPersonalDeploymentService, lockSvc *service.SystemOperationLockService) *SystemHandler {
 	return &SystemHandler{
-		updateSvc: updateSvc,
-		lockSvc:   lockSvc,
+		updateSvc:             updateSvc,
+		personalDeploymentSvc: personalDeploymentSvc,
+		lockSvc:               lockSvc,
 	}
 }
 
@@ -80,60 +85,22 @@ func (h *SystemHandler) CheckUpdates(c *gin.Context) {
 	response.Success(c, info)
 }
 
-// PerformUpdate downloads and applies the update
+// PerformUpdate 明确阻止上游 release 二进制覆盖用户自有镜像部署。
 // POST /api/v1/admin/system/update
 func (h *SystemHandler) PerformUpdate(c *gin.Context) {
-	operationID := buildSystemOperationID(c, "update")
-	payload := gin.H{"operation_id": operationID}
-	executeAdminIdempotentJSON(c, "admin.system.update", payload, service.DefaultSystemOperationIdempotencyTTL(), func(ctx context.Context) (any, error) {
-		lock, release, err := h.acquireSystemLock(ctx, operationID)
-		if err != nil {
-			return nil, err
-		}
-		var releaseReason string
-		succeeded := false
-		defer func() {
-			release(releaseReason, succeeded)
-		}()
-
-		updateCtx, cancel := systemUpdateContext(ctx)
-		defer cancel()
-
-		if err := h.updateSvc.PerformUpdate(updateCtx); err != nil {
-			if errors.Is(err, service.ErrNoUpdateAvailable) {
-				info, checkErr := h.updateSvc.CheckUpdate(updateCtx, false)
-				if checkErr != nil {
-					releaseReason = "SYSTEM_UPDATE_FAILED"
-					return nil, checkErr
-				}
-				succeeded = true
-				return gin.H{
-					"message":            "Already up to date",
-					"already_up_to_date": true,
-					"current_version":    info.CurrentVersion,
-					"latest_version":     info.LatestVersion,
-					"operation_id":       lock.OperationID(),
-				}, nil
-			}
-			releaseReason = "SYSTEM_UPDATE_FAILED"
-			return nil, err
-		}
-		succeeded = true
-
-		return gin.H{
-			"message":      "Update completed. Please restart the service.",
-			"need_restart": true,
-			"operation_id": lock.OperationID(),
-		}, nil
-	})
+	response.ErrorFrom(c, service.PersonalDeploymentRequestError("上游 Release 仅用于版本提示，当前服务不会下载或安装上游二进制。请在“我的可部署版本”中选择已由你的 Git tag 和镜像 digest 验证的版本。技术详情：upstream binary update is disabled for personal image deployments"))
 }
 
-// GetRollbackVersions lists versions available for rollback
-// GET /api/v1/admin/system/rollback-versions
-func (h *SystemHandler) GetRollbackVersions(c *gin.Context) {
-	versions, err := h.updateSvc.ListRollbackVersions(c.Request.Context())
+// GetPersonalDeploymentVersions 列出用户 Git tag 与 OCI digest/revision 已验证的可部署版本。
+// GET /api/v1/admin/system/deployment-versions
+func (h *SystemHandler) GetPersonalDeploymentVersions(c *gin.Context) {
+	if h.personalDeploymentSvc == nil {
+		response.ErrorFrom(c, service.PersonalDeploymentUnavailableError())
+		return
+	}
+	versions, err := h.personalDeploymentSvc.ListVersions(c.Request.Context())
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 	response.Success(c, gin.H{
@@ -141,29 +108,73 @@ func (h *SystemHandler) GetRollbackVersions(c *gin.Context) {
 	})
 }
 
-// Rollback restores a previous version.
-// Without a body (or with an empty version) it restores the local .backup binary
-// left by the last in-place update. With {"version": "x.y.z"} it downloads and
-// installs that specific release (must be one of the recent rollback versions).
+// DeployLatestPersonalVersion 从用户自有发布链路中部署最新已验证 Git tag 对应的镜像。
+// POST /api/v1/admin/system/deployment/update
+func (h *SystemHandler) DeployLatestPersonalVersion(c *gin.Context) {
+	if h.personalDeploymentSvc == nil {
+		response.ErrorFrom(c, service.PersonalDeploymentUnavailableError())
+		return
+	}
+	operationID := buildSystemOperationID(c, "deployment:update-latest")
+	payload := gin.H{"operation_id": operationID}
+	executeAdminIdempotentJSON(c, "admin.system.deployment.update", payload, service.DefaultSystemOperationIdempotencyTTL(), func(ctx context.Context) (any, error) {
+		lock, release, err := h.acquireSystemLock(ctx, operationID)
+		if err != nil {
+			return nil, err
+		}
+		var releaseReason string
+		succeeded := false
+		defer func() { release(releaseReason, succeeded) }()
+
+		deployCtx, cancel := systemUpdateContext(ctx)
+		defer cancel()
+		version, err := h.personalDeploymentSvc.ScheduleLatestDeployment(deployCtx)
+		if err != nil {
+			releaseReason = "PERSONAL_DEPLOYMENT_UPDATE_FAILED"
+			return nil, err
+		}
+		succeeded = true
+		return gin.H{
+			"message":           "已安排部署你的最新 Git 镜像版本，Sub2API 服务将自动替换并恢复。PostgreSQL、Redis、数据卷、账号配置和源码工作区不会被重建或清空。",
+			"need_restart":      false,
+			"restart_scheduled": true,
+			"tag":               version.Tag,
+			"digest":            version.Digest,
+			"operation_id":      lock.OperationID(),
+		}, nil
+	})
+}
+
+// Rollback 将当前应用替换为用户自有 Git tag 对应的已验证 OCI digest 镜像。
+// The helper only replaces the current sub2api container and preserves its mounts.
 // POST /api/v1/admin/system/rollback
 func (h *SystemHandler) Rollback(c *gin.Context) {
 	var req struct {
-		Version string `json:"version"`
+		Tag    string `json:"tag"`
+		Digest string `json:"digest"`
 	}
-	if c.Request.Body != nil && c.Request.ContentLength > 0 {
-		if err := c.ShouldBindJSON(&req); err != nil {
-			response.Error(c, http.StatusBadRequest, "invalid request body")
-			return
-		}
+	if c.Request.Body == nil || c.Request.ContentLength <= 0 {
+		response.ErrorFrom(c, service.PersonalDeploymentRequestError("请求缺少 tag 和 digest。请先从“我的可部署版本”列表选择一个版本。技术详情：request body is empty"))
+		return
 	}
-	targetVersion := strings.TrimSpace(req.Version)
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.ErrorFrom(c, service.PersonalDeploymentRequestError("回退请求格式无效。请刷新页面后重新选择你的发布镜像版本。技术详情："+err.Error()))
+		return
+	}
+	targetTag := strings.TrimSpace(req.Tag)
+	targetDigest := strings.TrimSpace(req.Digest)
+	if targetTag == "" || targetDigest == "" {
+		response.ErrorFrom(c, service.PersonalDeploymentRequestError("请求缺少 tag 或 digest。请先从“我的可部署版本”列表选择一个版本。技术详情：tag or digest is empty"))
+		return
+	}
+	if h.personalDeploymentSvc == nil {
+		response.ErrorFrom(c, service.PersonalDeploymentUnavailableError())
+		return
+	}
 
-	operation := "rollback"
-	if targetVersion != "" {
-		operation = "rollback:" + targetVersion
-	}
+	operation := "rollback:personal-image:" + targetTag + ":" + targetDigest
 	operationID := buildSystemOperationID(c, operation)
-	payload := gin.H{"operation_id": operationID, "version": targetVersion}
+	payload := gin.H{"operation_id": operationID, "tag": targetTag, "digest": targetDigest}
 	executeAdminIdempotentJSON(c, "admin.system.rollback", payload, service.DefaultSystemOperationIdempotencyTTL(), func(ctx context.Context) (any, error) {
 		lock, release, err := h.acquireSystemLock(ctx, operationID)
 		if err != nil {
@@ -175,14 +186,10 @@ func (h *SystemHandler) Rollback(c *gin.Context) {
 			release(releaseReason, succeeded)
 		}()
 
-		if targetVersion != "" {
-			// 指定版本回退同样要下载完整二进制，与更新一样和请求生命周期解耦。
-			rollbackCtx, cancel := systemUpdateContext(ctx)
-			defer cancel()
-			err = h.updateSvc.RollbackToVersion(rollbackCtx, targetVersion)
-		} else {
-			err = h.updateSvc.Rollback()
-		}
+		// 先拉取并核验自有 digest，再由 helper 替换当前服务；HTTP 请求可在替换前完整返回。
+		rollbackCtx, cancel := systemUpdateContext(ctx)
+		defer cancel()
+		err = h.personalDeploymentSvc.ScheduleDeployment(rollbackCtx, targetTag, targetDigest)
 		if err != nil {
 			releaseReason = "SYSTEM_ROLLBACK_FAILED"
 			return nil, err
@@ -190,10 +197,12 @@ func (h *SystemHandler) Rollback(c *gin.Context) {
 		succeeded = true
 
 		return gin.H{
-			"message":      "Rollback completed. Please restart the service.",
-			"need_restart": true,
-			"version":      targetVersion,
-			"operation_id": lock.OperationID(),
+			"message":           "已安排使用你的 Git tag 对应镜像回退，Sub2API 服务将自动替换并恢复。PostgreSQL、Redis、数据卷、账号配置和源码工作区不会被重建或清空。",
+			"need_restart":      false,
+			"restart_scheduled": true,
+			"tag":               targetTag,
+			"digest":            targetDigest,
+			"operation_id":      lock.OperationID(),
 		}, nil
 	})
 }

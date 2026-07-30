@@ -426,6 +426,7 @@ export default {
     },
     extraModelsHeader: '附加模型',
     extraModelsEmpty: '无附加模型',
+    latestDiagnostic: '最近检测说明',
     latencyEmpty: '-',
     availabilityPrefix: '可用性',
     dialogLatency: '对话延迟',

@@ -2,24 +2,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
 import { mount } from '@vue/test-utils'
 
-// 同步上游模型失败展示的接口与提示测试 mock。
-const {
-  updateAccountMock,
-  checkMixedChannelRiskMock,
-  syncUpstreamModelsMock,
-  showErrorMock,
-  authIsSimpleMode
-} = vi.hoisted(() => ({
+const { updateAccountMock, checkMixedChannelRiskMock, authIsSimpleMode } = vi.hoisted(() => ({
   updateAccountMock: vi.fn(),
   checkMixedChannelRiskMock: vi.fn(),
-  syncUpstreamModelsMock: vi.fn(),
-  showErrorMock: vi.fn(),
   authIsSimpleMode: { value: true }
 }))
 
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
-    showError: showErrorMock,
+    showError: vi.fn(),
     showSuccess: vi.fn(),
     showInfo: vi.fn()
   })
@@ -37,8 +28,7 @@ vi.mock('@/api/admin', () => ({
   adminAPI: {
     accounts: {
       update: updateAccountMock,
-      checkMixedChannelRisk: checkMixedChannelRiskMock,
-      syncUpstreamModels: syncUpstreamModelsMock
+      checkMixedChannelRisk: checkMixedChannelRiskMock
     },
     settings: {
       getWebSearchEmulationConfig: vi.fn().mockResolvedValue({ enabled: false, providers: [] }),
@@ -324,8 +314,6 @@ function mountModal(account = buildAccount()) {
 describe('EditAccountModal', () => {
   beforeEach(() => {
     authIsSimpleMode.value = true
-    showErrorMock.mockReset()
-    syncUpstreamModelsMock.mockReset()
   })
 
   it('reopening the same account rehydrates the OpenAI whitelist from props', async () => {
@@ -366,6 +354,26 @@ describe('EditAccountModal', () => {
 
     expect(updateAccountMock).toHaveBeenCalledTimes(1)
     expect(updateAccountMock.mock.calls[0]?.[1]?.concurrency).toBe(5)
+  })
+
+  it('编辑没有模型映射的 OpenAI 账号时默认只开放 GPT-5.5', async () => {
+    const account = buildAccount()
+    delete account.credentials.model_mapping
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+
+    expect(wrapper.get('[data-testid="model-whitelist-value"]').text()).toBe('gpt-5.5')
+
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.model_mapping).toEqual({
+      'gpt-5.5': 'gpt-5.5'
+    })
   })
 
   it('preserves model mappings when editing the whitelist', async () => {
@@ -418,6 +426,25 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.compact_model_mapping).toEqual({
       'gpt-5.4': 'gpt-5.4-openai-compact'
     })
+  })
+
+  it('shows Responses unsupported for the Compact status when the capability probe is false', () => {
+    const account = buildAccount()
+    account.extra = {
+      openai_responses_supported: false,
+      openai_compact_supported: true
+    }
+
+    const wrapper = mountModal(account)
+
+    expect(wrapper.text()).toContain('admin.accounts.openai.compactResponsesUnsupported')
+    expect(wrapper.text()).not.toContain('admin.accounts.openai.compactSupported')
+  })
+
+  it('keeps the existing Compact Auto status when Responses support is unknown', () => {
+    const wrapper = mountModal(buildAccount())
+
+    expect(wrapper.text()).toContain('admin.accounts.openai.compactAuto')
   })
 
   it('loads and submits the per-account OpenAI long-context billing toggle', async () => {
@@ -1041,24 +1068,5 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).not.toHaveProperty(
       'antigravity_project_id'
     )
-  })
-
-  it('uses the upstream response message without a second sync-error wrapper', async () => {
-    syncUpstreamModelsMock.mockRejectedValue({
-      message: '操作失败，请根据下方技术详情定位原因。 技术详情：The origin web server returned an invalid or incomplete response to Cloudflare.'
-    })
-    const wrapper = mountModal(buildAntigravityAccount())
-    const syncButton = wrapper
-      .findAll('button')
-      .find((candidate) => candidate.text().includes('admin.accounts.syncUpstreamModels'))
-
-    expect(syncButton).toBeDefined()
-    await syncButton?.trigger('click')
-
-    await vi.waitFor(() => {
-      expect(showErrorMock).toHaveBeenCalledWith(
-        '操作失败，请根据下方技术详情定位原因。 技术详情：The origin web server returned an invalid or incomplete response to Cloudflare.'
-      )
-    })
   })
 })

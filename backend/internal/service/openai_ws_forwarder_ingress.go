@@ -561,7 +561,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			bridgeReplayInput = cloneOpenAIWSRawMessages(turnReplayInput)
 			bridgeReplayInputExists = turnReplayInputExists
 			if result.wsReplayInputExists {
-				bridgeReplayInput = appendOpenAIWSReplayItems(bridgeReplayInput, result.wsReplayInput)
+				bridgeReplayInput = append(bridgeReplayInput, cloneOpenAIWSRawMessages(result.wsReplayInput)...)
 				bridgeReplayInputExists = true
 			}
 			if bridgeTurnState := strings.TrimSpace(result.ResponseHeaders.Get(openAIWSTurnStateHeader)); bridgeTurnState != "" {
@@ -1284,13 +1284,14 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		)
 		if replayInputErr != nil {
 			logOpenAIWSModeInfo(
-				"ingress_ws_replay_input_reject account_id=%d turn=%d conn_id=%s reason=build_error cause=%s",
+				"ingress_ws_replay_input_skip account_id=%d turn=%d conn_id=%s reason=build_error cause=%s",
 				account.ID,
 				turn,
 				truncateOpenAIWSLogValue(sessionConnID, openAIWSIDValueMaxLen),
 				truncateOpenAIWSLogValue(replayInputErr.Error(), openAIWSLogValueMaxLen),
 			)
-			return fmt.Errorf("build websocket replay input: %w", replayInputErr)
+			currentTurnReplayInput = nil
+			currentTurnReplayInputExists = false
 		} else {
 			currentTurnReplayInput = nextReplayInput
 			currentTurnReplayInputExists = nextReplayInputExists
@@ -1562,7 +1563,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		lastTurnReplayInput = cloneOpenAIWSRawMessages(currentTurnReplayInput)
 		lastTurnReplayInputExists = currentTurnReplayInputExists
 		if result.wsReplayInputExists {
-			lastTurnReplayInput = appendOpenAIWSReplayItems(lastTurnReplayInput, result.wsReplayInput)
+			lastTurnReplayInput = append(lastTurnReplayInput, cloneOpenAIWSRawMessages(result.wsReplayInput)...)
 			lastTurnReplayInputExists = true
 		}
 		nextStrictState, strictStateErr := buildOpenAIWSIngressPreviousTurnStrictState(currentPayload)

@@ -16,15 +16,7 @@ services:
   # Sub2API Application
   # ===========================================================================
   sub2api:
-    # 本地优先：默认只使用当前源码构建出的镜像，禁止隐式拉取上游镜像。
-    image: ${SUB2API_IMAGE:-sub2api:local-main}
-    pull_policy: never
-    build:
-      context: ..
-      dockerfile: Dockerfile
-      args:
-        VERSION: ${SUB2API_VERSION:-}
-        COMMIT: ${SUB2API_COMMIT:-local}
+    image: ${SUB2API_IMAGE:-sub2api:latest}
     container_name: sub2api
     restart: unless-stopped
     ulimits:
@@ -36,6 +28,8 @@ services:
     volumes:
       # Data persistence (config.yaml will be auto-generated here)
       - sub2api_data:/app/data
+      # 管理员仅能使用后端验证过的个人 Git tag + OCI digest 替换应用容器。
+      - /var/run/docker.sock:/var/run/docker.sock
       # Optional: Mount custom config.yaml (uncomment and create the file first)
       # Copy config.example.yaml to config.yaml, modify it, then uncomment:
       # - ./config.yaml:/app/data/config.yaml
@@ -58,6 +52,12 @@ services:
       - ENABLE_SERVER_TIMING=${ENABLE_SERVER_TIMING:-false}
       - RUN_MODE=${RUN_MODE:-standard}
       - UPDATE_GITHUB_TOKEN=${UPDATE_GITHUB_TOKEN:-}
+      - PERSONAL_DEPLOYMENT_GIT_REPOSITORY=${PERSONAL_DEPLOYMENT_GIT_REPOSITORY:-}
+      - PERSONAL_DEPLOYMENT_REGISTRY_IMAGE=${PERSONAL_DEPLOYMENT_REGISTRY_IMAGE:-}
+      - PERSONAL_DEPLOYMENT_GITHUB_TOKEN=${PERSONAL_DEPLOYMENT_GITHUB_TOKEN:-}
+      - PERSONAL_DEPLOYMENT_REGISTRY_USERNAME=${PERSONAL_DEPLOYMENT_REGISTRY_USERNAME:-}
+      - PERSONAL_DEPLOYMENT_REGISTRY_TOKEN=${PERSONAL_DEPLOYMENT_REGISTRY_TOKEN:-}
+      - PERSONAL_DEPLOYMENT_MAX_VERSIONS=${PERSONAL_DEPLOYMENT_MAX_VERSIONS:-3}
       - ALIPAY_MOBILE_PRECREATE_DEEP_LINK=${ALIPAY_MOBILE_PRECREATE_DEEP_LINK:-}
 
       # =======================================================================
@@ -165,9 +165,7 @@ services:
       # Image Generation Stream & Concurrency
       # =======================================================================
       # OpenAI HTTP upstream protocol/timeout
-      - GATEWAY_OPENAI_RESPONSE_HEADER_TIMEOUT=${GATEWAY_OPENAI_RESPONSE_HEADER_TIMEOUT:-60}
-      - GATEWAY_OPENAI_FIRST_OUTPUT_TIMEOUT_SECONDS=${GATEWAY_OPENAI_FIRST_OUTPUT_TIMEOUT_SECONDS:-60}
-      - GATEWAY_OPENAI_HIGH_EFFORT_FIRST_OUTPUT_TIMEOUT_SECONDS=${GATEWAY_OPENAI_HIGH_EFFORT_FIRST_OUTPUT_TIMEOUT_SECONDS:-0}
+      - GATEWAY_OPENAI_RESPONSE_HEADER_TIMEOUT=${GATEWAY_OPENAI_RESPONSE_HEADER_TIMEOUT:-0}
       - GATEWAY_OPENAI_HTTP2_ENABLED=${GATEWAY_OPENAI_HTTP2_ENABLED:-true}
       - GATEWAY_OPENAI_HTTP2_ALLOW_PROXY_FALLBACK_TO_HTTP1=${GATEWAY_OPENAI_HTTP2_ALLOW_PROXY_FALLBACK_TO_HTTP1:-true}
       - GATEWAY_OPENAI_HTTP2_FALLBACK_ERROR_THRESHOLD=${GATEWAY_OPENAI_HTTP2_FALLBACK_ERROR_THRESHOLD:-2}
@@ -228,12 +226,12 @@ services:
       -c effective_cache_size=${POSTGRES_EFFECTIVE_CACHE_SIZE:-4GB}
       -c maintenance_work_mem=${POSTGRES_MAINTENANCE_WORK_MEM:-64MB}
     volumes:
-      # 旧 PostgreSQL 18 数据位于镜像默认目录 /var/lib/postgresql/18/docker。
-      # postgres_data 是显式外部卷，避免 Compose 静默创建空卷并触发 initdb。
-      - postgres_data:/var/lib/postgresql
+      - postgres_data:/var/lib/postgresql/data
     environment:
-      # 保持旧容器的 PostgreSQL 18 默认数据目录，恢复已发现的历史匿名卷。
-      - PGDATA=${POSTGRES_DATA_DIRECTORY:-/var/lib/postgresql/18/docker}
+      # postgres:18-alpine 默认 PGDATA=/var/lib/postgresql/18/docker（位于镜像声明的匿名卷 /var/lib/postgresql 内）。
+      # 若不显式设置 PGDATA，则即使挂载了 postgres_data 到 /var/lib/postgresql/data，数据也不会落盘到该命名卷，
+      # docker compose down/up 后会触发 initdb 重新初始化，导致用户/密码等数据丢失。
+      - PGDATA=/var/lib/postgresql/data
       - POSTGRES_USER=${POSTGRES_USER:-sub2api}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       - POSTGRES_DB=${POSTGRES_DB:-sub2api}
@@ -298,9 +296,7 @@ volumes:
   sub2api_data:
     driver: local
   postgres_data:
-    # 数据卷由运维显式指定且必须已存在，防止误建空 PostgreSQL 数据库。
-    name: ${POSTGRES_DATA_VOLUME:?POSTGRES_DATA_VOLUME is required}
-    external: true
+    driver: local
   redis_data:
     driver: local
 

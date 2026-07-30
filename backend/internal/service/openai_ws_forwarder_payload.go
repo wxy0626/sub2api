@@ -420,48 +420,6 @@ func cloneOpenAIWSRawMessages(items []json.RawMessage) []json.RawMessage {
 	return cloned
 }
 
-// appendOpenAIWSReplayItems 合并 replay 项，并避免稳定身份项的完全相同副本重复追加。
-// 普通文本不参与去重；reasoning、工具调用和工具结果仅在 canonical JSON 完全相同
-// 时去重，确保不同内容的非纯文本项完整保留。
-func appendOpenAIWSReplayItems(previous, additions []json.RawMessage) []json.RawMessage {
-	merged := cloneOpenAIWSRawMessages(previous)
-	if len(additions) == 0 {
-		return merged
-	}
-	// 记录已有工具上下文的 canonical JSON，避免同一调用被重复收集时再次追加。
-	seenReplayItemKeys := make(map[string]struct{})
-	for _, item := range merged {
-		if key, ok := openAIWSReplayItemKey(item); ok {
-			seenReplayItemKeys[key] = struct{}{}
-		}
-	}
-	for _, item := range additions {
-		if key, ok := openAIWSReplayItemKey(item); ok {
-			if _, exists := seenReplayItemKeys[key]; exists {
-				continue
-			}
-			seenReplayItemKeys[key] = struct{}{}
-		}
-		merged = append(merged, json.RawMessage(cloneOpenAIWSPayloadBytes(item)))
-	}
-	return merged
-}
-
-// openAIWSReplayItemKey 返回可安全去重的 replay 项 canonical JSON；无稳定类型的项不去重。
-func openAIWSReplayItemKey(item []byte) (string, bool) {
-	itemType := strings.TrimSpace(gjson.GetBytes(item, "type").String())
-	if itemType != "reasoning" &&
-		!isCodexToolCallContextItemType(itemType) &&
-		!isCodexToolCallOutputItemType(itemType) {
-		return "", false
-	}
-	normalized, err := normalizeOpenAIWSJSONForCompare(item)
-	if err != nil {
-		return "", false
-	}
-	return string(normalized), true
-}
-
 func normalizeOpenAIWSJSONForCompare(raw []byte) ([]byte, error) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 {
@@ -570,27 +528,6 @@ func openAIWSRawItemsHasPrefix(items []json.RawMessage, prefix []json.RawMessage
 	return true
 }
 
-// 判断当前输入是否只复用了旧 replay 的部分前缀；该形态无法安全区分完整历史与增量输入。
-func openAIWSRawItemsHasPartialPrefix(items []json.RawMessage, prefix []json.RawMessage) bool {
-	if len(items) == 0 || len(prefix) == 0 {
-		return false
-	}
-	overlapLen := len(items) // 只比较两组输入从序列头部开始的共同长度。
-	if len(prefix) < overlapLen {
-		overlapLen = len(prefix)
-	}
-	matchedItems := 0 // 已从序列头部确认相同的 item 数量。
-	for matchedItems < overlapLen {
-		currentNormalized := normalizeOpenAIWSJSONForCompareOrRaw(items[matchedItems])   // 当前请求中用于判断前缀的规范化 item。
-		previousNormalized := normalizeOpenAIWSJSONForCompareOrRaw(prefix[matchedItems]) // 旧 replay 中用于判断前缀的规范化 item。
-		if !bytes.Equal(currentNormalized, previousNormalized) {
-			break
-		}
-		matchedItems++
-	}
-	return matchedItems > 0 && matchedItems < len(prefix)
-}
-
 func openAIWSRawItemsHasFunctionCallOutput(items []json.RawMessage) bool {
 	for _, item := range items {
 		if isCodexToolCallOutputItemType(gjson.GetBytes(item, "type").String()) {
@@ -676,15 +613,10 @@ func buildOpenAIWSReplayInputSequence(
 	if openAIWSRawItemsHasPrefix(currentItems, previousFullInput) {
 		return cloneOpenAIWSRawMessages(currentItems), true, nil
 	}
-	// 当前输入可能是旧 replay 的完整短前缀，例如客户端在非 input 配置变化后重新发送单条请求。
-	// 保留完整旧 replay，避免 strict-state 删除 previous_response_id 后丢失既有指令或工具上下文。
-	if openAIWSRawItemsHasPrefix(previousFullInput, currentItems) {
-		return cloneOpenAIWSRawMessages(previousFullInput), true, nil
-	}
-	if openAIWSRawItemsHasPartialPrefix(currentItems, previousFullInput) {
-		return nil, false, errors.New("ambiguous websocket replay input: current input partially overlaps previous replay input")
-	}
-	return appendOpenAIWSReplayItems(previousFullInput, currentItems), true, nil
+	merged := make([]json.RawMessage, 0, len(previousFullInput)+len(currentItems))
+	merged = append(merged, cloneOpenAIWSRawMessages(previousFullInput)...)
+	merged = append(merged, cloneOpenAIWSRawMessages(currentItems)...)
+	return merged, true, nil
 }
 
 func setOpenAIWSPayloadInputSequence(

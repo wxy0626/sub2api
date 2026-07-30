@@ -41,8 +41,10 @@ type channelMonitorCreateRequest struct {
 	Name             string            `json:"name" binding:"required,max=100"`
 	Provider         string            `json:"provider" binding:"required,oneof=openai anthropic gemini grok"`
 	APIMode          string            `json:"api_mode" binding:"omitempty,oneof=chat_completions responses"`
-	Endpoint         string            `json:"endpoint" binding:"required,max=500"`
-	APIKey           string            `json:"api_key" binding:"required,max=2000"`
+	Endpoint         string            `json:"endpoint" binding:"max=500"`
+	AccountID        *int64            `json:"account_id"`
+	APIKeyID         *int64            `json:"api_key_id"`
+	APIKey           string            `json:"api_key" binding:"max=2000"`
 	PrimaryModel     string            `json:"primary_model" binding:"max=200"`
 	ExtraModels      []string          `json:"extra_models"`
 	GroupName        string            `json:"group_name" binding:"max=100"`
@@ -60,6 +62,10 @@ type channelMonitorUpdateRequest struct {
 	Provider         *string            `json:"provider" binding:"omitempty,oneof=openai anthropic gemini grok"`
 	APIMode          *string            `json:"api_mode" binding:"omitempty,oneof=chat_completions responses"`
 	Endpoint         *string            `json:"endpoint" binding:"omitempty,max=500"`
+	AccountID        *int64             `json:"account_id"`
+	ClearAccount     bool               `json:"clear_account"`
+	APIKeyID         *int64             `json:"api_key_id"`
+	ClearAPIKeyID    bool               `json:"clear_api_key_id"`
 	APIKey           *string            `json:"api_key" binding:"omitempty,max=2000"`
 	PrimaryModel     *string            `json:"primary_model" binding:"omitempty,max=200"`
 	ExtraModels      *[]string          `json:"extra_models"`
@@ -80,6 +86,9 @@ type channelMonitorResponse struct {
 	Provider            string                               `json:"provider"`
 	APIMode             string                               `json:"api_mode"`
 	Endpoint            string                               `json:"endpoint"`
+	AccountID           *int64                               `json:"account_id"`
+	APIKeyID            *int64                               `json:"api_key_id"`
+	SourceType          string                               `json:"source_type"`
 	APIKeyMasked        string                               `json:"api_key_masked"`
 	APIKeyDecryptFailed bool                                 `json:"api_key_decrypt_failed"`
 	PrimaryModel        string                               `json:"primary_model"`
@@ -94,6 +103,7 @@ type channelMonitorResponse struct {
 	UpdatedAt           string                               `json:"updated_at"`
 	PrimaryStatus       string                               `json:"primary_status"`
 	PrimaryLatencyMs    *int                                 `json:"primary_latency_ms"`
+	PrimaryMessage      string                               `json:"primary_message"`
 	Availability7d      float64                              `json:"availability_7d"`
 	ExtraModelsStatus   []dto.ChannelMonitorExtraModelStatus `json:"extra_models_status"`
 	// 请求自定义快照：前端编辑 / 展示「高级设置」用
@@ -148,7 +158,10 @@ func channelMonitorToResponse(m *service.ChannelMonitor) *channelMonitorResponse
 		Provider:            m.Provider,
 		APIMode:             m.APIMode,
 		Endpoint:            m.Endpoint,
-		APIKeyMasked:        maskAPIKey(m.APIKey),
+		AccountID:           m.AccountID,
+		APIKeyID:            m.APIKeyID,
+		SourceType:          channelMonitorSourceType(m),
+		APIKeyMasked:        channelMonitorAPIKeyMasked(m),
 		APIKeyDecryptFailed: m.APIKeyDecryptFailed,
 		PrimaryModel:        m.PrimaryModel,
 		ExtraModels:         extras,
@@ -170,6 +183,22 @@ func channelMonitorToResponse(m *service.ChannelMonitor) *channelMonitorResponse
 		resp.LastCheckedAt = &s
 	}
 	return resp
+}
+
+// channelMonitorSourceType 供前端区分外部 API 与已有账号来源。
+func channelMonitorSourceType(m *service.ChannelMonitor) string {
+	if m != nil && m.AccountID != nil {
+		return "account"
+	}
+	return "external"
+}
+
+// channelMonitorAPIKeyMasked 避免账号来源的内部占位密钥显示为真实 API Key。
+func channelMonitorAPIKeyMasked(m *service.ChannelMonitor) string {
+	if m != nil && m.AccountID != nil {
+		return ""
+	}
+	return maskAPIKey(m.APIKey)
 }
 
 func checkResultToResponse(r *service.CheckResult) channelMonitorCheckResultResponse {
@@ -269,6 +298,7 @@ func buildListItemResponse(m *service.ChannelMonitor, summary service.MonitorSta
 	resp := channelMonitorToResponse(m)
 	resp.PrimaryStatus = summary.PrimaryStatus
 	resp.PrimaryLatencyMs = summary.PrimaryLatencyMs
+	resp.PrimaryMessage = summary.PrimaryMessage
 	resp.Availability7d = summary.Availability7d
 	resp.ExtraModelsStatus = make([]dto.ChannelMonitorExtraModelStatus, 0, len(summary.ExtraModels))
 	for _, e := range summary.ExtraModels {
@@ -315,6 +345,8 @@ func (h *ChannelMonitorHandler) Create(c *gin.Context) {
 		Provider:         req.Provider,
 		APIMode:          req.APIMode,
 		Endpoint:         req.Endpoint,
+		AccountID:        req.AccountID,
+		APIKeyID:         req.APIKeyID,
 		APIKey:           req.APIKey,
 		PrimaryModel:     req.PrimaryModel,
 		ExtraModels:      req.ExtraModels,
@@ -409,6 +441,10 @@ func (h *ChannelMonitorHandler) Update(c *gin.Context) {
 		Provider:         req.Provider,
 		APIMode:          req.APIMode,
 		Endpoint:         req.Endpoint,
+		AccountID:        req.AccountID,
+		ClearAccount:     req.ClearAccount,
+		APIKeyID:         req.APIKeyID,
+		ClearAPIKeyID:    req.ClearAPIKeyID,
 		APIKey:           req.APIKey,
 		PrimaryModel:     req.PrimaryModel,
 		ExtraModels:      req.ExtraModels,

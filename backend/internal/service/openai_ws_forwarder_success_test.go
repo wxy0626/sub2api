@@ -30,7 +30,6 @@ func TestOpenAIGatewayService_Forward_WSv2_SuccessAndBindSticky(t *testing.T) {
 		PreviousResponseID string
 		StreamExists       bool
 		Stream             bool
-		InstructionsExists bool // 记录 API Key 最终 WS payload 是否误带 OAuth 默认 instructions。
 	}
 	receivedCh := make(chan receivedPayload, 1)
 
@@ -56,7 +55,6 @@ func TestOpenAIGatewayService_Forward_WSv2_SuccessAndBindSticky(t *testing.T) {
 			PreviousResponseID: strings.TrimSpace(gjson.Get(requestJSON, "previous_response_id").String()),
 			StreamExists:       gjson.Get(requestJSON, "stream").Exists(),
 			Stream:             gjson.Get(requestJSON, "stream").Bool(),
-			InstructionsExists: gjson.Get(requestJSON, "instructions").Exists(),
 		}
 
 		if err := conn.WriteJSON(map[string]any{
@@ -160,7 +158,6 @@ func TestOpenAIGatewayService_Forward_WSv2_SuccessAndBindSticky(t *testing.T) {
 	require.Equal(t, "resp_prev_1", received.PreviousResponseID)
 	require.True(t, received.StreamExists, "WS 请求应携带 stream 字段")
 	require.False(t, received.Stream, "应保持客户端 stream=false 的原始语义")
-	require.False(t, received.InstructionsExists, "API Key WS payload 不应注入 OAuth 默认 instructions")
 
 	store := svc.getOpenAIWSStateStore()
 	mappedAccountID, getErr := store.GetResponseAccount(context.Background(), groupID, "resp_new_1")

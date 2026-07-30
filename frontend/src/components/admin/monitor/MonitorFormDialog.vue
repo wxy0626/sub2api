@@ -30,6 +30,24 @@
         </div>
       </div>
 
+      <div>
+        <label class="input-label">{{ t('admin.channelMonitor.form.source') }}</label>
+        <div class="grid grid-cols-2 gap-3">
+          <button type="button" class="rounded-lg border-2 px-3 py-2 text-sm font-medium" :class="form.source_type === 'external' ? 'border-primary-500 bg-primary-50 text-primary-700 dark:bg-primary-500/15 dark:text-primary-300' : 'border-gray-200 text-gray-600 dark:border-dark-700 dark:text-gray-400'" @click="form.source_type = 'external'">
+            {{ t('admin.channelMonitor.form.sourceExternal') }}
+          </button>
+          <button type="button" class="rounded-lg border-2 px-3 py-2 text-sm font-medium" :class="form.source_type === 'account' ? 'border-primary-500 bg-primary-50 text-primary-700 dark:bg-primary-500/15 dark:text-primary-300' : 'border-gray-200 text-gray-600 dark:border-dark-700 dark:text-gray-400'" @click="form.source_type = 'account'">
+            {{ t('admin.channelMonitor.form.sourceAccount') }}
+          </button>
+        </div>
+      </div>
+
+      <div v-if="form.source_type === 'account'">
+        <label class="input-label">{{ t('admin.channelMonitor.form.account') }} <span class="text-red-500">*</span></label>
+        <Select v-model="accountSelectValue" :options="accountOptions" :placeholder="t('admin.channelMonitor.form.accountPlaceholder')" />
+        <p class="mt-1 text-xs text-gray-400">{{ t('admin.channelMonitor.form.accountHint') }}</p>
+      </div>
+
       <div v-if="form.provider === PROVIDER_OPENAI" class="rounded-lg border border-blue-100 bg-blue-50/50 p-3 dark:border-blue-500/20 dark:bg-blue-500/10">
         <label class="input-label">{{ t('admin.channelMonitor.form.apiMode') }}</label>
         <div class="grid gap-3 sm:grid-cols-2">
@@ -48,17 +66,18 @@
         </div>
       </div>
 
-      <div>
+      <div v-if="form.source_type === 'external'">
         <label class="input-label">{{ t('admin.channelMonitor.form.endpoint') }} <span class="text-red-500">*</span></label>
         <div class="flex gap-2">
           <input v-model="form.endpoint" data-testid="monitor-endpoint" type="text" required class="input flex-1" :placeholder="t('admin.channelMonitor.form.endpointPlaceholder')" />
-          <button type="button" @click="useCurrentDomain" class="btn btn-secondary whitespace-nowrap">
+          <button v-if="currentServiceUsesHTTPS" type="button" @click="useCurrentDomain" class="btn btn-secondary whitespace-nowrap">
             {{ t('admin.channelMonitor.form.useCurrentDomain') }}
           </button>
         </div>
+        <p class="mt-1 text-xs text-gray-400">{{ t('admin.channelMonitor.form.endpointHTTPSHint') }}</p>
       </div>
 
-      <div>
+      <div v-if="form.source_type === 'external'">
         <label class="input-label">
           {{ t('admin.channelMonitor.form.apiKey') }}<span v-if="!editing" class="text-red-500"> *</span>
         </label>
@@ -69,17 +88,42 @@
             :required="!editing"
             class="input flex-1"
             :placeholder="editing ? t('admin.channelMonitor.form.apiKeyEditPlaceholder') : t('admin.channelMonitor.form.apiKeyPlaceholder')"
+            @input="selectedMyKey = null"
           />
           <button type="button" @click="openMyKeyPicker" class="btn btn-secondary whitespace-nowrap">
             {{ t('admin.channelMonitor.form.useMyKey') }}
           </button>
         </div>
-        <p v-if="editing && editing.api_key_masked" class="mt-1 text-xs text-gray-400">{{ editing.api_key_masked }}</p>
+        <div v-if="selectedMyKey" class="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
+          <span class="whitespace-nowrap">名称：<span class="font-medium text-gray-700 dark:text-gray-200">{{ selectedMyKey.name }}</span></span>
+          <span class="whitespace-nowrap">密钥：<span class="font-mono">{{ maskApiKey(selectedMyKey.key) }}</span></span>
+          <span class="flex min-w-0 items-center gap-1">
+            分组：
+            <GroupBadge
+              v-if="selectedMyKey.group"
+              :name="selectedMyKey.group.name"
+              :platform="selectedMyKey.group.platform"
+              :subscription-type="selectedMyKey.group.subscription_type"
+              :rate-multiplier="selectedMyKey.group.rate_multiplier"
+              :user-rate-multiplier="userGroupRates[selectedMyKey.group.id]"
+            />
+            <span v-else class="text-gray-400">—</span>
+          </span>
+        </div>
+        <p v-else-if="editing && editing.api_key_masked" class="mt-1 text-xs text-gray-400">{{ editing.api_key_masked }}</p>
       </div>
 
       <div>
         <label class="input-label">{{ t('admin.channelMonitor.form.primaryModel') }} <span class="text-red-500">*</span></label>
+        <Select
+          v-if="form.provider === PROVIDER_OPENAI"
+          v-model="form.primary_model"
+          data-testid="monitor-primary-model"
+          :options="openAIPrimaryModelOptions"
+          :searchable="false"
+        />
         <input
+          v-else
           v-model="form.primary_model"
           data-testid="monitor-primary-model"
           type="text"
@@ -190,6 +234,7 @@ import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import { adminAPI } from '@/api/admin'
+import { accountsAPI } from '@/api/admin/accounts'
 import { keysAPI } from '@/api/keys'
 import { userGroupsAPI } from '@/api/groups'
 import type {
@@ -201,8 +246,9 @@ import type {
   UpdateParams,
 } from '@/api/admin/channelMonitor'
 import type { ChannelMonitorTemplate } from '@/api/admin/channelMonitorTemplate'
-import type { ApiKey } from '@/types'
+import type { Account, ApiKey } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import GroupBadge from '@/components/common/GroupBadge.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import Select from '@/components/common/Select.vue'
 import ModelTagInput from '@/components/admin/channel/ModelTagInput.vue'
@@ -211,6 +257,7 @@ import MonitorKeyPickerDialog from '@/components/admin/monitor/MonitorKeyPickerD
 import MonitorAdvancedRequestConfig from '@/components/admin/monitor/MonitorAdvancedRequestConfig.vue'
 import ProviderIcon from '@/components/user/monitor/ProviderIcon.vue'
 import { useChannelMonitorFormat } from '@/composables/useChannelMonitorFormat'
+import { maskApiKey } from '@/utils/maskApiKey'
 import {
   PROVIDER_OPENAI,
   PROVIDER_ANTHROPIC,
@@ -237,6 +284,18 @@ const { t } = useI18n()
 const appStore = useAppStore()
 const { providerPickerClass } = useChannelMonitorFormat()
 
+// OpenAI 渠道监控新建时使用的主模型默认值。
+const DEFAULT_OPENAI_PRIMARY_MODEL = 'gpt-5.6-luna'
+
+// OpenAI 主模型下拉框提供的 GPT-5.5 / GPT-5.6 系列模型。
+const OPENAI_PRIMARY_MODEL_VALUES = [
+  'gpt-5.5',
+  'gpt-5.5-pro',
+  'gpt-5.6-sol',
+  'gpt-5.6-terra',
+  DEFAULT_OPENAI_PRIMARY_MODEL,
+] as const
+
 // System-configured default interval for new monitors. Falls back to the static
 // constant when public settings haven't loaded yet or store the legacy 0 value.
 const systemDefaultInterval = computed<number>(() => {
@@ -254,11 +313,15 @@ const showKeyPicker = ref(false)
 const myKeysLoading = ref(false)
 const myActiveKeys = ref<ApiKey[]>([])
 const userGroupRates = ref<Record<number, number>>({})
+// 当前通过“使用我的 Key”选中的 Key，用于在表单中展示名称、脱敏密钥和分组。
+const selectedMyKey = ref<ApiKey | null>(null)
 
 interface MonitorForm {
   name: string
   provider: Provider
   api_mode: APIMode
+  source_type: 'external' | 'account'
+  account_id: number | null
   endpoint: string
   api_key: string
   primary_model: string
@@ -276,11 +339,13 @@ interface MonitorForm {
 
 const form = reactive<MonitorForm>({
   name: '',
-  provider: PROVIDER_ANTHROPIC,
+  provider: PROVIDER_OPENAI,
   api_mode: API_MODE_CHAT_COMPLETIONS,
+  source_type: 'external',
+  account_id: null,
   endpoint: '',
   api_key: '',
-  primary_model: '',
+  primary_model: DEFAULT_OPENAI_PRIMARY_MODEL,
   extra_models: [],
   group_name: '',
   interval_seconds: systemDefaultInterval.value,
@@ -292,8 +357,43 @@ const form = reactive<MonitorForm>({
   body_override: null,
 })
 
+// OpenAI 旧监控的自定义模型会保留在下拉框中，避免编辑时意外改写历史配置。
+const openAIPrimaryModelOptions = computed(() => {
+  const options: Array<{ value: string; label: string }> = OPENAI_PRIMARY_MODEL_VALUES.map((model) => ({ value: model, label: model }))
+  const currentModel = form.primary_model.trim()
+  if (currentModel && !OPENAI_PRIMARY_MODEL_VALUES.includes(currentModel as typeof OPENAI_PRIMARY_MODEL_VALUES[number])) {
+    options.unshift({ value: currentModel, label: currentModel })
+  }
+  return options
+})
+
 // jitter 上限与后端校验一致：interval - jitter 不得低于最小检测间隔 15 秒。
 const maxJitterSeconds = computed<number>(() => Math.max(0, (form.interval_seconds || 0) - 15))
+
+// 当前服务是否由 HTTPS 提供；仅 HTTPS 才能作为安全的监控上游地址。
+const currentServiceUsesHTTPS = window.location.protocol === 'https:'
+
+// 可选账号列表仅用于“已有账号”来源，凭据始终保留在后端。
+const monitorAccounts = ref<Account[]>([])
+
+const accountOptions = computed(() => monitorAccounts.value.map((account) => ({
+  value: String(account.id),
+  label: `${account.name || `#${account.id}`} (#${account.id})`,
+})))
+
+// accountSelectValue 在 Select 的字符串值与表单数字账号 ID 之间转换。
+const accountSelectValue = computed<string>({
+  get: () => (form.account_id == null ? '' : String(form.account_id)),
+  set: (raw: string) => {
+    const id = Number(raw)
+    form.account_id = Number.isSafeInteger(id) && id > 0 ? id : null
+    const account = monitorAccounts.value.find((item) => item.id === form.account_id)
+    if (account && ['openai', 'anthropic', 'gemini', 'grok'].includes(account.platform)) {
+      selectProvider(account.platform as Provider)
+      if (account.platform === PROVIDER_OPENAI) form.api_mode = API_MODE_RESPONSES
+    }
+  },
+})
 
 let suppressFormWatchers = false
 
@@ -324,6 +424,19 @@ async function loadTemplates() {
     console.warn('load monitor templates failed', err)
   } finally {
     templatesLoading.value = false
+  }
+}
+
+// loadMonitorAccounts 只加载状态正常的账号，账号测试会在服务端使用其已保存凭据。
+async function loadMonitorAccounts() {
+  if (monitorAccounts.value.length > 0) return
+  try {
+    const response = await accountsAPI.list(1, 100, { status: 'active' })
+    monitorAccounts.value = response.items.filter((account) =>
+      ['openai', 'anthropic', 'gemini', 'grok'].includes(account.platform),
+    )
+  } catch (err: unknown) {
+    appStore.showError(extractApiErrorMessage(err, t('common.error')))
   }
 }
 
@@ -417,6 +530,9 @@ function selectProvider(provider: Provider) {
     if (!form.primary_model.trim()) form.primary_model = DEFAULT_GROK_MODEL
     return
   }
+  if (provider === PROVIDER_OPENAI && !form.primary_model.trim()) {
+    form.primary_model = DEFAULT_OPENAI_PRIMARY_MODEL
+  }
   if (clearGrokEndpoint) form.endpoint = ''
   if (clearGrokModel) form.primary_model = ''
 }
@@ -429,6 +545,7 @@ function selectProvider(provider: Provider) {
 watch(() => form.provider, () => {
   if (suppressFormWatchers) return
   form.api_key = ''
+  selectedMyKey.value = null
   if (form.provider !== PROVIDER_OPENAI) {
     form.api_mode = API_MODE_CHAT_COMPLETIONS
   }
@@ -445,11 +562,14 @@ watch(() => form.api_mode, () => {
 function resetForm() {
   suppressFormWatchers = true
   form.name = ''
-  form.provider = PROVIDER_ANTHROPIC
+  form.provider = PROVIDER_OPENAI
   form.api_mode = API_MODE_CHAT_COMPLETIONS
+  form.source_type = 'external'
+  form.account_id = null
   form.endpoint = ''
   form.api_key = ''
-  form.primary_model = ''
+  selectedMyKey.value = null
+  form.primary_model = DEFAULT_OPENAI_PRIMARY_MODEL
   form.extra_models = []
   form.group_name = ''
   form.interval_seconds = systemDefaultInterval.value
@@ -467,8 +587,11 @@ function loadFromMonitor(m: ChannelMonitor) {
   form.name = m.name
   form.provider = m.provider
   form.api_mode = normalizeAPIMode(m.api_mode)
+  form.source_type = m.source_type === 'account' ? 'account' : 'external'
+  form.account_id = m.account_id ?? null
   form.endpoint = m.endpoint
   form.api_key = ''
+  selectedMyKey.value = null
   form.primary_model = m.primary_model
   form.extra_models = [...(m.extra_models || [])]
   form.group_name = m.group_name || ''
@@ -486,21 +609,41 @@ function loadFromMonitor(m: ChannelMonitor) {
 // 同时拉取模板列表（cache 过的话一次性返回）。
 watch(
   () => [props.show, props.monitor] as const,
-  ([show, m]) => {
+  async ([show, m]) => {
     if (!show) return
     void loadTemplates()
+    void loadMonitorAccounts()
     if (m) loadFromMonitor(m)
     else resetForm()
+    if (m?.api_key_id) {
+      await loadMyActiveKeys()
+      selectedMyKey.value = myActiveKeys.value.find((key) => key.id === m.api_key_id) ?? null
+    }
   },
   { immediate: true },
 )
 
+// useCurrentDomain 仅在当前服务使用 HTTPS 时写入，避免本地 HTTP 地址触发后端安全校验。
 function useCurrentDomain() {
   form.endpoint = window.location.origin
 }
 
+// validateEndpointForSubmit 在提交前提示 HTTPS 要求，避免用户只在服务端收到英文校验错误。
+function validateEndpointForSubmit(): boolean {
+  try {
+    return new URL(form.endpoint.trim()).protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
 async function openMyKeyPicker() {
   showKeyPicker.value = true
+  await loadMyActiveKeys()
+}
+
+// loadMyActiveKeys 加载可供渠道监控使用的 Key，并在编辑已有监控时恢复 Key 摘要。
+async function loadMyActiveKeys() {
   if (myActiveKeys.value.length > 0) return
   myKeysLoading.value = true
   try {
@@ -525,6 +668,7 @@ async function openMyKeyPicker() {
 
 function pickMyKey(k: ApiKey) {
   form.api_key = k.key
+  selectedMyKey.value = k
   showKeyPicker.value = false
 }
 
@@ -533,8 +677,10 @@ function buildPayload(): CreateParams {
     name: form.name.trim(),
     provider: form.provider,
     api_mode: form.provider === PROVIDER_OPENAI ? form.api_mode : API_MODE_CHAT_COMPLETIONS,
-    endpoint: form.endpoint.trim(),
-    api_key: form.api_key.trim(),
+    endpoint: form.source_type === 'external' ? form.endpoint.trim() : '',
+    account_id: form.source_type === 'account' ? form.account_id : undefined,
+    api_key_id: form.source_type === 'external' ? selectedMyKey.value?.id : undefined,
+    api_key: form.source_type === 'external' ? form.api_key.trim() : '',
     primary_model: form.primary_model.trim(),
     extra_models: form.extra_models,
     group_name: form.group_name.trim(),
@@ -558,6 +704,14 @@ async function handleSubmit() {
     appStore.showError(t('admin.channelMonitor.primaryModelRequired'))
     return
   }
+  if (form.source_type === 'account' && form.account_id == null) {
+    appStore.showError(t('admin.channelMonitor.form.accountRequired'))
+    return
+  }
+  if (form.source_type === 'external' && !validateEndpointForSubmit()) {
+    appStore.showError(t('admin.channelMonitor.form.endpointHTTPSRequired'))
+    return
+  }
 
   submitting.value = true
   try {
@@ -565,6 +719,10 @@ async function handleSubmit() {
     if (target) {
       const { api_key, ...rest } = buildPayload()
       const req: UpdateParams = { ...rest }
+      // 编辑已有账号来源的监控时，切回第三方 API 必须显式清除后端保存的 account_id。
+      if (form.source_type === 'external') req.clear_account = true
+      // 手动输入 API Key 时删除此前的“使用我的 Key”关联，防止摘要与密钥不一致。
+      if (form.source_type === 'external' && !selectedMyKey.value) req.clear_api_key_id = true
       // Only send api_key if user typed a new value
       if (api_key) req.api_key = api_key
       // template_id=null 用 clear_template=true 明确告诉后端清空（pointer 语义）

@@ -16,8 +16,6 @@ $标准错误日志 = Join-Path $日志目录 'sub2api-singapore-proxy-tunnel.er
 $状态日志 = Join-Path $日志目录 'sub2api-singapore-proxy-tunnel-launcher.log'
 # 新加坡 SSH 隧道机器可读状态文件。
 $状态文件 = Join-Path $日志目录 'sub2api-singapore-proxy-tunnel-state.json'
-# SSH 建连确认等待毫秒：避免进程刚启动便被标记为已建立，随后又因远端端口占用立即退出。
-$SSH建连确认等待毫秒 = 2000
 
 # SSH 参数：只建立 17898 到新加坡专用 17998 的反向隧道，不影响日本 17897 隧道。
 $SSH参数 = @(
@@ -58,22 +56,6 @@ function 写入新加坡隧道状态 {
         ssh_exit_code = $SSH退出码
     }
     $隧道状态对象 | ConvertTo-Json -Compress | Set-Content -LiteralPath $状态文件 -Encoding UTF8
-}
-
-# 获取 SSH 最近原始错误：将远端端口占用等实际原因写入状态，避免主启动器只报告退出码。
-function 获取新加坡SSH错误摘要 {
-    if (-not (Test-Path -LiteralPath $标准错误日志 -PathType Leaf)) {
-        return $null
-    }
-
-    $错误行 = @(Get-Content -LiteralPath $标准错误日志 -ErrorAction SilentlyContinue |
-        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-        Select-Object -Last 1)
-    if ($错误行.Count -eq 0) {
-        return $null
-    }
-
-    return $错误行[0].Trim()
 }
 
 # 获取同一端口的既有 SSH 进程：只识别新加坡端口，绝不接管日本隧道。
@@ -137,15 +119,13 @@ try {
         写入新加坡隧道日志 '新加坡专用代理已就绪，正在建立 SSH 反向隧道。'
         写入新加坡隧道状态 -状态 'connecting' -消息 '本机新加坡专用代理已就绪，正在建立 SSH 反向隧道。'
         $SSH进程 = Start-Process -FilePath 'ssh.exe' -ArgumentList $SSH参数 -WindowStyle Hidden -RedirectStandardOutput $标准输出日志 -RedirectStandardError $标准错误日志 -PassThru
-        Start-Sleep -Milliseconds $SSH建连确认等待毫秒
+        Start-Sleep -Milliseconds 500
         if (-not $SSH进程.HasExited) {
             写入新加坡隧道日志 "新加坡 SSH 反向隧道已建立，SSH 进程 ID $($SSH进程.Id)。"
             写入新加坡隧道状态 -状态 'connected' -消息 '新加坡 SSH 反向隧道已建立。' -SSH进程ID $SSH进程.Id
         }
         $SSH进程.WaitForExit()
-        $SSH错误摘要 = 获取新加坡SSH错误摘要
-        $原始错误说明 = if ([string]::IsNullOrWhiteSpace($SSH错误摘要)) { '' } else { " SSH 原始错误：$SSH错误摘要" }
-        $退出消息 = "新加坡 SSH 反向隧道已退出，退出码 $($SSH进程.ExitCode)，守护会在 $当前重试间隔秒 秒后重连。$原始错误说明"
+        $退出消息 = "新加坡 SSH 反向隧道已退出，退出码 $($SSH进程.ExitCode)，守护会在 $当前重试间隔秒 秒后重连。"
         写入新加坡隧道日志 $退出消息
         写入新加坡隧道状态 -状态 'failed' -消息 $退出消息 -SSH进程ID $SSH进程.Id -SSH退出码 $SSH进程.ExitCode
         Start-Sleep -Seconds $当前重试间隔秒

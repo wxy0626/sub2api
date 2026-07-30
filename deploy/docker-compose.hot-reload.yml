@@ -1,0 +1,89 @@
+name: sub2api-hot-reload
+
+services:
+  # 后端源码监听容器：通过 Air 重编译，并嵌入前端静态资源。
+  sub2api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.hot-reload
+    image: sub2api:0.1.168-local-hot-reload
+    container_name: sub2api
+    restart: unless-stopped
+    working_dir: /workspace/sub2api/backend
+    command: ["air", "-c", "/config/air.hot-reload.toml"]
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ${SUB2API_RUNTIME_DIR:?需要运行时目录}/data:/app/data
+      # Air 只读取源码；使用可写挂载以支持 Docker Desktop 的文件变更通知。
+      - ${SUB2API_DEV_SOURCE_DIR:?需要 dev31 源码目录}:/workspace/sub2api
+      - ./air.hot-reload.toml:/config/air.hot-reload.toml:ro
+      - sub2api-go-mod-cache:/go/pkg/mod
+      - sub2api-go-build-cache:/root/.cache/go-build
+    environment:
+      AUTO_SETUP: ${AUTO_SETUP}
+      SERVER_HOST: ${SERVER_HOST}
+      SERVER_PORT: ${SERVER_PORT}
+      SERVER_MODE: debug
+      DATABASE_HOST: ${DATABASE_HOST}
+      DATABASE_PORT: ${DATABASE_PORT}
+      DATABASE_USER: ${DATABASE_USER}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
+      DATABASE_DBNAME: ${DATABASE_DBNAME}
+      DATABASE_SSLMODE: ${DATABASE_SSLMODE}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      JWT_SECRET: ${JWT_SECRET}
+      TOTP_ENCRYPTION_KEY: ${TOTP_ENCRYPTION_KEY}
+      TZ: ${TZ}
+      GATEWAY_OPENAI_HTTP2_ENABLED: ${GATEWAY_OPENAI_HTTP2_ENABLED}
+      HTTP_PROXY: ${HTTP_PROXY}
+      HTTPS_PROXY: ${HTTPS_PROXY}
+      NO_PROXY: ${NO_PROXY}
+    networks:
+      - local-runtime
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-T", "5", "-O", "/dev/null", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 30s
+
+  # Vite 提供前端 HMR，所有 API 请求代理到同一 Docker 网络内的后端。
+  sub2api-vite:
+    image: node:24-alpine
+    container_name: sub2api-vite
+    restart: unless-stopped
+    init: true
+    working_dir: /workspace/sub2api/frontend
+    command: >
+      sh -c "corepack enable && corepack prepare pnpm@9 --activate &&
+      pnpm config set store-dir /pnpm/store &&
+      pnpm install --frozen-lockfile --prefer-offline &&
+      pnpm dev --host 0.0.0.0"
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      # Vite 的 node_modules 使用独立卷，源码目录需可写以容纳其嵌套挂载点。
+      - ${SUB2API_DEV_SOURCE_DIR:?需要 dev31 源码目录}:/workspace/sub2api
+      - sub2api-frontend-node-modules:/workspace/sub2api/frontend/node_modules
+      - sub2api-pnpm-store:/pnpm/store
+    environment:
+      VITE_DEV_PROXY_TARGET: http://sub2api:8080
+      VITE_DEV_PORT: 3000
+      CHOKIDAR_USEPOLLING: "true"
+      CHOKIDAR_INTERVAL: "300"
+    networks:
+      - local-runtime
+
+volumes:
+  sub2api-go-mod-cache:
+  sub2api-go-build-cache:
+  sub2api-frontend-node-modules:
+  sub2api-pnpm-store:
+
+networks:
+  local-runtime:
+    external: true
+    name: deploy_default

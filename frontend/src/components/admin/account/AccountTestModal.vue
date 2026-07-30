@@ -63,6 +63,7 @@
           v-model="testMode"
           :options="openAITestModeOptions"
           :disabled="status === 'connecting'"
+          @update:model-value="handleTestModeChange"
         />
       </div>
 
@@ -252,6 +253,9 @@ import { useClipboard } from '@/composables/useClipboard'
 import { buildApiUrl } from '@/api/client'
 import { ADMIN_UI_REQUEST_HEADER } from '@/api/adminUIRequest'
 import { adminAPI } from '@/api/admin'
+import { normalizeDisplayErrorMessage } from '@/utils/errorMessage'
+import { resolveAccountTestModelSelection } from '@/utils/accountTestModelSelection'
+import type { AccountTestMode } from '@/api/admin/accounts'
 import type { Account, ClaudeModel } from '@/types'
 
 const { t } = useI18n()
@@ -274,6 +278,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'close'): void
+  (e: 'testing-changed', testing: boolean): void
+  (e: 'account-updated', account: Account): void
 }>()
 
 const terminalRef = ref<HTMLElement | null>(null)
@@ -288,13 +294,67 @@ const loadingModels = ref(false)
 let abortController: AbortController | null = null
 const generatedImages = ref<PreviewImage[]>([])
 const previewImageUrl = ref('')
-const testMode = ref<'default' | 'compact'>('default')
+// testMode 为当前账号持久化的 OpenAI 模型测试模式。
+const testMode = ref<AccountTestMode>('default')
+// 已确认写入账号配置的模式，保存失败时用于回滚界面选择。
+let persistedTestMode: AccountTestMode = 'default'
+// 保存序号保证快速连续切换时，最后一次选择最终写入账号配置。
+let testModeRevision = 0
+let savedTestModeRevision = 0
+let testModeSaveTask: Promise<void> | null = null
 const isOpenAIAccount = computed(() => props.account?.platform === 'openai')
 const openAITestModeOptions = computed(() => [
   { value: 'default', label: t('admin.accounts.openai.testModeDefault') },
-  { value: 'compact', label: t('admin.accounts.openai.testModeCompact') }
+  { value: 'responses', label: t('admin.accounts.openai.testModeResponses') },
+  { value: 'compact', label: t('admin.accounts.openai.testModeCompact') },
+  { value: 'workspace', label: t('admin.accounts.openai.testModeWorkspace') }
 ])
-const prioritizedGeminiModels = ['gemini-3.1-flash-image', 'gemini-2.5-flash-image', 'gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-3-flash-preview', 'gemini-3-pro-preview', 'gemini-2.0-flash']
+
+// resolveAccountTestMode 仅接受后端允许保存的值，旧账号或异常值均按默认模式处理。
+const resolveAccountTestMode = (account: Account | null): AccountTestMode => {
+  const mode = account?.extra?.account_test_mode
+  return mode === 'responses' || mode === 'compact' || mode === 'workspace' || mode === 'default'
+    ? mode
+    : 'default'
+}
+
+// handleTestModeChange 将用户选择立即加入保存队列，避免关闭并重开弹窗后回到默认值。
+const handleTestModeChange = (value: string | number | boolean | null) => {
+  if (value !== 'default' && value !== 'responses' && value !== 'compact' && value !== 'workspace') return
+  testMode.value = value
+  if (!props.show || !isOpenAIAccount.value || !props.account) return
+
+  testModeRevision += 1
+  if (!testModeSaveTask) {
+    const accountID = props.account.id
+    testModeSaveTask = flushTestModeSave(accountID).finally(() => {
+      testModeSaveTask = null
+    })
+  }
+}
+
+// flushTestModeSave 串行写入模式；连续切换时总会在前一次结束后写入最后一次选择。
+const flushTestModeSave = async (accountID: number): Promise<void> => {
+  while (savedTestModeRevision < testModeRevision) {
+    const revision = testModeRevision
+    const modeToSave = testMode.value
+    try {
+      const updatedAccount = await adminAPI.accounts.updateTestMode(accountID, modeToSave)
+      persistedTestMode = modeToSave
+      savedTestModeRevision = revision
+      if (revision === testModeRevision) emit('account-updated', updatedAccount)
+    } catch (error: unknown) {
+      // 旧选择失败而用户已选了新值时，继续写入最新选择；最终选择失败才回滚。
+      if (revision !== testModeRevision) continue
+      testMode.value = persistedTestMode
+      savedTestModeRevision = revision
+      const technicalDetails = error instanceof Error ? error.message : String(error)
+      errorMessage.value = normalizeDisplayErrorMessage(technicalDetails, '保存模型测试模式失败，请检查账号权限和网络后重试。')
+      status.value = 'error'
+      addLine(`错误：${errorMessage.value}`, 'text-red-400')
+    }
+  }
+}
 const supportsGeminiImageTest = computed(() => {
   const modelID = selectedModelId.value.toLowerCase()
   if (!modelID.startsWith('gemini-') || !modelID.includes('-image')) return false
@@ -310,24 +370,17 @@ const supportsOpenAIImageTest = computed(() => {
 
 const supportsImageTest = computed(() => supportsGeminiImageTest.value || supportsOpenAIImageTest.value)
 
-const sortTestModels = (models: ClaudeModel[]) => {
-  const priorityMap = new Map(prioritizedGeminiModels.map((id, index) => [id, index]))
-
-  return [...models].sort((a, b) => {
-    const aPriority = priorityMap.get(a.id) ?? Number.MAX_SAFE_INTEGER
-    const bPriority = priorityMap.get(b.id) ?? Number.MAX_SAFE_INTEGER
-    if (aPriority !== bPriority) return aPriority - bPriority
-    return 0
-  })
-}
-
 // Load available models when modal opens
 watch(
   () => props.show,
   async (newVal) => {
     if (newVal && props.account) {
       testPrompt.value = ''
-      testMode.value = 'default'
+      // 仅在账号缺少保存值时使用 default；不会因重新打开弹窗覆盖用户设置。
+      persistedTestMode = resolveAccountTestMode(props.account)
+      testMode.value = persistedTestMode
+      testModeRevision = 0
+      savedTestModeRevision = 0
       resetState()
       await loadAvailableModels()
     } else {
@@ -347,21 +400,13 @@ const loadAvailableModels = async () => {
 
   loadingModels.value = true
   selectedModelId.value = '' // Reset selection before loading
+
   try {
     const models = await adminAPI.accounts.getAvailableModels(props.account.id)
-    availableModels.value = props.account.platform === 'gemini' || props.account.platform === 'antigravity'
-      ? sortTestModels(models)
-      : models
-    // Default selection by platform
-    if (availableModels.value.length > 0) {
-      if (props.account.platform === 'gemini') {
-        selectedModelId.value = availableModels.value[0].id
-      } else {
-        // Try to select Sonnet as default, otherwise use first model
-        const sonnetModel = availableModels.value.find((m) => m.id.includes('sonnet'))
-        selectedModelId.value = sonnetModel?.id || availableModels.value[0].id
-      }
-    }
+    // 弹窗与状态栏快捷检测必须共享同一预填模型，避免同账号检测到不同模型。
+    const selection = resolveAccountTestModelSelection(props.account.platform, models)
+    availableModels.value = selection.models
+    selectedModelId.value = selection.modelId
   } catch (error) {
     console.error('Failed to load available models:', error)
     // Fallback to empty list
@@ -383,6 +428,7 @@ const resetState = () => {
 
 const handleClose = () => {
   abortStream()
+  emit('testing-changed', false)
   emit('close')
 }
 
@@ -410,6 +456,7 @@ const startTest = async () => {
 
   resetState()
   status.value = 'connecting'
+  emit('testing-changed', true)
   addLine(t('admin.accounts.startingTestForAccount', { name: props.account.name }), 'text-blue-400')
   addLine(t('admin.accounts.testAccountTypeLabel', { type: props.account.type }), 'text-gray-400')
   addLine('', 'text-gray-300')
@@ -422,13 +469,16 @@ const startTest = async () => {
     const requestBody: {
       model_id: string
       prompt: string
-      mode?: 'default' | 'compact'
+      mode?: 'default' | 'responses' | 'compact' | 'workspace'
     } = {
       model_id: selectedModelId.value,
       prompt: supportsImageTest.value ? testPrompt.value.trim() : ''
     }
     if (isOpenAIAccount.value) {
       requestBody.mode = testMode.value
+      if (testMode.value === 'workspace') {
+        addLine(t('admin.accounts.workspaceProbeStarted'), 'text-cyan-300')
+      }
     }
 
     // Use the configured API base; EventSource does not support POST.
@@ -486,9 +536,11 @@ const startTest = async () => {
       return
     }
     status.value = 'error'
-    const msg = error instanceof Error ? error.message : 'Unknown error'
+    const msg = normalizeAccountTestErrorMessage(error instanceof Error ? error.message : '')
     errorMessage.value = msg
-    addLine(`Error: ${msg}`, 'text-red-400')
+    addLine(`错误：${msg}`, 'text-red-400')
+  } finally {
+    emit('testing-changed', false)
   }
 }
 
@@ -498,6 +550,7 @@ const handleEvent = (event: {
   model?: string
   success?: boolean
   error?: string
+  code?: string
   image_url?: string
   mime_type?: string
 }) => {
@@ -536,8 +589,14 @@ const handleEvent = (event: {
 
     case 'status':
       if (event.text) {
-        addLine(event.text, 'text-cyan-300')
+        addLine(normalizeAccountTestStatusMessage(event.text), 'text-cyan-300')
       }
+      break
+
+    case 'workspace_deactivated':
+      status.value = 'error'
+      errorMessage.value = normalizeAccountTestErrorMessage(event.error || event.code || 'deactivated_workspace')
+      addLine(errorMessage.value, 'text-red-400')
       break
 
     case 'test_complete':
@@ -550,19 +609,32 @@ const handleEvent = (event: {
         status.value = 'success'
       } else {
         status.value = 'error'
-        errorMessage.value = event.error || 'Test failed'
+        errorMessage.value = normalizeAccountTestErrorMessage(event.error)
       }
       break
 
     case 'error':
       status.value = 'error'
-      errorMessage.value = event.error || 'Unknown error'
+      errorMessage.value = normalizeAccountTestErrorMessage(event.error)
       if (streamingContent.value) {
         addLine(streamingContent.value, 'text-green-300')
         streamingContent.value = ''
       }
       break
   }
+}
+
+// normalizeAccountTestErrorMessage 统一显示中文说明与管理员后端提供的技术详情。
+const normalizeAccountTestErrorMessage = (rawMessage?: string): string => {
+  return normalizeDisplayErrorMessage(rawMessage, t('admin.accounts.testFailed'))
+}
+
+// normalizeAccountTestStatusMessage 将旧服务的英文状态信息转换为当前界面语言。
+const normalizeAccountTestStatusMessage = (rawMessage: string): string => {
+  if (rawMessage.toLowerCase().includes('upstream connection closed unexpectedly')) {
+    return t('admin.accounts.upstreamRetrying')
+  }
+  return rawMessage
 }
 
 const copyOutput = () => {

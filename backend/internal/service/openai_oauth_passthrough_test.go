@@ -182,75 +182,6 @@ func TestOpenAIGatewayService_NativeResponsesBodyModificationPreservesHTMLChars(
 	require.NotContains(t, string(upstream.lastBody), `\\u0026`)
 }
 
-func TestOpenAIGatewayService_NativeOAuthSystemPromptIsNotDuplicated(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	const systemPrompt = "Unique native Responses system prompt for token accounting."
-	body := []byte(`{"model":"gpt-5.5","stream":false,"input":[{"type":"message","role":"system","content":"` + systemPrompt + `"},{"type":"message","role":"user","content":"hello"}]}`)
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
-	c.Request.Header.Set("Content-Type", "application/json")
-
-	upstream := &httpUpstreamRecorder{resp: &http.Response{
-		StatusCode: http.StatusBadRequest,
-		Header:     http.Header{"Content-Type": []string{"application/json"}},
-		Body:       io.NopCloser(strings.NewReader(`{"error":{"type":"invalid_request_error","message":"capture"}}`)),
-	}}
-	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
-	account := &Account{
-		ID: 457, Name: "native-oauth-system-dedupe", Platform: PlatformOpenAI, Type: AccountTypeOAuth,
-		Concurrency: 1, Credentials: map[string]any{
-			"access_token": "oauth-token", "chatgpt_account_id": "chatgpt-acc",
-		},
-	}
-
-	result, err := svc.Forward(context.Background(), c, account, body)
-	require.Error(t, err)
-	require.Nil(t, result)
-	require.Equal(t, systemPrompt, strings.TrimSpace(strings.SplitN(gjson.GetBytes(upstream.lastBody, "instructions").String(), "\n\n", 2)[0]))
-	require.Equal(t, int64(1), gjson.GetBytes(upstream.lastBody, "input.#").Int())
-	require.Equal(t, "user", gjson.GetBytes(upstream.lastBody, "input.0.role").String())
-	require.Equal(t, 1, strings.Count(string(upstream.lastBody), systemPrompt))
-	defaultInstructions := defaultCodexSynthInstructions("gpt-5.5")
-	require.NotEmpty(t, defaultInstructions)
-	finalInstructions := gjson.GetBytes(upstream.lastBody, "instructions").String()
-	require.Equal(t, 1, strings.Count(finalInstructions, defaultInstructions),
-		"默认 Codex instructions 只能在最终上游 body 中出现一次")
-}
-
-// TestOpenAIGatewayService_NativeOAuthJSONOutputDoesNotDuplicateSystemPrompt 验证结构化输出请求不会重复计费 system 文本。
-func TestOpenAIGatewayService_NativeOAuthJSONOutputDoesNotDuplicateSystemPrompt(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	const systemPrompt = "Return JSON only."
-	body := []byte(`{"model":"gpt-5.5","stream":false,"input":[{"type":"message","role":"system","content":"` + systemPrompt + `"},{"type":"message","role":"user","content":"hello"}],"text":{"format":{"type":"json_schema","name":"answer","schema":{"type":"object"}}}}`)
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
-	c.Request.Header.Set("Content-Type", "application/json")
-
-	upstream := &httpUpstreamRecorder{resp: &http.Response{
-		StatusCode: http.StatusBadRequest,
-		Header:     http.Header{"Content-Type": []string{"application/json"}},
-		Body:       io.NopCloser(strings.NewReader(`{"error":{"type":"invalid_request_error","message":"capture"}}`)),
-	}}
-	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
-	account := &Account{
-		ID: 458, Name: "native-oauth-json-system", Platform: PlatformOpenAI, Type: AccountTypeOAuth,
-		Concurrency: 1, Credentials: map[string]any{
-			"access_token": "oauth-token", "chatgpt_account_id": "chatgpt-acc",
-		},
-	}
-
-	result, err := svc.Forward(context.Background(), c, account, body)
-	require.Error(t, err)
-	require.Nil(t, result)
-	require.Equal(t, int64(1), gjson.GetBytes(upstream.lastBody, "input.#").Int())
-	require.Equal(t, "user", gjson.GetBytes(upstream.lastBody, "input.0.role").String())
-	require.Equal(t, 1, strings.Count(string(upstream.lastBody), systemPrompt))
-}
-
 func TestOpenAIGatewayService_OAuthMessagesBridgeDoesNotInjectDefaultInstructions(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -1342,42 +1273,6 @@ func TestOpenAIGatewayService_APIKeyPassthrough_CompactErrorAfterKeepaliveIsFail
 	require.NotContains(t, rec.Body.String(), "secret-upstream.example")
 }
 
-// TestOpenAIGatewayService_APIKeyPassthrough_CompactContextWindowAfterKeepalivePreservesErrorCode 验证 compact 心跳提交后仍保留上下文错误码。
-func TestOpenAIGatewayService_APIKeyPassthrough_CompactContextWindowAfterKeepalivePreservesErrorCode(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/compact", bytes.NewReader(nil))
-	MarkOpenAICompactClientStream(c)
-	stop := StartOpenAICompactSSEKeepalive(c, keepaliveTestInterval)
-	defer stop()
-	waitForKeepaliveBeats()
-
-	const message = "Your input exceeds the context window of this model. Please adjust your input and try again."
-	svc := &OpenAIGatewayService{
-		cfg: &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: false}},
-		httpUpstream: &httpUpstreamRecorder{resp: &http.Response{
-			StatusCode: http.StatusBadGateway,
-			Header:     http.Header{"Content-Type": []string{"application/json"}},
-			Body:       io.NopCloser(strings.NewReader(`{"error":{"type":"upstream_error","message":"` + message + `"}}`)),
-		}},
-	}
-	account := &Account{
-		ID: 128, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 1,
-		Credentials: map[string]any{"api_key": "sk-test", "base_url": "https://api.example.test"},
-		Extra:       map[string]any{"openai_passthrough": true}, Status: StatusActive, Schedulable: true,
-	}
-
-	_, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.2","input":"hello"}`))
-	require.Error(t, err)
-	require.Equal(t, http.StatusOK, rec.Code)
-	events := parseCompactBridgeSSE(t, stripKeepaliveComments(rec.Body.String()))
-	require.Len(t, events, 1)
-	require.Equal(t, "response.failed", events[0][0])
-	require.Equal(t, openAIContextWindowErrorCode, gjson.Get(events[0][1], "response.error.code").String())
-	require.Equal(t, message, gjson.Get(events[0][1], "response.error.message").String())
-}
-
 func TestOpenAIGatewayService_OpenAIPassthrough_RetryableStatusesTriggerFailover(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	originalBody := []byte(`{"model":"gpt-5.2","stream":false,"instructions":"local-test-instructions","input":[{"type":"text","text":"hi"}]}`)
@@ -1662,9 +1557,8 @@ func TestOpenAIGatewayService_APIKeyPassthrough_ContextWindow502DoesNotFailover(
 	var failoverErr *UpstreamFailoverError
 	require.False(t, errors.As(err, &failoverErr), "context-window errors are deterministic request failures")
 	require.True(t, c.Writer.Written())
-	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Equal(t, http.StatusBadGateway, rec.Code)
 	require.Contains(t, rec.Body.String(), "exceeds the context window")
-	require.Contains(t, rec.Body.String(), "context_length_exceeded")
 	require.True(t, body.closed)
 }
 

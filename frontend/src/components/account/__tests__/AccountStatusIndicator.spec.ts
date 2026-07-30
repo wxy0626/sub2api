@@ -51,34 +51,20 @@ function makeAccount(overrides: Partial<Account>): Account {
 }
 
 describe('AccountStatusIndicator', () => {
-  it('Claude 5 模型限流时显示 Opus 和 Sonnet 的短别名', () => {
+  it('状态右侧刷新按钮派发模型检测事件，并在检测中禁用', async () => {
+    const account = makeAccount({})
     const wrapper = mount(AccountStatusIndicator, {
-      props: {
-        account: makeAccount({
-          extra: {
-            model_rate_limits: {
-              'claude-opus-5': {
-                rate_limited_at: '2026-07-28T00:00:00Z',
-                rate_limit_reset_at: '2099-07-28T00:00:00Z'
-              },
-              'claude-sonnet-5': {
-                rate_limited_at: '2026-07-28T00:00:00Z',
-                rate_limit_reset_at: '2099-07-28T00:00:00Z'
-              }
-            }
-          }
-        })
-      },
-      global: {
-        stubs: {
-          Icon: true
-        }
-      }
+      props: { account },
+      global: { stubs: { Icon: true } }
     })
 
-    expect(wrapper.text()).toContain('COpus5')
-    expect(wrapper.text()).toContain('CSon5')
-    expect(wrapper.text()).not.toContain('claude-sonnet-5')
+    const button = wrapper.get('[data-testid="account-status-quick-test"]')
+    expect(button.attributes('aria-label')).toBe('admin.accounts.runTestNow')
+    await button.trigger('click')
+    expect(wrapper.emitted('quick-test')?.[0]?.[0]).toStrictEqual(account)
+
+    await wrapper.setProps({ testing: true })
+    expect(button.attributes('disabled')).toBeDefined()
   })
 
   it('Grok 账号额度限流时显示自动恢复时间而非临时不可调度', () => {
@@ -104,6 +90,41 @@ describe('AccountStatusIndicator', () => {
     expect(wrapper.find('.badge-warning').text()).toBe('admin.accounts.status.rateLimited')
     expect(wrapper.text()).toContain('admin.accounts.status.rateLimitedAutoResume')
     expect(wrapper.text()).not.toContain('admin.accounts.status.tempUnschedulable')
+  })
+
+  it('历史英文工作区停用错误显示中文说明与技术详情', () => {
+    const wrapper = mount(AccountStatusIndicator, {
+      props: {
+        account: makeAccount({
+          platform: 'openai',
+          status: 'error',
+          error_message: 'Workspace deactivated (402): workspace has been deactivated'
+        })
+      },
+      global: {
+        stubs: { Icon: true }
+      }
+    })
+
+    expect(wrapper.text()).toContain('ChatGPT 工作区已停用（HTTP 402）')
+    expect(wrapper.text()).toContain('Workspace deactivated (402): workspace has been deactivated')
+  })
+
+  it('其他历史英文账号错误显示中文说明与技术详情', () => {
+    const wrapper = mount(AccountStatusIndicator, {
+      props: {
+        account: makeAccount({
+          status: 'error',
+          error_message: 'Authentication failed (401): invalid credentials'
+        })
+      },
+      global: {
+        stubs: { Icon: true }
+      }
+    })
+
+    expect(wrapper.text()).toContain('身份验证失败')
+    expect(wrapper.text()).toContain('Authentication failed (401): invalid credentials')
   })
 
   it('模型限流 + overages 启用 + 无 AICredits key → 显示 ⚡ (credits_active)', () => {

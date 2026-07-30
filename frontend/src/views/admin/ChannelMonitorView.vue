@@ -95,12 +95,6 @@
       @updated="reload"
     />
 
-    <MonitorRunResultDialog
-      :show="showRunResult"
-      :results="runResults"
-      @close="showRunResult = false"
-    />
-
     <ConfirmDialog
       :show="showDeleteDialog"
       :title="t('common.delete')"
@@ -122,7 +116,6 @@ import { extractApiErrorMessage } from '@/utils/apiError'
 import { adminAPI } from '@/api/admin'
 import type {
   ChannelMonitor,
-  CheckResult,
   ListParams,
   Provider,
 } from '@/api/admin/channelMonitor'
@@ -139,7 +132,6 @@ import Toggle from '@/components/common/Toggle.vue'
 import MonitorFiltersBar from '@/components/admin/monitor/MonitorFiltersBar.vue'
 import MonitorFormDialog from '@/components/admin/monitor/MonitorFormDialog.vue'
 import MonitorTemplateManagerDialog from '@/components/admin/monitor/MonitorTemplateManagerDialog.vue'
-import MonitorRunResultDialog from '@/components/admin/monitor/MonitorRunResultDialog.vue'
 import MonitorPrimaryModelCell from '@/components/admin/monitor/MonitorPrimaryModelCell.vue'
 import MonitorActionsCell from '@/components/admin/monitor/MonitorActionsCell.vue'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
@@ -167,8 +159,6 @@ const showTemplateManager = ref(false)
 const editing = ref<ChannelMonitor | null>(null)
 const showDeleteDialog = ref(false)
 const deleting = ref<ChannelMonitor | null>(null)
-const showRunResult = ref(false)
-const runResults = ref<CheckResult[]>([])
 const duplicatingIds = reactive(new Set<number>())
 
 let abortController: AbortController | null = null
@@ -268,9 +258,7 @@ async function handleRunNow(row: ChannelMonitor) {
   if (runningId.value != null) return
   runningId.value = row.id
   try {
-    const res = await adminAPI.channelMonitor.runNow(row.id)
-    runResults.value = res.results || []
-    showRunResult.value = true
+    await adminAPI.channelMonitor.runNow(row.id)
     appStore.showSuccess(t('admin.channelMonitor.runSuccess'))
     // Refresh row to get latest status from backend
     void reload()

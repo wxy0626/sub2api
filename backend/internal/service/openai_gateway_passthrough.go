@@ -659,33 +659,14 @@ func (s *OpenAIGatewayService) handleErrorResponsePassthrough(
 	})
 	// context-window 超限是确定性请求失败（shouldFailoverOpenAIPassthroughResponse
 	// 已保证不切号），其文案对客户端可操作（如触发自动压缩）；在净化信封内保留
-	// 脱敏后的上游消息，并按客户端请求错误返回 400。
+	// 脱敏后的上游消息，而不是抹成通用文案。
 	if isOpenAIContextWindowError(upstreamMsg, body) && upstreamMsg != "" {
-		writeOpenAIContextWindowPassthroughError(c, resp.Header, upstreamMsg)
+		writeOpenAIPassthroughErrorEnvelope(c, resp.StatusCode, resp.Header, upstreamMsg)
 	} else {
 		writeSanitizedOpenAIPassthroughError(c, resp.StatusCode, resp.Header)
 	}
 
 	return fmt.Errorf("upstream error: %d (client response sanitized)", resp.StatusCode)
-}
-
-// writeOpenAIContextWindowPassthroughError 将确定性的上下文超限错误规范化为客户端 400。
-func writeOpenAIContextWindowPassthroughError(c *gin.Context, upstreamHeaders http.Header, message string) {
-	if c == nil {
-		return
-	}
-	body, _ := json.Marshal(gin.H{
-		"error": gin.H{
-			"type":    "invalid_request_error",
-			"code":    openAIContextWindowErrorCode,
-			"message": message,
-		},
-	})
-	if writeOpenAICompactSSEBridge(c, http.StatusBadRequest, body) {
-		return
-	}
-	writeOpenAIPassthroughErrorHeaders(c.Writer.Header(), upstreamHeaders)
-	c.Data(http.StatusBadRequest, "application/json; charset=utf-8", body)
 }
 
 func isOpenAIPassthroughAllowedRequestHeader(lowerKey string, allowTimeoutHeaders bool) bool {

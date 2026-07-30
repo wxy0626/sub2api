@@ -9,6 +9,7 @@ export type Provider = 'openai' | 'anthropic' | 'gemini' | 'grok'
 export type MonitorStatus = 'operational' | 'degraded' | 'failed' | 'error'
 export type BodyOverrideMode = 'off' | 'merge' | 'replace'
 export type APIMode = 'chat_completions' | 'responses'
+export type MonitorSourceType = 'external' | 'account'
 
 export interface ChannelMonitor {
   id: number
@@ -16,6 +17,11 @@ export interface ChannelMonitor {
   provider: Provider
   api_mode: APIMode
   endpoint: string
+  /** 已有账号来源时指定被检测账号。 */
+  account_id?: number | null
+  /** 通过“使用我的 Key”选择的 API Key ID，用于编辑界面展示。 */
+  api_key_id?: number | null
+  source_type?: MonitorSourceType
   api_key_masked: string
   /**
    * True when the stored encrypted API key cannot be decrypted (e.g. the
@@ -38,6 +44,8 @@ export interface ChannelMonitor {
   primary_status: MonitorStatus | ''
   /** Latest latency of the primary model in ms (null when no history yet) */
   primary_latency_ms: number | null
+  /** 最近一次检测返回的主模型诊断说明。 */
+  primary_message: string
   /** Primary model 7-day availability percentage (0-100) */
   availability_7d: number
   /** Latest status per extra model (used for hover tooltip) */
@@ -76,6 +84,9 @@ export interface CreateParams {
   provider: Provider
   api_mode?: APIMode
   endpoint: string
+  account_id?: number | null
+  /** 通过“使用我的 Key”选择的 API Key ID，仅用于编辑界面展示。 */
+  api_key_id?: number | null
   api_key: string
   primary_model: string
   extra_models?: string[]
@@ -91,6 +102,10 @@ export interface CreateParams {
 
 // Update request: api_key 空串 = 不修改；clear_template=true 时把 template_id 置空
 export type UpdateParams = Partial<CreateParams> & {
+  /** 切换回第三方 API 时清除已保存的账号来源。 */
+  clear_account?: boolean
+  /** 手动填写 API Key 时清除原有的“我的 Key”关联。 */
+  clear_api_key_id?: boolean
   clear_template?: boolean
 }
 

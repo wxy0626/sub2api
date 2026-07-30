@@ -1,0 +1,11 @@
+FROM golang:1.26.5-alpine
+
+# Air 负责监听 Go 源码并在变更后重新编译后端。
+RUN apk add --no-cache ca-certificates git && \
+    go install github.com/air-verse/air@v1.63.4
+
+WORKDIR /workspace/sub2api/backend
+
+EXPOSE 8080
+
+CMD ["air", "-c", "/config/air.hot-reload.toml"]

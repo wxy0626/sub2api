@@ -177,11 +177,6 @@ func (s *RateLimitService) CheckErrorPolicy(ctx context.Context, account *Accoun
 // 返回是否应该停止该账号的调度
 func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte, requestedModel ...string) (shouldDisable bool) {
 	ctx = withTempUnschedulableModel(ctx, requestedModel)
-	if account.Platform == PlatformOpenAI && isOpenAIRequestSafetyRejection(statusCode, responseBody) {
-		// 上游已明确这是当前请求的内容安全拒绝，不能据此判断账号不可用。
-		slog.Info("openai_request_safety_rejection_skipped", "account_id", account.ID, "status_code", statusCode)
-		return false
-	}
 	customErrorCodesEnabled := account.IsCustomErrorCodesEnabled()
 
 	// 池模式默认不标记本地账号状态；但管理员显式配置的临时不可调度规则优先。
@@ -352,7 +347,7 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 	case 402:
 		// OpenAI: deactivated_workspace 表示工作区已停用，直接标记 error
 		if account.Platform == PlatformOpenAI && gjson.GetBytes(responseBody, "detail.code").String() == "deactivated_workspace" {
-			msg := "Workspace deactivated (402): workspace has been deactivated"
+			msg := openAIWorkspaceDeactivatedErrorMessage
 			s.handleAuthError(ctx, account, msg)
 			shouldDisable = true
 			break
@@ -400,16 +395,6 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 	}
 
 	return shouldDisable
-}
-
-// isOpenAIRequestSafetyRejection 判断 OpenAI 是否明确拒绝了当前请求的安全敏感内容。
-// 该错误由请求内容触发，重试或切换账号均不会改变结果，也不应影响账号调度状态。
-func isOpenAIRequestSafetyRejection(statusCode int, responseBody []byte) bool {
-	if statusCode != http.StatusForbidden || len(responseBody) == 0 {
-		return false
-	}
-
-	return strings.Contains(strings.ToLower(string(responseBody)), "restricted safety-sensitive content")
 }
 
 // PreCheckUsage proactively checks local quota before dispatching a request.

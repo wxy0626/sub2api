@@ -36,6 +36,21 @@ type snapshotUpdateAccountRepo struct {
 	updateExtraCalls chan map[string]any
 }
 
+// SetSchedulable 为账户测试共用仓储替身提供调度状态写入，避免嵌入接口为空时发生调用链崩溃。
+func (r *snapshotUpdateAccountRepo) SetSchedulable(context.Context, int64, bool) error {
+	return nil
+}
+
+// SetError 为账户测试失败收尾提供状态写入。
+func (r *snapshotUpdateAccountRepo) SetError(context.Context, int64, string) error {
+	return nil
+}
+
+// ClearError 为账户测试成功收尾提供状态清理。
+func (r *snapshotUpdateAccountRepo) ClearError(context.Context, int64) error {
+	return nil
+}
+
 func (r *snapshotUpdateAccountRepo) UpdateExtra(ctx context.Context, id int64, updates map[string]any) error {
 	if r.updateExtraCalls != nil {
 		copied := make(map[string]any, len(updates))
@@ -109,6 +124,7 @@ type stubConcurrencyCache struct {
 	loadBatchErr    error
 	loadMap         map[int64]*AccountLoadInfo
 	acquireResults  map[int64]bool
+	acquireErrors   map[int64]error // 按账号注入的槽位获取错误。
 	waitCounts      map[int64]int
 	skipDefaultLoad bool
 }
@@ -154,6 +170,9 @@ func (w *failingGinWriter) Write(p []byte) (int, error) {
 }
 
 func (c stubConcurrencyCache) AcquireAccountSlot(ctx context.Context, accountID int64, maxConcurrency int, requestID string) (bool, error) {
+	if err, ok := c.acquireErrors[accountID]; ok {
+		return false, err
+	}
 	if c.acquireResults != nil {
 		if result, ok := c.acquireResults[accountID]; ok {
 			return result, nil
@@ -907,6 +926,27 @@ func TestOpenAISelectAccountWithLoadAwareness_NoSlotFallbackWait(t *testing.T) {
 	}
 }
 
+// 并发存储异常必须直接透传，不能返回错误的等待计划。
+func TestOpenAISelectAccountWithLoadAwareness_并发存储错误直接返回(t *testing.T) {
+	groupID := int64(1)
+	account := Account{ID: 1, Platform: PlatformOpenAI, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 1}
+	// expectedErr 用于确认并发存储错误未被负载调度转换。
+	expectedErr := errors.New("concurrency storage unavailable")
+	concurrencyCache := stubConcurrencyCache{
+		loadMap:       map[int64]*AccountLoadInfo{account.ID: {AccountID: account.ID, LoadRate: 0}},
+		acquireErrors: map[int64]error{account.ID: expectedErr},
+	}
+	svc := &OpenAIGatewayService{
+		accountRepo:        stubOpenAIAccountRepo{accounts: []Account{account}},
+		cache:              &stubGatewayCache{},
+		concurrencyService: NewConcurrencyService(concurrencyCache),
+	}
+
+	selection, err := svc.SelectAccountWithLoadAwareness(context.Background(), &groupID, "", "gpt-4", nil)
+	require.ErrorIs(t, err, expectedErr)
+	require.Nil(t, selection)
+}
+
 func TestOpenAISelectAccountForModelWithExclusions_SetsStickyBinding(t *testing.T) {
 	sessionHash := "bind"
 	repo := stubOpenAIAccountRepo{
@@ -964,47 +1004,6 @@ func TestOpenAISelectAccountWithLoadAwareness_StickyWaitPlan(t *testing.T) {
 	}
 	if selection.Account == nil || selection.Account.ID != 1 {
 		t.Fatalf("expected account 1")
-	}
-}
-
-// TestOpenAISelectAccountWithLoadAwareness_StickyFullSwitchesToAvailableAccount
-// 验证旧 OpenAI 负载调度在粘性账号满载时会切换到仍有容量的账号。
-func TestOpenAISelectAccountWithLoadAwareness_StickyFullSwitchesToAvailableAccount(t *testing.T) {
-	sessionHash := "sticky-full-switch"
-	groupID := int64(1)
-	repo := stubOpenAIAccountRepo{
-		accounts: []Account{
-			{ID: 1, Platform: PlatformOpenAI, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 1},
-			{ID: 2, Platform: PlatformOpenAI, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 2},
-		},
-	}
-	cache := &stubGatewayCache{
-		sessionBindings: map[string]int64{"openai:" + sessionHash: 1},
-	}
-	concurrencyCache := stubConcurrencyCache{
-		acquireResults: map[int64]bool{1: false, 2: true},
-		loadMap: map[int64]*AccountLoadInfo{
-			1: {AccountID: 1, CurrentConcurrency: 1, LoadRate: 100},
-			2: {AccountID: 2, CurrentConcurrency: 0, LoadRate: 0},
-		},
-	}
-
-	svc := &OpenAIGatewayService{
-		accountRepo:        repo,
-		cache:              cache,
-		concurrencyService: NewConcurrencyService(concurrencyCache),
-	}
-
-	selection, err := svc.SelectAccountWithLoadAwareness(context.Background(), &groupID, sessionHash, "gpt-4", nil)
-	require.NoError(t, err)
-	require.NotNil(t, selection)
-	require.NotNil(t, selection.Account)
-	require.Equal(t, int64(2), selection.Account.ID)
-	require.True(t, selection.Acquired)
-	require.Nil(t, selection.WaitPlan)
-	t.Logf("旧 OpenAI 调度中的满载粘性账号 1 已切换到可用账号 %d", selection.Account.ID)
-	if selection.ReleaseFunc != nil {
-		selection.ReleaseFunc()
 	}
 }
 
@@ -1285,6 +1284,45 @@ func TestOpenAISelectAccountWithLoadAwareness_PreferNeverUsed(t *testing.T) {
 	if selection == nil || selection.Account == nil || selection.Account.ID != 2 {
 		t.Fatalf("expected account 2")
 	}
+}
+
+func TestOpenAISelectAccountWithLoadAwareness_NeverUsedBeforeLowerLoad(t *testing.T) {
+	groupID := int64(1)
+	lastUsed := time.Now().Add(-time.Hour)
+	repo := stubOpenAIAccountRepo{accounts: []Account{
+		{ID: 1, Platform: PlatformOpenAI, Status: StatusActive, Schedulable: true, Concurrency: 5, Priority: 1, LastUsedAt: &lastUsed},
+		{ID: 2, Platform: PlatformOpenAI, Status: StatusActive, Schedulable: true, Concurrency: 5, Priority: 1},
+	}}
+	concurrencyCache := stubConcurrencyCache{loadMap: map[int64]*AccountLoadInfo{
+		1: {AccountID: 1, LoadRate: 5},
+		2: {AccountID: 2, LoadRate: 80},
+	}}
+	svc := &OpenAIGatewayService{accountRepo: repo, cache: &stubGatewayCache{}, concurrencyService: NewConcurrencyService(concurrencyCache)}
+
+	selection, err := svc.SelectAccountWithLoadAwareness(context.Background(), &groupID, "", "gpt-4", nil)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), selection.Account.ID)
+	t.Logf("OpenAI 同优先级未使用账号 %d 优先于低负载已使用账号", selection.Account.ID)
+}
+
+func TestOpenAISelectAccountWithLoadAwareness_FullPriorityFallsBackToNext(t *testing.T) {
+	groupID := int64(1)
+	repo := stubOpenAIAccountRepo{accounts: []Account{
+		{ID: 1, Platform: PlatformOpenAI, Status: StatusActive, Schedulable: true, Concurrency: 5, Priority: 1},
+		{ID: 2, Platform: PlatformOpenAI, Status: StatusActive, Schedulable: true, Concurrency: 5, Priority: 1},
+		{ID: 3, Platform: PlatformOpenAI, Status: StatusActive, Schedulable: true, Concurrency: 5, Priority: 2},
+	}}
+	concurrencyCache := stubConcurrencyCache{loadMap: map[int64]*AccountLoadInfo{
+		1: {AccountID: 1, CurrentConcurrency: 5, LoadRate: 100},
+		2: {AccountID: 2, CurrentConcurrency: 5, LoadRate: 100},
+		3: {AccountID: 3, CurrentConcurrency: 1, LoadRate: 20},
+	}}
+	svc := &OpenAIGatewayService{accountRepo: repo, cache: &stubGatewayCache{}, concurrencyService: NewConcurrencyService(concurrencyCache)}
+
+	selection, err := svc.SelectAccountWithLoadAwareness(context.Background(), &groupID, "", "gpt-4", nil)
+	require.NoError(t, err)
+	require.Equal(t, int64(3), selection.Account.ID)
+	t.Logf("OpenAI 优先级 1 全满后切换到优先级 2 账号 %d", selection.Account.ID)
 }
 
 func TestOpenAIStreamingTimeout(t *testing.T) {

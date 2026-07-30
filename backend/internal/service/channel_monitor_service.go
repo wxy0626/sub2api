@@ -68,6 +68,8 @@ type ChannelMonitorService struct {
 	// scheduler 由 wire 通过 SetScheduler 注入；CRUD 后调用对应钩子即时同步任务。
 	// 测试或未注入场景下保持 nil，所有钩子调用变为 no-op。
 	scheduler MonitorScheduler
+	// accountTester 在账号来源监控执行时复用已有账号的原生测试链路。
+	accountTester ChannelMonitorAccountTester
 }
 
 const maxChannelMonitorNameRunes = 100
@@ -78,9 +80,30 @@ const maxChannelMonitorNameRunes = 100
 // ExtraHeaders to the service layer.
 const ChannelMonitorDuplicateOperationIDMetadataKey = "sub2api:duplicate_operation_id"
 
+const (
+	// ChannelMonitorAccountIDMetadataKey 保存账号来源，避免为可选功能增加表迁移。
+	ChannelMonitorAccountIDMetadataKey = "sub2api:account_id"
+	// ChannelMonitorAPIKeyIDMetadataKey 保存“使用我的 Key”选择的 Key ID，供编辑表单展示。
+	ChannelMonitorAPIKeyIDMetadataKey = "sub2api:api_key_id"
+	// channelMonitorAccountEndpoint 满足旧表 endpoint 非空约束，运行时不会访问它。
+	channelMonitorAccountEndpoint = "https://account-monitor.sub2api.invalid"
+	// channelMonitorAccountAPIKeyMarker 仅满足旧表密文字段约束，绝不发送到上游。
+	channelMonitorAccountAPIKeyMarker = "sub2api-account-monitor"
+)
+
+// ChannelMonitorAccountTester 抽象账号原生测试，避免渠道监控直接依赖 HTTP 上游凭据。
+type ChannelMonitorAccountTester interface {
+	RunTestBackground(ctx context.Context, accountID int64, modelID string) (*ScheduledTestResult, error)
+}
+
 // NewChannelMonitorService 创建渠道监控服务实例。
 func NewChannelMonitorService(repo ChannelMonitorRepository, encryptor SecretEncryptor) *ChannelMonitorService {
 	return &ChannelMonitorService{repo: repo, encryptor: encryptor}
+}
+
+// SetAccountTester 注入账号测试服务；在应用完成依赖装配后调用。
+func (s *ChannelMonitorService) SetAccountTester(tester ChannelMonitorAccountTester) {
+	s.accountTester = tester
 }
 
 // ---------- CRUD ----------
@@ -125,7 +148,11 @@ func (s *ChannelMonitorService) Create(ctx context.Context, p ChannelMonitorCrea
 	if err := validateExtraHeaders(p.ExtraHeaders); err != nil {
 		return nil, err
 	}
-	encrypted, err := s.encryptor.Encrypt(p.APIKey)
+	apiKeyForStorage := strings.TrimSpace(p.APIKey)
+	if p.AccountID != nil {
+		apiKeyForStorage = channelMonitorAccountAPIKeyMarker
+	}
+	encrypted, err := s.encryptor.Encrypt(apiKeyForStorage)
 	if err != nil {
 		return nil, fmt.Errorf("encrypt api key: %w", err)
 	}
@@ -133,7 +160,9 @@ func (s *ChannelMonitorService) Create(ctx context.Context, p ChannelMonitorCrea
 		Name:             strings.TrimSpace(p.Name),
 		Provider:         p.Provider,
 		APIMode:          defaultAPIMode(p.APIMode),
-		Endpoint:         normalizeEndpoint(p.Endpoint),
+		Endpoint:         monitorEndpointForCreate(p),
+		AccountID:        cloneInt64Pointer(p.AccountID),
+		APIKeyID:         cloneInt64Pointer(p.APIKeyID),
 		APIKey:           encrypted, // 注意：传入 repository 时该字段为密文
 		PrimaryModel:     normalizeMonitorPrimaryModel(p.Provider, p.PrimaryModel),
 		ExtraModels:      normalizeModels(p.ExtraModels),
@@ -331,16 +360,30 @@ func validateCreateParams(p ChannelMonitorCreateParams) error {
 	if err := validateJitter(p.JitterSeconds, p.IntervalSeconds); err != nil {
 		return err
 	}
+	if normalizeMonitorPrimaryModel(p.Provider, p.PrimaryModel) == "" {
+		return ErrChannelMonitorMissingPrimaryModel
+	}
+	if p.AccountID != nil {
+		if *p.AccountID <= 0 {
+			return ErrChannelMonitorInvalidAccount
+		}
+		return nil
+	}
 	if err := validateEndpoint(p.Endpoint); err != nil {
 		return err
 	}
 	if strings.TrimSpace(p.APIKey) == "" {
 		return ErrChannelMonitorMissingAPIKey
 	}
-	if normalizeMonitorPrimaryModel(p.Provider, p.PrimaryModel) == "" {
-		return ErrChannelMonitorMissingPrimaryModel
-	}
 	return nil
+}
+
+// monitorEndpointForCreate 为账号来源写入内部占位地址，外部来源沿用原有 URL 归一化。
+func monitorEndpointForCreate(p ChannelMonitorCreateParams) string {
+	if p.AccountID != nil {
+		return channelMonitorAccountEndpoint
+	}
+	return normalizeEndpoint(p.Endpoint)
 }
 
 // Update 更新监控。APIKey 字段：nil 或空字符串 = 不修改；非空 = 加密后覆盖。
@@ -432,11 +475,48 @@ func (s *ChannelMonitorService) RunCheck(ctx context.Context, id int64) ([]*Chec
 	if err != nil {
 		return nil, err
 	}
+	if m.AccountID != nil {
+		results, runErr := s.runAccountChecks(ctx, m)
+		if runErr != nil {
+			return nil, runErr
+		}
+		s.persistCheckResults(ctx, m, results)
+		return results, nil
+	}
 	if m.APIKeyDecryptFailed {
 		return nil, ErrChannelMonitorAPIKeyDecryptFailed
 	}
 	results := s.runChecksConcurrent(ctx, m)
 	s.persistCheckResults(ctx, m, results)
+	return results, nil
+}
+
+// runAccountChecks 使用已保存账号的凭据执行测试，不会把本地 API Key 发给第三方端点。
+func (s *ChannelMonitorService) runAccountChecks(ctx context.Context, m *ChannelMonitor) ([]*CheckResult, error) {
+	if m.AccountID == nil || s.accountTester == nil {
+		return nil, ErrChannelMonitorAccountTesterUnavailable
+	}
+	models := append([]string{m.PrimaryModel}, m.ExtraModels...)
+	results := make([]*CheckResult, 0, len(models))
+	for _, model := range models {
+		result, err := s.accountTester.RunTestBackground(ctx, *m.AccountID, model)
+		checkedAt := time.Now()
+		latencyMs := 0
+		status := MonitorStatusOperational
+		message := ""
+		if err != nil || result == nil || result.Status != "success" {
+			status = MonitorStatusError
+			if err != nil {
+				message = err.Error()
+			} else if result != nil {
+				message = result.ErrorMessage
+			}
+		}
+		if result != nil {
+			latencyMs = int(result.LatencyMs)
+		}
+		results = append(results, &CheckResult{Model: model, Status: status, LatencyMs: &latencyMs, Message: message, CheckedAt: checkedAt})
+	}
 	return results, nil
 }
 
@@ -659,7 +739,27 @@ func applyMonitorUpdate(existing *ChannelMonitor, p ChannelMonitorUpdateParams) 
 		providerChanged = existing.Provider != *p.Provider
 		existing.Provider = *p.Provider
 	}
-	if p.Endpoint != nil {
+	if p.ClearAccount {
+		existing.AccountID = nil
+	}
+	if p.ClearAPIKeyID {
+		existing.APIKeyID = nil
+	} else if p.APIKeyID != nil {
+		if *p.APIKeyID <= 0 {
+			return ErrChannelMonitorMissingAPIKey
+		}
+		id := *p.APIKeyID
+		existing.APIKeyID = &id
+	}
+	if p.AccountID != nil {
+		if *p.AccountID <= 0 {
+			return ErrChannelMonitorInvalidAccount
+		}
+		id := *p.AccountID
+		existing.AccountID = &id
+		existing.Endpoint = channelMonitorAccountEndpoint
+	}
+	if p.Endpoint != nil && existing.AccountID == nil {
 		if err := validateEndpoint(*p.Endpoint); err != nil {
 			return err
 		}

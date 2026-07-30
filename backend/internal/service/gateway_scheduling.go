@@ -6,6 +6,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	mathrand "math/rand"
@@ -165,15 +166,28 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		for k, v := range excludedIDs {
 			localExcluded[k] = v
 		}
+		// 等待账号只在所有候选都无法抢到槽位后使用，避免把满载账号误当成唯一账号。
+		var waitAccount *Account
 
 		for {
 			account, err := s.SelectAccountForModelWithExclusions(ctx, groupID, sessionHash, requestedModel, localExcluded)
 			if err != nil {
+				if errors.Is(err, ErrNoAvailableAccounts) && waitAccount != nil && s.checkAndRegisterSession(ctx, waitAccount, sessionHash) {
+					return s.newSelectionResult(ctx, waitAccount, false, nil, &AccountWaitPlan{
+						AccountID:      waitAccount.ID,
+						MaxConcurrency: waitAccount.Concurrency,
+						Timeout:        cfg.FallbackWaitTimeout,
+						MaxWaiting:     cfg.FallbackMaxWaiting,
+					})
+				}
 				return nil, err
 			}
 
 			result, err := s.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency)
-			if err == nil && result.Acquired {
+			if err != nil {
+				return nil, err
+			}
+			if err == nil && result != nil && result.Acquired {
 				// 获取槽位后检查会话限制（使用 sessionHash 作为会话标识符）
 				if !s.checkAndRegisterSession(ctx, account, sessionHash) {
 					result.ReleaseFunc()                   // 释放槽位
@@ -183,39 +197,9 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 				return s.newSelectionResult(ctx, account, true, result.ReleaseFunc, nil)
 			}
 
-			if err == nil && result != nil && !result.Acquired && s.concurrencyService != nil {
-				// 负载批处理关闭时仍排除已满账号，继续尝试其他候选账号。
-				localExcluded[account.ID] = struct{}{}
-				nextAccount, selectErr := s.SelectAccountForModelWithExclusions(ctx, groupID, sessionHash, requestedModel, localExcluded)
-				if selectErr == nil && nextAccount != nil {
-					continue
-				}
-				delete(localExcluded, account.ID)
-			}
-
-			// 对于等待计划的情况，也需要先检查会话限制
-			if !s.checkAndRegisterSession(ctx, account, sessionHash) {
-				localExcluded[account.ID] = struct{}{}
-				continue
-			}
-
-			if stickyAccountID > 0 && stickyAccountID == account.ID && s.concurrencyService != nil {
-				waitingCount, _ := s.concurrencyService.GetAccountWaitingCount(ctx, account.ID)
-				if waitingCount < cfg.StickySessionMaxWaiting {
-					return s.newSelectionResult(ctx, account, false, nil, &AccountWaitPlan{
-						AccountID:      account.ID,
-						MaxConcurrency: account.Concurrency,
-						Timeout:        cfg.StickySessionWaitTimeout,
-						MaxWaiting:     cfg.StickySessionMaxWaiting,
-					})
-				}
-			}
-			return s.newSelectionResult(ctx, account, false, nil, &AccountWaitPlan{
-				AccountID:      account.ID,
-				MaxConcurrency: account.Concurrency,
-				Timeout:        cfg.FallbackWaitTimeout,
-				MaxWaiting:     cfg.FallbackMaxWaiting,
-			})
+			// 槽位获取失败后排除当前账号，继续尝试同组其他账号。
+			waitAccount = account
+			localExcluded[account.ID] = struct{}{}
 		}
 	}
 
@@ -359,7 +343,10 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 
 						if rpmPass { // 粘性会话窗口费用+RPM 检查
 							result, err := s.tryAcquireAccountSlot(ctx, stickyAccountID, stickyAccount.Concurrency)
-							if err == nil && result.Acquired {
+							if err != nil {
+								return nil, err
+							}
+							if result != nil && result.Acquired {
 								// 会话数量限制检查
 								if !s.checkAndRegisterSession(ctx, stickyAccount, sessionHash) {
 									result.ReleaseFunc() // 释放槽位
@@ -378,9 +365,8 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 								}
 							}
 
+							// 粘性账号槽位满时继续使用负载感知选择，所有候选都满载后再等待。
 							if stickyCacheMissReason == "" {
-								// 粘性账号槽位已满时先回退到其他路由账号；只有所有候选
-								// 都无法承接请求时，后续兜底逻辑才会生成等待计划。
 								stickyCacheMissReason = "concurrency_full"
 							}
 						} else if !gatePass {
@@ -455,7 +441,10 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 				// 4. 尝试获取槽位
 				for _, item := range routingAvailable {
 					result, err := s.tryAcquireAccountSlot(ctx, item.account.ID, item.account.Concurrency)
-					if err == nil && result.Acquired {
+					if err != nil {
+						return nil, err
+					}
+					if result != nil && result.Acquired {
 						// 会话数量限制检查
 						if !s.checkAndRegisterSession(ctx, item.account, sessionHash) {
 							result.ReleaseFunc() // 释放槽位，继续尝试下一个账号
@@ -471,23 +460,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 					}
 				}
 
-				// 5. 所有路由账号槽位满，尝试返回等待计划（选择负载最低的）
-				// 遍历找到第一个满足会话限制的账号
-				for _, item := range routingAvailable {
-					if !s.checkAndRegisterSession(ctx, item.account, sessionHash) {
-						continue // 会话限制已满，尝试下一个
-					}
-					if s.debugModelRoutingEnabled() {
-						logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] routed wait: group_id=%v model=%s session=%s account=%d", derefGroupID(groupID), requestedModel, shortSessionHash(sessionHash), item.account.ID)
-					}
-					return s.newSelectionResult(ctx, item.account, false, nil, &AccountWaitPlan{
-						AccountID:      item.account.ID,
-						MaxConcurrency: item.account.Concurrency,
-						Timeout:        cfg.StickySessionWaitTimeout,
-						MaxWaiting:     cfg.StickySessionMaxWaiting,
-					})
-				}
-				// 所有路由账号会话限制都已满，继续到 Layer 2 回退
+				// 路由账号都未抢到槽位时继续到 Layer 2，避免提前在路由账号上排队。
 			}
 			// 路由列表中的账号都不可用（负载率 >= 100），继续到 Layer 2 回退
 			logger.LegacyPrintf("service.gateway", "[ModelRouting] All routed accounts unavailable for model=%s, falling back to normal selection", requestedModel)
@@ -537,7 +510,10 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 
 				if !clearSticky && platformOK && modelSupported && modelSchedulable && quotaOK && windowCostOK && rpmOK && schedulable {
 					result, err := s.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
-					if err == nil && result.Acquired {
+					if err != nil {
+						return nil, err
+					}
+					if result != nil && result.Acquired {
 						// 会话数量限制检查
 						if !s.checkAndRegisterSession(ctx, account, sessionHash) {
 							result.ReleaseFunc() // 释放槽位，继续到 Layer 2
@@ -564,8 +540,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 						)
 					}
 
-					// 粘性账号槽位已满时继续走 Layer 2，让其他有容量的账号承接请求；
-					// 如果所有账号都满，Layer 3 会为合适的账号生成等待计划。
+					// 粘性账号满载时交给 Layer 2 继续尝试其他账号；全部满载时再统一等待。
 				} else if !clearSticky {
 					slog.Debug("sticky.layer1_5_no_routing_miss",
 						"account_id", accountID,
@@ -672,24 +647,29 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			}
 		}
 
-		// 分层过滤选择：优先级 →（可选）最早重置 → 负载率 → LRU
+		// 分层过滤选择：优先级 → 未使用账号 →（可选）最早重置 → 负载率 → LRU。
 		for len(available) > 0 {
 			// 1. 取优先级最小的集合
 			candidates := filterByMinPriority(available)
-			// 2. （可选）use-it-or-lose-it：优先选用会话窗口最早重置的账号
+			// 2. 当前优先级存在从未使用的账号时，只在这些账号中继续选择。
+			candidates = filterByNeverUsed(candidates)
+			// 3. （可选）use-it-or-lose-it：优先选用会话窗口最早重置的账号
 			if cfg.PreferSoonestReset {
 				candidates = filterBySoonestReset(candidates)
 			}
-			// 3. 取负载率最低的集合
+			// 4. 取负载率最低的集合
 			candidates = filterByMinLoadRate(candidates)
-			// 4. LRU 选择最久未用的账号
+			// 5. LRU 选择最久未用的账号
 			selected := selectByLRU(candidates, preferOAuth)
 			if selected == nil {
 				break
 			}
 
 			result, err := s.tryAcquireAccountSlot(ctx, selected.account.ID, selected.account.Concurrency)
-			if err == nil && result.Acquired {
+			if err != nil {
+				return nil, err
+			}
+			if result != nil && result.Acquired {
 				// 会话数量限制检查
 				if !s.checkAndRegisterSession(ctx, selected.account, sessionHash) {
 					result.ReleaseFunc() // 释放槽位，继续尝试下一个账号
@@ -736,7 +716,10 @@ func (s *GatewayService) tryAcquireByLegacyOrder(ctx context.Context, candidates
 
 	for _, acc := range ordered {
 		result, err := s.tryAcquireAccountSlot(ctx, acc.ID, acc.Concurrency)
-		if err == nil && result.Acquired {
+		if err != nil {
+			return nil, false, err
+		}
+		if result != nil && result.Acquired {
 			// 会话数量限制检查
 			if !s.checkAndRegisterSession(ctx, acc, sessionHash) {
 				result.ReleaseFunc() // 释放槽位，继续尝试下一个账号
@@ -1443,6 +1426,20 @@ func filterByMinPriority(accounts []accountWithLoad) []accountWithLoad {
 		}
 	}
 	return result
+}
+
+// filterByNeverUsed 在当前优先级存在未使用账号时仅返回这些账号，否则保留原集合。
+func filterByNeverUsed(accounts []accountWithLoad) []accountWithLoad {
+	neverUsed := make([]accountWithLoad, 0, len(accounts))
+	for _, item := range accounts {
+		if item.account != nil && item.account.LastUsedAt == nil {
+			neverUsed = append(neverUsed, item)
+		}
+	}
+	if len(neverUsed) > 0 {
+		return neverUsed
+	}
+	return accounts
 }
 
 // filterByMinLoadRate 过滤出负载率最低的账号集合

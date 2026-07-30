@@ -148,7 +148,7 @@
 
             <!-- Whitelist Mode -->
             <div v-if="modelRestrictionMode === 'whitelist'">
-              <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" />
+              <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" :account-type="account?.type" />
               <p class="text-xs text-gray-500 dark:text-gray-400">
                 {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
                 <span v-if="allowedModels.length === 0 && modelMappings.length === 0">{{
@@ -577,7 +577,7 @@
 
           <!-- Whitelist Mode -->
           <div v-if="modelRestrictionMode === 'whitelist'">
-            <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" />
+            <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" :account-type="account?.type" />
             <p class="text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
               <span v-if="allowedModels.length === 0 && modelMappings.length === 0">{{
@@ -789,7 +789,7 @@
 
           <!-- Whitelist Mode -->
           <div v-if="modelRestrictionMode === 'whitelist'">
-            <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" />
+            <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" :account-type="account?.type" />
             <p class="text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
               <span v-if="allowedModels.length === 0 && modelMappings.length === 0">{{
@@ -2596,7 +2596,6 @@ import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { adminAPI } from '@/api/admin'
-import { extractApiErrorMessage } from '@/utils/apiError'
 import { useQuotaNotifyState } from '@/composables/useQuotaNotifyState'
 import type {
   Account,
@@ -2653,6 +2652,7 @@ import {
   getPresetMappingsByPlatform,
   commonErrorCodes,
   buildModelMappingObject,
+  getDefaultModelWhitelist,
   splitModelMappingObject,
   isValidWildcardPattern
 } from '@/composables/useModelWhitelist'
@@ -3088,6 +3088,10 @@ const openAIResponsesStatusKey = computed(() => {
 const openAICompactStatusKey = computed(() => {
   const extra = props.account?.extra as Record<string, unknown> | undefined
   if (!props.account || props.account.platform !== 'openai') return ''
+  // Compact 属于 Responses 能力，已确认不支持时优先显示能力状态。
+  if (extra?.openai_responses_supported === false) {
+    return 'admin.accounts.openai.compactResponsesUnsupported'
+  }
   const mode = typeof extra?.openai_compact_mode === 'string' ? extra.openai_compact_mode : 'auto'
   if (mode === 'force_on') return 'admin.accounts.openai.compactSupported'
   if (mode === 'force_off') return 'admin.accounts.openai.compactUnsupported'
@@ -3192,9 +3196,12 @@ const normalizePoolModeRetryCount = (value: number) => {
   return normalized
 }
 
+// loadModelRestrictionFromMapping 从账号映射恢复编辑状态；无 OpenAI 白名单时采用 GPT-5.5 最小默认集。
 const loadModelRestrictionFromMapping = (rawMapping?: Record<string, unknown>) => {
   const parsed = splitModelMappingObject(rawMapping)
-  allowedModels.value = parsed.allowedModels
+  allowedModels.value = parsed.allowedModels.length > 0 || parsed.modelMappings.length > 0
+    ? parsed.allowedModels
+    : getDefaultModelWhitelist(props.account?.platform || '')
   modelMappings.value = parsed.modelMappings
   modelRestrictionMode.value =
     parsed.modelMappings.length > 0 && parsed.allowedModels.length === 0
@@ -3651,8 +3658,8 @@ const syncAntigravityUpstreamModels = async () => {
       appStore.showInfo(t('admin.accounts.syncUpstreamModelsNoChanges', { count: upstreamModels.length }))
     }
   } catch (error) {
-    const message = extractApiErrorMessage(error, t('admin.accounts.syncUpstreamModelsFailed'))
-    appStore.showError(message)
+    const message = error instanceof Error ? error.message : t('admin.accounts.syncUpstreamModelsFailed')
+    appStore.showError(t('admin.accounts.syncUpstreamModelsError', { message }))
   } finally {
     isSyncingAntigravityUpstream.value = false
   }

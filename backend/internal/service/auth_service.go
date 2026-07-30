@@ -348,6 +348,17 @@ func (s *AuthService) SendVerifyCodeAsync(ctx context.Context, email string, loc
 		return nil, ErrEmailExists
 	}
 
+	if s.emailService == nil {
+		logger.LegacyPrintf("service.auth", "%s", "[Auth] Email service not configured")
+		return nil, ErrEmailNotConfigured
+	}
+
+	// 入队前确认 SMTP 已配置，避免接口先返回成功而后台任务随后因配置缺失失败。
+	if _, err := s.emailService.GetSMTPConfig(ctx); err != nil {
+		logger.LegacyPrintf("service.auth", "[Auth] SMTP configuration unavailable: %v", err)
+		return nil, err
+	}
+
 	// 检查邮件队列服务是否配置
 	if s.emailQueueService == nil {
 		logger.LegacyPrintf("service.auth", "%s", "[Auth] Email queue service not configured")
