@@ -53,6 +53,59 @@ func TestForwardResponses_ForceChatCompletionsRoutesNonStreamingToChatCompletion
 	require.False(t, result.Stream)
 }
 
+// TestForwardResponses_ChatFallbackPreservesExplicitInstructions 验证 API Key 的
+// Responses -> Chat 路径只转换客户端明确提供的指令，不丢失或重复注入内容。
+func TestForwardResponses_ChatFallbackPreservesExplicitInstructions(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{
+		"model":"gpt-5.4",
+		"instructions":"top-level instruction",
+		"input":[
+			{"type":"message","role":"developer","content":[{"type":"input_text","text":"developer instruction"}]},
+			{"type":"message","role":"system","content":[{"type":"input_text","text":"system instruction"}]},
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}
+		],
+		"stream":false
+	}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body: io.NopCloser(strings.NewReader(
+			`{"id":"chatcmpl_instructions","object":"chat.completion","model":"gpt-5.4","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}`,
+		)),
+	}}
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+
+	result, err := svc.Forward(context.Background(), c, forceChatResponsesFallbackAccount(), body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "http://upstream.example/v1/chat/completions", upstream.lastReq.URL.String())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "instructions").Exists())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "input").Exists())
+
+	messages := gjson.GetBytes(upstream.lastBody, "messages").Array()
+	require.Len(t, messages, 4)
+	require.Equal(t, "system", messages[0].Get("role").String())
+	require.Equal(t, "top-level instruction", messages[0].Get("content").String())
+	// 第三方 Chat Completions 上游未必支持 developer role，兼容转换会降级为 system，
+	// 但指令文本、顺序和唯一性必须保持不变。
+	require.Equal(t, "system", messages[1].Get("role").String())
+	require.Equal(t, "developer instruction", messages[1].Get("content").String())
+	require.Equal(t, "system", messages[2].Get("role").String())
+	require.Equal(t, "system instruction", messages[2].Get("content").String())
+	require.Equal(t, "user", messages[3].Get("role").String())
+	require.Equal(t, "hello", messages[3].Get("content").String())
+	require.Equal(t, 1, strings.Count(string(upstream.lastBody), "top-level instruction"))
+	require.Equal(t, 1, strings.Count(string(upstream.lastBody), "developer instruction"))
+	require.Equal(t, 1, strings.Count(string(upstream.lastBody), "system instruction"))
+}
+
 func TestForwardResponses_ForceChatCompletionsRoutesStreamingToChatCompletions(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

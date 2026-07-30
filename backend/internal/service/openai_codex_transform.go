@@ -142,8 +142,9 @@ var openAICodexOAuthUnsupportedFields = append([]string{
 
 func applyCodexOAuthTransform(reqBody map[string]any, isCodexCLI bool, isCompact bool) codexTransformResult {
 	return applyCodexOAuthTransformWithOptions(reqBody, codexOAuthTransformOptions{
-		IsCodexCLI: isCodexCLI,
-		IsCompact:  isCompact,
+		IsCodexCLI:                          isCodexCLI,
+		IsCompact:                           isCompact,
+		OmitPromotedSystemMessagesFromInput: true,
 	})
 }
 
@@ -1131,10 +1132,9 @@ func extractTextFromContent(content any) string {
 }
 
 // extractSystemMessagesFromInput scans input for role=="system" and mirrors
-// their text into reqBody["instructions"]. By default it maps those items to
-// developer so Responses JSON mode can still see JSON instructions in input.
-// When omitPromoted is true, text-only items are removed after their content is
-// losslessly promoted; mixed or malformed content is retained as developer.
+// their text into reqBody["instructions"]. When omitPromoted is true, text-only
+// items are removed after their content is losslessly promoted; mixed or
+// malformed content is retained as developer so non-text input is not dropped.
 func extractSystemMessagesFromInput(reqBody map[string]any, omitPromoted bool) bool {
 	input, ok := reqBody["input"].([]any)
 	if !ok || len(input) == 0 {
@@ -1178,6 +1178,11 @@ func extractSystemMessagesFromInput(reqBody map[string]any, omitPromoted bool) b
 
 	extracted := strings.Join(systemTexts, "\n\n")
 	if existing, ok := reqBody["instructions"].(string); ok && strings.TrimSpace(existing) != "" {
+		// 请求已经携带同一段 instructions 时只保留一份，避免原生 Responses
+		// 客户端同时发送 system input 和顶层 instructions 导致上下文重复计数。
+		if strings.TrimSpace(existing) == strings.TrimSpace(extracted) {
+			return true
+		}
 		reqBody["instructions"] = extracted + "\n\n" + existing
 	} else {
 		reqBody["instructions"] = extracted

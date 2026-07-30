@@ -797,6 +797,69 @@ func TestBuildOpenAIWSReplayInputSequence(t *testing.T) {
 		require.Equal(t, "hello", gjson.GetBytes(items[0], "text").String())
 		require.Equal(t, "world", gjson.GetBytes(items[1], "text").String())
 	})
+
+	t.Run("previous_response_id_partial_history_overlap_rejects", func(t *testing.T) {
+		// 旧 replay 同时包含客户端历史和上游返回的 tool-call，模拟会触发重复拼接的真实状态。
+		previousWithToolReplay := []json.RawMessage{
+			json.RawMessage(`{"type":"input_text","text":"system"}`),
+			json.RawMessage(`{"type":"input_text","text":"user"}`),
+			json.RawMessage(`{"type":"function_call","id":"fc_1","call_id":"call_1","name":"tool_a","arguments":"{}"}`),
+		}
+		items, exists, err := buildOpenAIWSReplayInputSequence(
+			previousWithToolReplay,
+			true,
+			[]byte(`{"previous_response_id":"resp_1","input":[{"type":"input_text","text":"system"},{"type":"input_text","text":"user"},{"type":"input_text","text":"new"}]}`),
+			true,
+		)
+		require.Error(t, err)
+		require.ErrorContains(t, err, "partially overlaps previous replay input")
+		require.False(t, exists)
+		require.Nil(t, items)
+	})
+
+	t.Run("previous_response_id_current_is_complete_short_prefix", func(t *testing.T) {
+		previousWithReplay := []json.RawMessage{
+			json.RawMessage(`{"type":"input_text","text":"draw a cat"}`),
+			json.RawMessage(`{"type":"function_call","id":"fc_1","call_id":"call_1","name":"image","arguments":"{}"}`),
+		}
+		items, exists, err := buildOpenAIWSReplayInputSequence(
+			previousWithReplay,
+			true,
+			[]byte(`{"previous_response_id":"resp_1","input":[{"type":"input_text","text":"draw a cat"}]}`),
+			true,
+		)
+		require.NoError(t, err)
+		require.True(t, exists)
+		require.Len(t, items, 2)
+		require.Equal(t, "draw a cat", gjson.GetBytes(items[0], "text").String())
+		require.Equal(t, "function_call", gjson.GetBytes(items[1], "type").String())
+	})
+}
+
+func TestAppendOpenAIWSReplayItemsDeduplicatesStableReplayItems(t *testing.T) {
+	previous := []json.RawMessage{
+		json.RawMessage(`{"type":"input_text","text":"same text"}`),
+		json.RawMessage(`{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"same reasoning"}]}`),
+		json.RawMessage(`{"type":"function_call","id":"fc_1","call_id":"call_1","name":"tool_a","arguments":"{}"}`),
+		json.RawMessage(`{"type":"function_call_output","call_id":"call_1","output":"ok"}`),
+	}
+	additions := []json.RawMessage{
+		json.RawMessage(`{"type":"input_text","text":"same text"}`),
+		json.RawMessage(`{"type":"function_call","id":"fc_1","call_id":"call_1","name":"tool_a","arguments":"{}"}`),
+		json.RawMessage(`{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"same reasoning"}]}`),
+		json.RawMessage(`{"type":"function_call_output","call_id":"call_1","output":"ok"}`),
+		json.RawMessage(`{"type":"function_call","id":"fc_2","call_id":"call_2","name":"tool_b","arguments":"{}"}`),
+	}
+
+	merged := appendOpenAIWSReplayItems(previous, additions)
+	require.Len(t, merged, 6, "普通文本即使完全相同也应保留；稳定 replay 项只保留一份")
+	require.Equal(t, "same text", gjson.GetBytes(merged[0], "text").String())
+	require.Equal(t, "same reasoning", gjson.GetBytes(merged[1], "summary.0.text").String())
+	require.Equal(t, "function_call", gjson.GetBytes(merged[2], "type").String())
+	require.Equal(t, "function_call_output", gjson.GetBytes(merged[3], "type").String())
+	require.Equal(t, "call_1", gjson.GetBytes(merged[3], "call_id").String())
+	require.Equal(t, "same text", gjson.GetBytes(merged[4], "text").String())
+	require.Equal(t, "call_2", gjson.GetBytes(merged[5], "call_id").String())
 }
 
 func TestOpenAIWSRawPayloadHasToolCallOutput(t *testing.T) {

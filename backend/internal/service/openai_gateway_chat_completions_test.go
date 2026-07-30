@@ -325,17 +325,17 @@ func TestForwardAsChatCompletions_OAuthPromotesSystemMessageWithoutDuplication(t
 	require.Equal(t, 1, strings.Count(string(upstreamBody), systemPrompt))
 }
 
-func TestForwardAsChatCompletions_OAuthJsonObjectKeepsSystemMessageInInput(t *testing.T) {
+// TestForwardAsChatCompletions_OAuthJsonObjectDoesNotDuplicateSystemPrompt 验证 JSON 输出请求的最终上游 body 只发送一份 system 文本。
+func TestForwardAsChatCompletions_OAuthJsonObjectDoesNotDuplicateSystemPrompt(t *testing.T) {
 	const systemPrompt = "Return JSON only."
 	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"system","content":"` + systemPrompt + `"},{"role":"user","content":"symbol data"}],"response_format":{"type":" JSON_OBJECT "},"stream":false}`)
 
 	upstreamBody := forwardOAuthChatCompletionsForUpstreamBody(t, body)
 
 	require.Equal(t, systemPrompt, gjson.GetBytes(upstreamBody, "instructions").String())
-	require.Equal(t, int64(2), gjson.GetBytes(upstreamBody, "input.#").Int())
-	require.Equal(t, "developer", gjson.GetBytes(upstreamBody, "input.0.role").String())
-	require.Equal(t, systemPrompt, gjson.GetBytes(upstreamBody, "input.0.content").String())
-	require.Equal(t, 2, strings.Count(string(upstreamBody), systemPrompt))
+	require.Equal(t, int64(1), gjson.GetBytes(upstreamBody, "input.#").Int())
+	require.Equal(t, "user", gjson.GetBytes(upstreamBody, "input.0.role").String())
+	require.Equal(t, 1, strings.Count(string(upstreamBody), systemPrompt))
 }
 
 func TestForwardAsChatCompletions_OAuthKeepsMixedSystemContentInInput(t *testing.T) {

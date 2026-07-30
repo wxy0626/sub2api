@@ -263,7 +263,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 	instructions := gjson.GetBytes(body, "instructions")
 	instructionsEmpty := !instructions.Exists() || instructions.Type != gjson.String || strings.TrimSpace(instructions.String()) == ""
-	if instructionsEmpty && !compatMessagesBridge {
+	// 仅 OAuth 的 ChatGPT/Codex 兼容路径需要补齐默认 Codex 指令；API Key 上游的
+	// Responses body 应保持客户端语义，不能凭空增加约 24KB 的 system prompt。
+	if account.Type == AccountTypeOAuth && instructionsEmpty && !compatMessagesBridge {
 		markPatchSet("instructions", defaultCodexSynthInstructions(reqModel))
 	}
 
@@ -390,7 +392,13 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			ensureCodexOAuthInstructionsField(decoded)
 			markDecodedModified()
 		} else {
-			codexResult = applyCodexOAuthTransform(decoded, isCodexCLI, isCompactRequest)
+			// 纯文本 system 已经无损提升到 instructions，不再在 input 重复计费；
+			// reasoning、工具调用和工具结果不属于此分支，继续由通用过滤逻辑保留。
+			codexResult = applyCodexOAuthTransformWithOptions(decoded, codexOAuthTransformOptions{
+				IsCodexCLI:                          isCodexCLI,
+				IsCompact:                           isCompactRequest,
+				OmitPromotedSystemMessagesFromInput: true,
+			})
 		}
 		if codexResult.Modified {
 			markDecodedModified()

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -1571,6 +1572,24 @@ func TestExtractSystemMessagesFromInput(t *testing.T) {
 		require.Equal(t, "developer", msg["role"])
 	})
 
+	t.Run("identical existing instructions are not repeated", func(t *testing.T) {
+		const systemPrompt = "Keep this instruction exactly once."
+		reqBody := map[string]any{
+			"input": []any{
+				map[string]any{"role": "system", "content": systemPrompt},
+			},
+			"instructions": "  " + systemPrompt + "  ",
+		}
+
+		result := extractSystemMessagesFromInput(reqBody, true)
+
+		require.True(t, result)
+		require.Equal(t, "  "+systemPrompt+"  ", reqBody["instructions"])
+		input, ok := reqBody["input"].([]any)
+		require.True(t, ok)
+		require.Empty(t, input)
+	})
+
 	t.Run("omit losslessly promoted text-only messages", func(t *testing.T) {
 		reqBody := map[string]any{
 			"input": []any{
@@ -1625,6 +1644,34 @@ func TestExtractSystemMessagesFromInput(t *testing.T) {
 		require.True(t, ok)
 		require.Equal(t, "developer", developer["role"])
 		require.Len(t, developer["content"], 2)
+	})
+
+	t.Run("omit only removes lossless system messages", func(t *testing.T) {
+		// 这些 item 代表真实续链上下文，验证 system 去重不会删除 reasoning 或工具结果。
+		reqBody := map[string]any{
+			"model": "gpt-5.5",
+			"input": []any{
+				map[string]any{"type": "message", "role": "system", "content": "Do not duplicate me."},
+				map[string]any{"type": "reasoning", "encrypted_content": "encrypted-reasoning", "summary": []any{}},
+				map[string]any{"type": "function_call", "call_id": "fc_1", "name": "lookup", "arguments": "{}"},
+				map[string]any{"type": "function_call_output", "call_id": "fc_1", "output": "tool-result"},
+			},
+		}
+
+		result := applyCodexOAuthTransformWithOptions(reqBody, codexOAuthTransformOptions{
+			OmitPromotedSystemMessagesFromInput: true,
+		})
+
+		require.True(t, result.Modified)
+		require.Equal(t, "Do not duplicate me.", reqBody["instructions"])
+		input, ok := reqBody["input"].([]any)
+		require.True(t, ok)
+		require.Len(t, input, 3)
+		require.Equal(t, "reasoning", input[0].(map[string]any)["type"])
+		require.Equal(t, "function_call", input[1].(map[string]any)["type"])
+		require.Equal(t, "function_call_output", input[2].(map[string]any)["type"])
+		require.Equal(t, "encrypted-reasoning", input[0].(map[string]any)["encrypted_content"])
+		require.Equal(t, "tool-result", input[2].(map[string]any)["output"])
 	})
 }
 
@@ -1684,18 +1731,14 @@ func TestApplyCodexOAuthTransform_ExtractsSystemMessages(t *testing.T) {
 
 	input, ok := reqBody["input"].([]any)
 	require.True(t, ok)
-	require.Len(t, input, 2)
-	system, ok := input[0].(map[string]any)
-	require.True(t, ok)
-	require.Equal(t, "developer", system["role"])
-	require.Equal(t, "You are a coding assistant.", system["content"])
-	user, ok := input[1].(map[string]any)
+	require.Len(t, input, 1)
+	user, ok := input[0].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "user", user["role"])
 	require.Equal(t, "You are a coding assistant.", reqBody["instructions"])
 }
 
-func TestApplyCodexOAuthTransform_JsonObjectKeepsJsonInstructionInInput(t *testing.T) {
+func TestApplyCodexOAuthTransform_JsonObjectDoesNotDuplicateJsonInstruction(t *testing.T) {
 	reqBody := map[string]any{
 		"model": "gpt-5.4",
 		"input": []any{
@@ -1723,14 +1766,13 @@ func TestApplyCodexOAuthTransform_JsonObjectKeepsJsonInstructionInInput(t *testi
 	require.Contains(t, instructions, "JSON")
 	input, ok := reqBody["input"].([]any)
 	require.True(t, ok)
-	require.Len(t, input, 2)
-	developer, ok := input[0].(map[string]any)
-	require.True(t, ok)
-	require.Equal(t, "developer", developer["role"])
-	require.Contains(t, developer["content"], "JSON")
-	user, ok := input[1].(map[string]any)
+	require.Len(t, input, 1)
+	user, ok := input[0].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "user", user["role"])
+	encoded, err := json.Marshal(reqBody)
+	require.NoError(t, err)
+	require.Equal(t, 1, strings.Count(string(encoded), "You are an assistant. Output JSON only."))
 }
 
 func TestIsInstructionsEmpty(t *testing.T) {

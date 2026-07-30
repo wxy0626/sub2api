@@ -17,6 +17,9 @@ import (
 	"go.uber.org/zap"
 )
 
+// openAIContextWindowErrorCode 是对外返回的标准上下文超限错误码。
+const openAIContextWindowErrorCode = "context_length_exceeded"
+
 func logOpenAIInstructionsRequiredDebug(
 	ctx context.Context,
 	c *gin.Context,
@@ -427,6 +430,28 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 			return nil, fmt.Errorf("upstream error: %d (passthrough rule matched)", resp.StatusCode)
 		}
 		return nil, fmt.Errorf("upstream error: %d (passthrough rule matched) message=%s", resp.StatusCode, upstreamMsg)
+	}
+
+	if isOpenAIContextWindowError(upstreamMsg, body) && upstreamMsg != "" {
+		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+			Platform:           account.Platform,
+			AccountID:          account.ID,
+			AccountName:        account.Name,
+			UpstreamStatusCode: resp.StatusCode,
+			UpstreamRequestID:  resp.Header.Get("x-request-id"),
+			Kind:               "http_error",
+			Message:            upstreamMsg,
+			Detail:             upstreamDetail,
+		})
+		MarkResponseCommitted(c)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{
+				"type":    "invalid_request_error",
+				"code":    openAIContextWindowErrorCode,
+				"message": upstreamMsg,
+			},
+		})
+		return nil, fmt.Errorf("upstream error: %d message=%s", resp.StatusCode, upstreamMsg)
 	}
 
 	// Check custom error codes
