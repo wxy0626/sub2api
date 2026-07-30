@@ -577,7 +577,7 @@ export default {
         compactUnknown: 'Compact Auto',
         compactLastChecked: 'Last compact probe',
         testMode: 'Test mode',
-        testModeDefault: 'Default request',
+        testModeDefault: '/chat/completions test',
         testModeCompact: 'Compact probe',
         modelRestrictionDisabledByPassthrough: 'Automatic passthrough is enabled: model whitelist/mapping will not take effect.',
       },

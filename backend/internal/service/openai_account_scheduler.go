@@ -518,29 +518,8 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		}, false, nil
 	}
 
-	cfg := s.service.schedulingConfig()
-	// WaitPlan.MaxConcurrency 使用 Concurrency（非 EffectiveLoadFactor），因为 WaitPlan 控制的是 Redis 实际并发槽位等待。
-	if s.service.concurrencyService != nil {
-		if escapeCfg.enabled && acquireErr == nil && result != nil && !result.Acquired {
-			errorRate, ttft, _ := s.stats.snapshot(accountID)
-			slog.Info("sticky_escape_triggered",
-				"account_id", accountID,
-				"reason", "concurrency_full",
-				"error_rate", errorRate,
-				"ttft", ttft,
-			)
-			return nil, true, nil
-		}
-		return &AccountSelectionResult{
-			Account: account,
-			WaitPlan: &AccountWaitPlan{
-				AccountID:      accountID,
-				MaxConcurrency: account.Concurrency,
-				Timeout:        cfg.StickySessionWaitTimeout,
-				MaxWaiting:     cfg.StickySessionMaxWaiting,
-			},
-		}, false, nil
-	}
+	// 粘性账号槽位已满时交给负载调度继续尝试其他账号；只有所有候选
+	// 都满时，负载调度的兜底阶段才会生成等待计划。
 	return nil, false, nil
 }
 
@@ -1060,6 +1039,39 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 	return buildSelectionOrder(plan.candidates)
 }
 
+// openAISelectionOrderOverflow 返回扩展排序中尚未在首轮 TopK 尝试的账号。
+// 首轮候选全部满载时，调度器使用这些账号做并发兜底，避免 TopK 截断掩盖可用账号。
+func openAISelectionOrderOverflow(
+	initial []openAIAccountCandidateScore,
+	expanded []openAIAccountCandidateScore,
+) []openAIAccountCandidateScore {
+	if len(expanded) == 0 {
+		return nil
+	}
+	seen := make(map[int64]struct{}, len(initial))
+	for _, candidate := range initial {
+		if candidate.account != nil {
+			seen[candidate.account.ID] = struct{}{}
+		}
+	}
+	capacity := len(expanded)
+	if len(initial) < capacity {
+		capacity -= len(initial)
+	}
+	overflow := make([]openAIAccountCandidateScore, 0, capacity)
+	for _, candidate := range expanded {
+		if candidate.account == nil {
+			continue
+		}
+		if _, ok := seen[candidate.account.ID]; ok {
+			continue
+		}
+		seen[candidate.account.ID] = struct{}{}
+		overflow = append(overflow, candidate)
+	}
+	return overflow
+}
+
 func sortOpenAICompactRetryCandidates(pool []openAIAccountCandidateScore) []openAIAccountCandidateScore {
 	if len(pool) == 0 {
 		return nil
@@ -1498,10 +1510,34 @@ func (s *defaultOpenAIAccountScheduler) trySelectByLoadBalancePool(
 		return attempt
 	}
 
+	// 首轮 TopK 没有抢到槽位时，暂不立即为 TopK 内账号生成等待计划。
+	// 先扩展一次排序并探测 TopK 外账号，确保一个满载账号不会阻断同组其他账号。
+	tryOverflow := func(basePlan openAIAccountLoadPlan) (*AccountSelectionResult, bool, error) {
+		expandedPlan := basePlan
+		expandedPlan.includeOverflowFallback = true
+		expandedOrder := s.buildOpenAISelectionOrder(req, expandedPlan)
+		overflowOrder := openAISelectionOrderOverflow(basePlan.selectionOrder, expandedOrder)
+		if len(overflowOrder) == 0 {
+			return nil, false, nil
+		}
+		if budget != nil {
+			budget.enableLimit()
+		}
+		result, compactBlocked, err := s.tryAcquireOpenAISelectionOrderWithBudget(ctx, req, overflowOrder, budget)
+		attempt.selectionOrder = append(append([]openAIAccountCandidateScore(nil), basePlan.selectionOrder...), overflowOrder...)
+		attempt.candidateCount = basePlan.candidateCount
+		attempt.topK = basePlan.topK
+		attempt.loadSkew = basePlan.loadSkew
+		attempt.compactBlocked = attempt.compactBlocked || compactBlocked
+		return result, compactBlocked, err
+	}
+
+	lastPlan := plan
 	if s.service.concurrencyService != nil && !budget.acquireExhausted() {
 		loadReq := buildOpenAIAccountLoadRequest(filtered)
 		if freshLoadMap, loadErr := s.service.concurrencyService.GetAccountsLoadBatchFresh(ctx, loadReq); loadErr == nil {
 			freshPlan := s.buildOpenAIAccountLoadPlan(ctx, req, filtered, freshLoadMap)
+			lastPlan = freshPlan
 			if openAICostOverflowExpanded(req, freshPlan) {
 				budget.enableLimit()
 			}
@@ -1525,6 +1561,15 @@ func (s *defaultOpenAIAccountScheduler) trySelectByLoadBalancePool(
 				attempt.topK = freshPlan.topK
 				attempt.loadSkew = freshPlan.loadSkew
 			}
+		}
+	}
+	if !budget.acquireExhausted() {
+		if overflowResult, _, overflowErr := tryOverflow(lastPlan); overflowErr != nil {
+			attempt.err = overflowErr
+			return attempt
+		} else if overflowResult != nil {
+			attempt.result = overflowResult
+			return attempt
 		}
 	}
 

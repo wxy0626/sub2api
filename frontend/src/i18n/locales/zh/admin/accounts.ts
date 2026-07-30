@@ -637,7 +637,7 @@ export default {
         compactUnknown: 'Compact Auto',
         compactLastChecked: '最近探测',
         testMode: '测试模式',
-        testModeDefault: '常规请求',
+        testModeDefault: '/chat/completions 测试',
         testModeCompact: 'Compact 探测',
         modelRestrictionDisabledByPassthrough: '已开启自动透传：模型白名单/映射不会生效。',
       },

@@ -2505,7 +2505,7 @@ func TestGatewayService_SelectAccountWithLoadAwareness(t *testing.T) {
 		require.Equal(t, int64(2), result.Account.ID, "应跳过过载账号，选择可用账号")
 	})
 
-	t.Run("粘性账号槽位满-返回粘性等待计划", func(t *testing.T) {
+	t.Run("单账号槽位满-返回等待计划", func(t *testing.T) {
 		repo := &mockAccountRepoForPlatform{
 			accounts: []Account{
 				{ID: 1, Platform: PlatformAnthropic, Priority: 1, Status: StatusActive, Schedulable: true, Concurrency: 5},
@@ -2541,7 +2541,7 @@ func TestGatewayService_SelectAccountWithLoadAwareness(t *testing.T) {
 		require.NotNil(t, result)
 		require.NotNil(t, result.WaitPlan)
 		require.Equal(t, int64(1), result.Account.ID)
-		require.Equal(t, 0, concurrencyCache.loadBatchCalls)
+		require.Greater(t, concurrencyCache.loadBatchCalls, 0)
 	})
 
 	t.Run("负载批量查询失败-降级旧顺序选择", func(t *testing.T) {
@@ -2580,7 +2580,7 @@ func TestGatewayService_SelectAccountWithLoadAwareness(t *testing.T) {
 		require.Equal(t, int64(2), cache.sessionBindings["legacy"])
 	})
 
-	t.Run("模型路由-粘性账号等待计划", func(t *testing.T) {
+	t.Run("模型路由-粘性账号满时切换可用账号", func(t *testing.T) {
 		groupID := int64(20)
 		sessionHash := "route-sticky"
 
@@ -2634,8 +2634,14 @@ func TestGatewayService_SelectAccountWithLoadAwareness(t *testing.T) {
 		result, err := svc.SelectAccountWithLoadAwareness(ctx, &groupID, sessionHash, "claude-3-5-sonnet-20241022", nil, "", int64(0))
 		require.NoError(t, err)
 		require.NotNil(t, result)
-		require.NotNil(t, result.WaitPlan)
-		require.Equal(t, int64(1), result.Account.ID)
+		require.Nil(t, result.WaitPlan)
+		require.True(t, result.Acquired)
+		require.Equal(t, int64(2), result.Account.ID)
+		require.Equal(t, int64(2), cache.sessionBindings[sessionHash])
+		t.Logf("模型路由中的满载粘性账号 1 已切换到可用账号 %d", result.Account.ID)
+		if result.ReleaseFunc != nil {
+			result.ReleaseFunc()
+		}
 	})
 
 	t.Run("模型路由-粘性账号命中", func(t *testing.T) {

@@ -300,7 +300,16 @@
             />
           </template>
           <template #cell-groups="{ row }">
-            <AccountGroupsCell :groups="row.groups" :max-display="4" />
+            <AccountGroupsCell
+              :groups="row.groups"
+              :group-ids="row.group_ids"
+              :available-groups="groups"
+              :platform="row.platform"
+              :mixed-scheduling="row.extra?.mixed_scheduling === true"
+              :saving="savingGroupAccountID === row.id"
+              :max-display="4"
+              @save="(groupIDs) => handleSaveAccountGroups(row, groupIDs)"
+            />
           </template>
           <template #header-usage="{ column }">
             <div class="flex items-center">
@@ -519,6 +528,8 @@ const authStore = useAuthStore()
 
 const proxies = ref<AccountProxy[]>([])
 const groups = ref<AdminGroup[]>([])
+// 正在通过列表快捷保存分组的账号 ID。
+const savingGroupAccountID = ref<number | null>(null)
 const accountTableRef = ref<HTMLElement | null>(null)
 const dataTableRef = ref<InstanceType<typeof DataTable> | null>(null)
 type AccountBulkEditTarget =
@@ -1836,6 +1847,27 @@ const handleProbeUpstreamBilling = async (account: Account) => {
 const handleAccountUpdated = (updatedAccount: Account) => {
   patchAccountInList(updatedAccount)
   enterAutoRefreshSilentWindow()
+}
+
+// 保存账号列表中多选后的分组，并仅更新当前行。
+const handleSaveAccountGroups = async (account: Account, groupIDs: number[]) => {
+  if (savingGroupAccountID.value !== null) return
+  savingGroupAccountID.value = account.id
+  try {
+    const updatedAccount = await adminAPI.accounts.update(account.id, { group_ids: groupIDs })
+    const selectedGroups = groups.value.filter((group) => groupIDs.includes(group.id))
+    handleAccountUpdated({
+      ...updatedAccount,
+      group_ids: updatedAccount.group_ids ?? groupIDs,
+      groups: updatedAccount.groups ?? selectedGroups
+    })
+    appStore.showSuccess(t('admin.accounts.accountUpdated'))
+  } catch (error) {
+    console.error('Failed to update account groups:', error)
+    appStore.showError(extractApiErrorMessage(error, t('admin.accounts.failedToUpdate')))
+  } finally {
+    savingGroupAccountID.value = null
+  }
 }
 const formatExportTimestamp = () => {
   const now = new Date()
