@@ -257,9 +257,13 @@ watch(
   { immediate: true }
 )
 
-// 点击只读容量徽章后加载当前值，并进入可编辑状态。
+// 点击容量徽标切换浮层；再次点击时关闭并丢弃未保存草稿。
 const startCapacityEditing = () => {
-  if (!props.editable || props.saving || isEditing.value) return
+  if (!props.editable || props.saving) return
+  if (isEditing.value) {
+    cancelCapacityEditing()
+    return
+  }
   resetCapacityDraft()
   inputError.value = null
   isEditing.value = true

@@ -6,7 +6,7 @@ import type { Virtualizer } from '@tanstack/vue-virtual'
  * with a semi-transparent marquee overlay showing the selection area.
  *
  * Features:
- *  - Start dragging inside the current table-page layout's non-text area
+ *  - Start dragging inside a data-row cell's non-text area
  *  - Mouse wheel scrolling continues selecting new rows
  *  - Auto-scroll when dragging near viewport edges
  *  - 5px drag threshold to avoid accidental selection on click
@@ -333,19 +333,11 @@ export function useSwipeSelect(
     return target !== cell && !target.closest('[data-swipe-select-handle]')
   }
 
-  function hasDirectTextContent(target: HTMLElement): boolean {
-    return Array.from(target.childNodes).some(
-      (node) => node.nodeType === Node.TEXT_NODE && (node.textContent?.trim().length ?? 0) > 0
-    )
-  }
-
-  function shouldPreferNativeSelectionOutsideRows(target: HTMLElement): boolean {
-    const activationRoot = getActivationRoot()
-    if (!activationRoot) return false
-    if (!activationRoot.contains(target)) return false
-    if (target.closest('tbody tr[data-row-id]')) return false
-
-    return hasDirectTextContent(target)
+  // 框选只能从当前表格的数据行单元格开始，表头和页面其他区域一律不参与。
+  function isSwipeSelectDataCell(target: HTMLElement): boolean {
+    const container = containerRef.value
+    const cell = target.closest('tbody tr[data-row-id] td')
+    return Boolean(container && cell && container.contains(cell))
   }
 
   // =============================================
@@ -358,13 +350,13 @@ export function useSwipeSelect(
     const target = e.target as HTMLElement
     const activationRoot = getActivationRoot()
     if (!activationRoot || !activationRoot.contains(target)) return
+    if (!isSwipeSelectDataCell(target)) return
 
     // Skip clicks on any scrollbar (inner containers + document)
     if (isOnScrollbar(e)) return
 
     if (target.closest('button, a, input, select, textarea, [role="button"], [role="menuitem"], [role="combobox"], [role="dialog"]')) return
     if (shouldPreferNativeTextSelection(target)) return
-    if (shouldPreferNativeSelectionOutsideRows(target)) return
 
     if (virtualContext) {
       // Virtual mode: check data availability instead of DOM rows

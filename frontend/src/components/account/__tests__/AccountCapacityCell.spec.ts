@@ -98,6 +98,23 @@ describe('AccountCapacityCell', () => {
     expect(wrapper.emitted('save')).toBeUndefined()
   })
 
+  it('再次点击容量徽标会关闭浮层并丢弃草稿', async () => {
+    const wrapper = mountCell(createAccount({ current_concurrency: 0 }))
+
+    await openEditor(wrapper)
+    const concurrencyInput = getBodyElement<HTMLInputElement>('concurrency-input')!
+    concurrencyInput.value = '8'
+    concurrencyInput.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+
+    await wrapper.get('[data-testid="account-capacity-display"]').trigger('click')
+    await nextTick()
+
+    expect(getBodyElement('account-capacity-editor')).toBeNull()
+    expect(wrapper.get('[data-testid="account-capacity-display"]').text()).toContain('0/5')
+    expect(wrapper.emitted('save')).toBeUndefined()
+  })
+
   it('默认负载因子跟随并发容量，保存时清除显式覆盖', async () => {
     const wrapper = mountCell()
 

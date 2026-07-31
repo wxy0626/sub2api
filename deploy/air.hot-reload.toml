@@ -2,7 +2,7 @@ root = "/workspace/sub2api/backend"
 tmp_dir = "/tmp/sub2api-air"
 
 [build]
-  cmd = "go build -tags embed -ldflags='-X main.Version=local-0.1.168-4' -o /tmp/sub2api-air/server ./cmd/server"
+  cmd = "go build -tags embed -ldflags='-X main.Version=local-0.1.168-5' -o /tmp/sub2api-air/server ./cmd/server"
   bin = "/tmp/sub2api-air/server"
   include_ext = ["go", "sql"]
   exclude_dir = [".git", "bin", "tmp"]
