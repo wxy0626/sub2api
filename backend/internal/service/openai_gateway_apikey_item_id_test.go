@@ -63,6 +63,22 @@ func TestOpenAIGatewayService_APIKeyPassthrough_StripsInvalidInputItemIDs(t *tes
 	require.Equal(t, "item_unconstrained", gjson.GetBytes(forwarded, "input.5.id").String())
 }
 
+// TestSanitizeOpenAIResponsesInputItemIDs_StripsInvalidReasoningIDs 验证 reasoning
+// 项的 ID 也必须满足 OpenAI Responses API 的 rs 前缀约束，同时保留合法
+// reasoning ID 以及不受 rs 约束的输出项 ID。
+func TestSanitizeOpenAIResponsesInputItemIDs_StripsInvalidReasoningIDs(t *testing.T) {
+	// inputBody 是包含非法、合法 reasoning ID 和输出项 ID 的最小请求体。
+	inputBody := []byte(`{"input":[{"type":"reasoning","id":"item_bad_reasoning","summary":[]},{"type":"reasoning","id":"rs_valid","summary":[]},{"type":"function_call_output","id":"item_output","call_id":"fc_1","output":"done"}]}`)
+
+	// sanitizedBody 是发送给上游前清理过的请求体；changed 表示是否发生了 ID 清理。
+	sanitizedBody, changed, err := sanitizeOpenAIResponsesInputItemIDs(inputBody)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.False(t, gjson.GetBytes(sanitizedBody, "input.0.id").Exists())
+	require.Equal(t, "rs_valid", gjson.GetBytes(sanitizedBody, "input.1.id").String())
+	require.Equal(t, "item_output", gjson.GetBytes(sanitizedBody, "input.2.id").String())
+}
+
 func TestSanitizeOpenAIResponsesInputItemIDs_AllocationGrowthIsLinear(t *testing.T) {
 	makeBody := func(itemCount int) []byte {
 		items := make([]string, itemCount)
