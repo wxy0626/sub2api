@@ -128,7 +128,7 @@
               'sticky-header-cell py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400',
               getAdaptivePaddingClass(),
               { 'cursor-pointer hover:bg-gray-100 dark:hover:bg-dark-700': column.sortable },
-              { 'cursor-grab select-none': isColumnDraggable(column) },
+              { 'group cursor-grab select-none': isColumnDraggable(column) },
               { 'cursor-grabbing': draggingColumnKey === column.key },
               {
                 'bg-primary-50/60 dark:bg-primary-900/20': dragOverColumnKey === column.key && draggingColumnKey !== column.key
@@ -143,6 +143,13 @@
             @dragend="handleColumnDragEnd"
           >
             <div :class="['flex items-center space-x-1', getHeaderContentAlignmentClass(column)]">
+              <Icon
+                v-if="isColumnDraggable(column)"
+                name="menu"
+                size="sm"
+                class="column-drag-handle flex-shrink-0 text-gray-400 transition-colors group-hover:text-primary-500 dark:text-dark-500 dark:group-hover:text-primary-400"
+                aria-hidden="true"
+              />
               <slot
                 :name="`header-${column.key}`"
                 :column="column"
@@ -421,6 +428,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  clearColumnDragPreview()
   detachDesktopTableTracking()
   if (desktopViewportMediaQuery && desktopViewportListener) {
     if (typeof desktopViewportMediaQuery.removeEventListener === 'function') {
@@ -510,6 +518,10 @@ const actionsExpanded = ref(false)
 const draggingColumnKey = ref<string | null>(null)
 const dragOverColumnKey = ref<string | null>(null)
 const suppressNextHeaderClick = ref(false)
+// 当前挂载到 body 的按钮式拖拽预览，拖拽结束后必须及时移除。
+let columnDragPreviewElement: HTMLButtonElement | null = null
+// 拖拽预览沿用列显示菜单的 menu 图标路径，保持两处操作提示一致。
+const columnDragIconPath = 'M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5'
 const draggableColumnKeySet = computed(() => {
   if (!props.draggableColumnKeys) return null
   return new Set(props.draggableColumnKeys)
@@ -522,10 +534,80 @@ const isColumnDraggable = (column: Column) => {
   )
 }
 
+// 清除按钮式拖拽预览，重复调用时保持安全。
+const clearColumnDragPreview = () => {
+  columnDragPreviewElement?.remove()
+  columnDragPreviewElement = null
+}
+
+// 创建独立的按钮式拖拽预览，避免浏览器截取表格单元格作为半透明影像。
+const createColumnDragPreview = (column: Column) => {
+  if (typeof document === 'undefined' || !document.body) return null
+
+  clearColumnDragPreview()
+
+  const preview = document.createElement('button')
+  preview.type = 'button'
+  preview.tabIndex = -1
+  preview.setAttribute('aria-hidden', 'true')
+  preview.dataset.columnDragPreview = 'true'
+  Object.assign(preview.style, {
+    position: 'fixed',
+    left: '-10000px',
+    top: '-10000px',
+    zIndex: '2147483647',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '8px',
+    maxWidth: '320px',
+    boxSizing: 'border-box',
+    padding: '9px 14px',
+    border: '1px solid #1d4ed8',
+    borderRadius: '8px',
+    backgroundColor: '#2563eb',
+    color: '#ffffff',
+    boxShadow: '0 8px 20px rgba(15, 23, 42, 0.28)',
+    fontFamily: 'inherit',
+    fontSize: '13px',
+    fontWeight: '600',
+    lineHeight: '1.25',
+    whiteSpace: 'nowrap',
+    pointerEvents: 'none',
+    userSelect: 'none',
+    overflow: 'hidden'
+  })
+
+  const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  icon.setAttribute('width', '16')
+  icon.setAttribute('height', '16')
+  icon.setAttribute('viewBox', '0 0 24 24')
+  icon.setAttribute('fill', 'none')
+  icon.setAttribute('stroke', 'currentColor')
+  icon.setAttribute('stroke-width', '2')
+  icon.setAttribute('stroke-linecap', 'round')
+  icon.setAttribute('stroke-linejoin', 'round')
+  icon.style.flexShrink = '0'
+
+  const iconPath = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+  iconPath.setAttribute('d', columnDragIconPath)
+  icon.appendChild(iconPath)
+
+  const label = document.createElement('span')
+  label.textContent = column.label
+  label.style.overflow = 'hidden'
+  label.style.textOverflow = 'ellipsis'
+
+  preview.append(icon, label)
+  document.body.appendChild(preview)
+  columnDragPreviewElement = preview
+  return preview
+}
+
 // 清理表头拖拽状态，避免取消拖拽后残留高亮或错误源列。
 const resetColumnDragState = () => {
   draggingColumnKey.value = null
   dragOverColumnKey.value = null
+  clearColumnDragPreview()
 }
 
 // 过滤可交互控件上的拖拽，避免筛选下拉框和列设置按钮被误触发排序拖拽。
@@ -536,7 +618,7 @@ const handleColumnDragStart = (event: DragEvent, column: Column) => {
   }
 
   const target = event.target
-  if (target instanceof HTMLElement && target.closest('button,input,select,textarea,a,[role="button"]')) {
+  if (target instanceof Element && target.closest('button,input,select,textarea,a,[role="button"]')) {
     event.preventDefault()
     return
   }
@@ -546,6 +628,10 @@ const handleColumnDragStart = (event: DragEvent, column: Column) => {
   if (event.dataTransfer) {
     event.dataTransfer.effectAllowed = 'move'
     event.dataTransfer.setData('text/plain', column.key)
+    const dragPreview = createColumnDragPreview(column)
+    if (dragPreview && typeof event.dataTransfer.setDragImage === 'function') {
+      event.dataTransfer.setDragImage(dragPreview, 18, 18)
+    }
   }
 }
 

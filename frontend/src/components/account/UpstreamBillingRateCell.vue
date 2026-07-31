@@ -1,5 +1,5 @@
 <template>
-  <div v-if="eligible" class="flex h-6 min-w-[7rem] items-center gap-1">
+  <div v-if="eligible" class="flex h-6 min-w-[6rem] items-center gap-1">
     <HelpTooltip class="-ml-1" width-class="w-max max-w-[calc(100vw-2rem)]" data-testid="upstream-billing-details">
       <template #trigger>
         <span

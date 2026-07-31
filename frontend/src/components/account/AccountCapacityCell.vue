@@ -1,78 +1,89 @@
 <template>
   <div class="flex flex-col gap-0.5">
-    <div
-      v-if="isEditing"
-      class="flex min-w-[136px] flex-col gap-1.5 rounded-md border border-gray-200 bg-white/70 p-1.5 dark:border-dark-600 dark:bg-dark-800/70"
-      data-testid="account-capacity-editor"
-      @click.stop
-    >
-      <label class="flex items-center justify-between gap-2 text-[10px] font-medium text-gray-600 dark:text-gray-300">
-        <span>{{ t('admin.accounts.concurrencyLimit') }}</span>
-        <input
-          :value="concurrencyDraft"
-          data-testid="concurrency-input"
-          type="number"
-          min="1"
-          step="1"
-          class="w-16 rounded border border-gray-300 bg-white px-1.5 py-0.5 text-right font-mono text-xs text-gray-700 outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 disabled:cursor-not-allowed disabled:opacity-60 dark:border-dark-500 dark:bg-dark-700 dark:text-gray-100"
-          :disabled="saving"
-          :aria-label="t('admin.accounts.concurrencyLimit')"
-          @input="handleConcurrencyInput($event)"
-        />
-      </label>
-      <label class="flex items-center justify-between gap-2 text-[10px] font-medium text-gray-600 dark:text-gray-300">
-        <span>{{ t('admin.accounts.loadFactor') }}</span>
-        <input
-          :value="loadFactorDraft"
-          data-testid="load-factor-input"
-          type="number"
-          min="1"
-          max="10000"
-          step="1"
-          class="w-16 rounded border border-gray-300 bg-white px-1.5 py-0.5 text-right font-mono text-xs text-gray-700 outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 disabled:cursor-not-allowed disabled:opacity-60 dark:border-dark-500 dark:bg-dark-700 dark:text-gray-100"
-          :disabled="saving"
-          :aria-label="t('admin.accounts.loadFactor')"
-          @input="handleLoadFactorInput($event)"
-        />
-      </label>
-      <span v-if="loadFactorFollowsConcurrency" class="text-[10px] text-gray-400 dark:text-gray-500">
-        {{ t('admin.accounts.loadFactorFollowConcurrency') }}
-      </span>
-      <span v-if="inputError" data-testid="account-capacity-error" class="text-[10px] leading-4 text-red-600 dark:text-red-300">
-        {{ inputError }}
-      </span>
-      <div class="flex justify-end gap-1">
-        <button
-          type="button"
-          data-testid="account-capacity-cancel"
-          class="rounded px-2 py-0.5 text-[10px] font-medium text-gray-600 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50 dark:text-gray-300 dark:hover:bg-dark-700"
-          :disabled="saving"
-          @click="cancelCapacityEditing"
-        >
-          {{ t('common.cancel') }}
-        </button>
-        <button
-          type="button"
-          data-testid="account-capacity-save"
-          class="rounded bg-primary-500 px-2 py-0.5 text-[10px] font-medium text-white hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-50"
-          :disabled="saving"
-          @click="saveCapacity"
-        >
-          {{ t('common.save') }}
-        </button>
+    <Teleport to="body">
+      <div
+        v-if="isEditing"
+        ref="editorRef"
+        class="fixed z-[100000020] flex min-w-0 flex-col gap-2 overflow-y-auto rounded-lg border border-gray-200 bg-white p-3 shadow-xl shadow-black/15 dark:border-dark-600 dark:bg-dark-800 dark:shadow-black/40"
+        data-testid="account-capacity-editor"
+        role="dialog"
+        :aria-label="t('admin.accounts.columns.capacity')"
+        :style="editorStyle"
+        @click.stop
+      >
+        <label class="flex items-center justify-between gap-3 text-xs font-medium text-gray-600 dark:text-gray-300">
+          <span>{{ t('admin.accounts.concurrencyLimit') }}</span>
+          <input
+            ref="concurrencyInputRef"
+            :value="concurrencyDraft"
+            data-testid="concurrency-input"
+            type="number"
+            min="1"
+            step="1"
+            class="w-20 rounded border border-gray-300 bg-white px-2 py-1 text-right font-mono text-sm text-gray-700 outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 disabled:cursor-not-allowed disabled:opacity-60 dark:border-dark-500 dark:bg-dark-700 dark:text-gray-100"
+            :disabled="saving"
+            :aria-label="t('admin.accounts.concurrencyLimit')"
+            @input="handleConcurrencyInput($event)"
+            @keydown.enter.prevent="saveCapacity"
+          />
+        </label>
+        <label class="flex items-center justify-between gap-3 text-xs font-medium text-gray-600 dark:text-gray-300">
+          <span>{{ t('admin.accounts.loadFactor') }}</span>
+          <input
+            :value="loadFactorDraft"
+            data-testid="load-factor-input"
+            type="number"
+            min="1"
+            max="10000"
+            step="1"
+            class="w-20 rounded border border-gray-300 bg-white px-2 py-1 text-right font-mono text-sm text-gray-700 outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 disabled:cursor-not-allowed disabled:opacity-60 dark:border-dark-500 dark:bg-dark-700 dark:text-gray-100"
+            :disabled="saving"
+            :aria-label="t('admin.accounts.loadFactor')"
+            @input="handleLoadFactorInput($event)"
+            @keydown.enter.prevent="saveCapacity"
+          />
+        </label>
+        <span v-if="loadFactorFollowsConcurrency" class="text-xs text-gray-400 dark:text-gray-500">
+          {{ t('admin.accounts.loadFactorFollowConcurrency') }}
+        </span>
+        <span v-if="inputError" data-testid="account-capacity-error" class="text-xs leading-4 text-red-600 dark:text-red-300">
+          {{ inputError }}
+        </span>
+        <div class="flex justify-end gap-2 pt-1">
+          <button
+            type="button"
+            data-testid="account-capacity-cancel"
+            class="rounded-md px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50 dark:text-gray-300 dark:hover:bg-dark-700"
+            :disabled="saving"
+            @click="cancelCapacityEditing"
+          >
+            {{ t('common.cancel') }}
+          </button>
+          <button
+            type="button"
+            data-testid="account-capacity-save"
+            class="rounded-md bg-primary-500 px-2.5 py-1 text-xs font-medium text-white hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-50"
+            :disabled="saving"
+            @click="saveCapacity"
+          >
+            {{ t('common.save') }}
+          </button>
+        </div>
       </div>
-    </div>
+    </Teleport>
 
     <!-- 并发槽位 -->
     <component
-      v-if="!isEditing"
+      ref="triggerRef"
       :is="editable ? 'button' : 'div'"
       :type="editable ? 'button' : undefined"
       data-testid="account-capacity-display"
       class="inline-flex self-start"
       :class="editable ? 'cursor-pointer rounded-md hover:ring-2 hover:ring-primary-500/40 focus:outline-none focus:ring-2 focus:ring-primary-500' : ''"
       :disabled="editable ? saving : undefined"
-      @click="editable ? startCapacityEditing() : undefined"
+      :aria-expanded="editable ? isEditing : undefined"
+      :aria-haspopup="editable ? 'dialog' : undefined"
+      @click.stop="editable ? startCapacityEditing() : undefined"
     >
       <CapacityBadge :color-class="concurrencyClass" :current="currentConcurrency" :max="account.concurrency">
         <svg class="h-2.5 w-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -110,11 +121,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Account, UpdateAccountRequest } from '@/types'
 import CapacityBadge from '@/components/account/CapacityBadge.vue'
 import QuotaBadge from '@/components/account/QuotaBadge.vue'
+import { getFloatingPanelPosition } from '@/utils/floatingPanel'
 
 // 列表中的并发容量编辑事件只携带账号更新接口已支持的两个字段。
 type AccountCapacityUpdate = Pick<UpdateAccountRequest, 'concurrency' | 'load_factor'>
@@ -144,6 +156,13 @@ const loadFactorDraft = ref('')
 const loadFactorFollowsConcurrency = ref(true)
 // 输入校验失败时展示可执行的中文原因，避免管理员只能看到输入被恢复。
 const inputError = ref<string | null>(null)
+// 保存触发按钮和页面浮层节点，用于计算位置及判断外部点击。
+const triggerRef = ref<HTMLElement | null>(null)
+const editorRef = ref<HTMLElement | null>(null)
+// 保存并发容量输入框引用，浮层打开后自动聚焦以便连续修改。
+const concurrencyInputRef = ref<HTMLInputElement | null>(null)
+// 浮层的固定定位样式，随滚动和窗口尺寸变化重新计算。
+const editorStyle = ref<Record<string, string>>({})
 
 // 根据服务端账号值同步列表单元格草稿，避免自动刷新覆盖未变化的本地输入。
 const resetCapacityDraft = () => {
@@ -154,10 +173,85 @@ const resetCapacityDraft = () => {
   loadFactorDraft.value = String(explicitLoadFactor ? props.account.load_factor : concurrency)
 }
 
+// 依据触发按钮和视口边界计算页面浮层位置，避免编辑表单挤压表格行。
+const updateEditorPosition = () => {
+  if (!isEditing.value || !triggerRef.value) return
+
+  const rect = triggerRef.value.getBoundingClientRect()
+  const position = getFloatingPanelPosition(
+    rect,
+    window.innerWidth,
+    window.innerHeight,
+    {
+      viewportPadding: 8,
+      gap: 6,
+      maxWidth: 260,
+      maxHeightRatio: 0.8,
+      minComfortableHeight: 180
+    }
+  )
+
+  const style: Record<string, string> = {
+    left: String(position.left) + 'px',
+    width: String(position.width) + 'px',
+    minWidth: String(Math.min(220, position.width)) + 'px',
+    maxHeight: String(position.maxHeight) + 'px'
+  }
+  if (position.top != null) {
+    style.top = String(position.top) + 'px'
+  } else if (position.bottom != null) {
+    style.bottom = String(position.bottom) + 'px'
+  }
+  editorStyle.value = style
+}
+
+// 浮层关闭时移除全局监听，避免列表刷新或组件卸载后继续响应事件。
+const removeEditorListeners = () => {
+  document.removeEventListener('click', handleDocumentClick)
+  window.removeEventListener('keydown', handleEditorKeydown)
+  window.removeEventListener('resize', updateEditorPosition)
+  window.removeEventListener('scroll', updateEditorPosition, true)
+}
+
+// 点击浮层或触发按钮之外的区域时关闭编辑并丢弃草稿。
+const handleDocumentClick = (event: MouseEvent) => {
+  if (!isEditing.value) return
+  const target = event.target
+  if (!(target instanceof Node)) return
+  if (editorRef.value?.contains(target) || triggerRef.value?.contains(target)) return
+  cancelCapacityEditing()
+}
+
+// Escape 关闭浮层并恢复服务端值，输入框中的 Enter 由模板直接提交。
+const handleEditorKeydown = (event: KeyboardEvent) => {
+  if (event.key !== 'Escape' || !isEditing.value) return
+  event.preventDefault()
+  cancelCapacityEditing()
+}
+
+// 编辑状态变化时挂载或清理浮层的页面级事件监听。
+watch(isEditing, (editing) => {
+  if (!editing) {
+    editorStyle.value = {}
+    removeEditorListeners()
+    return
+  }
+
+  document.addEventListener('click', handleDocumentClick)
+  window.addEventListener('keydown', handleEditorKeydown)
+  window.addEventListener('resize', updateEditorPosition)
+  window.addEventListener('scroll', updateEditorPosition, true)
+  nextTick(() => {
+    updateEditorPosition()
+    concurrencyInputRef.value?.focus()
+  })
+})
+
 watch(
   () => [props.account.id, props.account.concurrency, props.account.load_factor] as const,
   () => {
     resetCapacityDraft()
+    inputError.value = null
     isEditing.value = false
   },
   { immediate: true }
@@ -165,7 +259,7 @@ watch(
 
 // 点击只读容量徽章后加载当前值，并进入可编辑状态。
 const startCapacityEditing = () => {
-  if (!props.editable || props.saving) return
+  if (!props.editable || props.saving || isEditing.value) return
   resetCapacityDraft()
   inputError.value = null
   isEditing.value = true
@@ -221,15 +315,29 @@ const saveCapacity = () => {
     return
   }
 
-  const currentLoadFactor = props.account.load_factor ?? props.account.concurrency
-  if (concurrency === props.account.concurrency && loadFactor === currentLoadFactor) return
+  // 记录服务端当前是否为跟随模式，避免显式值与并发容量相等时无法清除显式配置。
+  const currentLoadFactorFollowsConcurrency = props.account.load_factor == null || props.account.load_factor <= 0
+  const currentLoadFactor = currentLoadFactorFollowsConcurrency
+    ? props.account.concurrency
+    : props.account.load_factor!
+  if (
+    concurrency === props.account.concurrency &&
+    loadFactor === currentLoadFactor &&
+    loadFactorFollowsConcurrency.value === currentLoadFactorFollowsConcurrency
+  ) {
+    cancelCapacityEditing()
+    return
+  }
 
-  isEditing.value = false
   emit('save', {
     concurrency,
     load_factor: loadFactorFollowsConcurrency.value ? 0 : loadFactor
   })
 }
+
+onUnmounted(() => {
+  removeEditorListeners()
+})
 
 // ====== 并发 ======
 const currentConcurrency = computed(() => props.account.current_concurrency || 0)

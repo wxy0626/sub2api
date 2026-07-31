@@ -148,13 +148,17 @@ describe('admin AccountsView column order', () => {
   })
 
   it('uses one order source for header reordering and column display reordering', async () => {
+    // 代理默认隐藏；本测试显式打开它后再验证列宽配置。
+    localStorage.setItem('account-hidden-columns', JSON.stringify([]))
     localStorage.setItem('account-column-order', JSON.stringify(['status', 'capacity', 'platform']))
     const wrapper = mountView()
     await flushPromises()
 
     const dataTable = wrapper.getComponent(DataTableStub)
     // 从表格属性读取当前可见列顺序，验证表头和列显示菜单使用同一结果。
-    const getColumnKeys = () => (dataTable.props('columns') as Array<{ key: string }>).map(column => column.key)
+    const getColumns = () => dataTable.props('columns') as Array<{ key: string; class?: string }>
+    const getColumnKeys = () => getColumns().map(column => column.key)
+    expect(getColumns().find(column => column.key === 'proxy')?.class).toBe('w-36 max-w-36')
     expect(getColumnKeys().indexOf('status')).toBeLessThan(getColumnKeys().indexOf('capacity'))
 
     dataTable.vm.$emit('column-reorder', {

@@ -185,7 +185,8 @@ describe('admin AccountsView usage windows hint', () => {
     expect(wrapper.findAll('[data-test="usage-windows-hint"]').some(node =>
       node.text() === 'admin.accounts.upstreamBilling.trustWarning'
     )).toBe(true)
-    const columns = wrapper.getComponent(DataTableStub).props('columns') as Array<{ key: string; sortable: boolean }>
+    const columns = wrapper.getComponent(DataTableStub).props('columns') as Array<{ key: string; sortable: boolean; class?: string }>
     expect(columns.find(column => column.key === 'upstream_billing_rate')?.sortable).toBe(true)
+    expect(columns.find(column => column.key === 'upstream_billing_rate')?.class).toBe('w-28 max-w-28')
   })
 })

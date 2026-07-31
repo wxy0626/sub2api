@@ -6,7 +6,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.hot-reload
-    image: sub2api:local-0.1.168-2
+    image: sub2api:local-0.1.168-3
     container_name: sub2api
     restart: unless-stopped
     working_dir: /workspace/sub2api/backend

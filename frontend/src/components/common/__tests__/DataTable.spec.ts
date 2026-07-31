@@ -102,7 +102,8 @@ describe('DataTable', () => {
       effectAllowed: '',
       dropEffect: '',
       setData: vi.fn(),
-      getData: vi.fn().mockReturnValue('capacity')
+      getData: vi.fn().mockReturnValue('capacity'),
+      setDragImage: vi.fn()
     }
     vi.spyOn(statusHeader.element, 'getBoundingClientRect').mockReturnValue({
       left: 0,
@@ -117,6 +118,15 @@ describe('DataTable', () => {
     })
 
     await capacityHeader.trigger('dragstart', { dataTransfer })
+
+    expect(dataTransfer.setDragImage).toHaveBeenCalledWith(expect.any(HTMLButtonElement), 18, 18)
+
+    const dragPreview = document.querySelector<HTMLButtonElement>('[data-column-drag-preview="true"]')
+    expect(dragPreview).not.toBeNull()
+    expect(dragPreview?.textContent).toContain('Capacity')
+    expect(dragPreview?.style.borderRadius).toBe('8px')
+    expect(dragPreview?.style.boxShadow).toContain('rgba(15, 23, 42')
+
     await statusHeader.trigger('dragover', { dataTransfer })
     await statusHeader.trigger('drop', { dataTransfer, clientX: 80 })
 
@@ -124,6 +134,7 @@ describe('DataTable', () => {
       { sourceKey: 'capacity', targetKey: 'status', position: 'after' }
     ]])
     expect(dataTransfer.setData).toHaveBeenCalledWith('text/plain', 'capacity')
+    expect(document.querySelector('[data-column-drag-preview="true"]')).toBeNull()
   })
 
   it('renders every row with no virtual padding spacer for small datasets (virtualization off)', async () => {

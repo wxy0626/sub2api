@@ -52,7 +52,7 @@
                 <div class="space-y-1.5">
                   <p class="font-medium">{{ t('admin.scheduledTests.cronTooltipTitle') }}</p>
                   <p>{{ t('admin.scheduledTests.cronTooltipMeaning') }}</p>
-                  <p>{{ t('admin.scheduledTests.cronTooltipExampleEvery30Min') }}</p>
+                  <p>{{ t('admin.scheduledTests.cronTooltipExampleEvery60Min') }}</p>
                   <p>{{ t('admin.scheduledTests.cronTooltipExampleHourly') }}</p>
                   <p>{{ t('admin.scheduledTests.cronTooltipExampleDaily') }}</p>
                   <p>{{ t('admin.scheduledTests.cronTooltipExampleWeekly') }}</p>
@@ -62,7 +62,7 @@
             </label>
             <Input
               v-model="newPlan.cron_expression"
-              :placeholder="'*/30 * * * *'"
+              :placeholder="defaultScheduledTestCron"
               :hint="t('admin.scheduledTests.cronHelp')"
             />
           </div>
@@ -262,7 +262,7 @@
                     <div class="space-y-1.5">
                       <p class="font-medium">{{ t('admin.scheduledTests.cronTooltipTitle') }}</p>
                       <p>{{ t('admin.scheduledTests.cronTooltipMeaning') }}</p>
-                      <p>{{ t('admin.scheduledTests.cronTooltipExampleEvery30Min') }}</p>
+                      <p>{{ t('admin.scheduledTests.cronTooltipExampleEvery60Min') }}</p>
                       <p>{{ t('admin.scheduledTests.cronTooltipExampleHourly') }}</p>
                       <p>{{ t('admin.scheduledTests.cronTooltipExampleDaily') }}</p>
                       <p>{{ t('admin.scheduledTests.cronTooltipExampleWeekly') }}</p>
@@ -272,7 +272,7 @@
                 </label>
                 <Input
                   v-model="editForm.cron_expression"
-                  :placeholder="'*/30 * * * *'"
+                  :placeholder="defaultScheduledTestCron"
                   :hint="t('admin.scheduledTests.cronHelp')"
                 />
               </div>
@@ -511,6 +511,9 @@ const editForm = reactive({
   auto_recover: false
 })
 
+// 新增定时测试计划默认每 60 分钟在整点执行。
+const defaultScheduledTestCron = '0 * * * *'
+
 const newPlan = reactive({
   model_id: '' as string,
   cron_expression: '' as string,
@@ -529,7 +532,7 @@ const resolveDefaultTestModelID = () => {
 
 const resetNewPlan = () => {
   newPlan.model_id = resolveDefaultTestModelID()
-  newPlan.cron_expression = ''
+  newPlan.cron_expression = defaultScheduledTestCron
   newPlan.max_results = '100'
   newPlan.enabled = true
   newPlan.auto_recover = false

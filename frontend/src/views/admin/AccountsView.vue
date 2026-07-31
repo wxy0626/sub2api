@@ -422,7 +422,7 @@
                 :model-value="row.proxy_id"
                 :options="accountProxyOptions(row)"
                 :disabled="updatingProxyAccountIds.has(row.id)"
-                class="w-44 normal-case"
+                class="w-36 normal-case"
                 :aria-label="t('admin.accounts.columns.proxy')"
                 @update:model-value="handleAccountProxyChange(row, $event)"
               />
@@ -615,7 +615,7 @@ import AccountCapacityCell from '@/components/account/AccountCapacityCell.vue'
 import UpstreamBillingRateCell from '@/components/account/UpstreamBillingRateCell.vue'
 import PlatformTypeBadge from '@/components/common/PlatformTypeBadge.vue'
 import Icon from '@/components/icons/Icon.vue'
-import type { ColumnReorderEvent } from '@/components/common/types'
+import type { Column, ColumnReorderEvent } from '@/components/common/types'
 import ErrorPassthroughRulesModal from '@/components/admin/ErrorPassthroughRulesModal.vue'
 import TLSFingerprintProfilesModal from '@/components/admin/TLSFingerprintProfilesModal.vue'
 import { buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
@@ -1644,8 +1644,8 @@ function getAntigravityTierClass(row: any): string {
 }
 
 // All available columns
-const allColumns = computed(() => {
-  const c = [
+const allColumns = computed<Column[]>(() => {
+  const c: Column[] = [
     { key: 'select', label: '', sortable: false },
     { key: 'name', label: t('admin.accounts.columns.name'), sortable: true },
     { key: 'id', label: t('admin.accounts.columns.id'), sortable: true },
@@ -1661,11 +1661,11 @@ const allColumns = computed(() => {
   }
   c.push({ key: 'usage', label: t('admin.accounts.columns.usageWindows'), sortable: false })
   c.push(
-    { key: 'proxy', label: t('admin.accounts.columns.proxy'), sortable: false },
+    { key: 'proxy', label: t('admin.accounts.columns.proxy'), sortable: false, class: 'w-36 max-w-36' },
     { key: 'priority', label: t('admin.accounts.columns.priority'), sortable: true },
     { key: 'scheduler_score', label: t('admin.accounts.columns.schedulerScore'), sortable: false },
     { key: 'rate_multiplier', label: t('admin.accounts.columns.billingRateMultiplier'), sortable: true },
-    { key: 'upstream_billing_rate', label: t('admin.accounts.columns.upstreamBillingRate'), sortable: true },
+    { key: 'upstream_billing_rate', label: t('admin.accounts.columns.upstreamBillingRate'), sortable: true, class: 'w-28 max-w-28' },
     { key: 'last_used_at', label: t('admin.accounts.columns.lastUsed'), sortable: true },
     { key: 'created_at', label: t('admin.accounts.columns.createdAt'), sortable: true },
     { key: 'expires_at', label: t('admin.accounts.columns.expiresAt'), sortable: true },
