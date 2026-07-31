@@ -763,13 +763,21 @@ func isBareOpenAIResponsesPath(c *gin.Context) bool {
 	return strings.HasSuffix(normalizedPath, "/responses")
 }
 
-// normalizeOpenAIResponsesCompactRequest 将明确的压缩信号统一提升到专用
-// /responses/compact 上游链路，并保留客户端 stream 意图供 SSE bridge 使用。
+// normalizeOpenAIResponsesCompactRequest 仅将非 native 的压缩信号提升到专用
+// /responses/compact 上游链路；native remote_compaction_v2 保持原始 Responses 请求。
 // 返回归一化后的 body；ok=false 表示错误响应已写出，调用方应直接 return。
 func (h *OpenAIGatewayHandler) normalizeOpenAIResponsesCompactRequest(c *gin.Context, reqLog *zap.Logger, body []byte) ([]byte, bool) {
 	isCompactRequest := service.IsOpenAIResponsesCompactPathForTest(c)
 	if !isCompactRequest && isBareOpenAIResponsesPath(c) && service.HasCompactionTriggerInInput(body) {
 		remoteCompactionV2 := service.IsOpenAIResponsesRemoteCompactionV2Request(c, body)
+		if remoteCompactionV2 {
+			// native 请求由后续 Responses 能力判断复用原始 context，不得套用 legacy compact bridge。
+			reqLog.Info("codex.remote_compact.native_body_signal",
+				zap.Bool("client_stream", gjson.GetBytes(body, "stream").Bool()),
+				zap.Bool("remote_compaction_v2", true),
+			)
+			return body, true
+		}
 		c.Request.URL.Path = strings.TrimRight(c.Request.URL.Path, "/") + "/compact"
 		isCompactRequest = true
 		clientStream := gjson.GetBytes(body, "stream").Bool()
@@ -778,7 +786,7 @@ func (h *OpenAIGatewayHandler) normalizeOpenAIResponsesCompactRequest(c *gin.Con
 		}
 		reqLog.Info("codex.remote_compact.detected_body_signal",
 			zap.Bool("client_stream", clientStream),
-			zap.Bool("remote_compaction_v2", remoteCompactionV2),
+			zap.Bool("remote_compaction_v2", false),
 		)
 	}
 	if !isCompactRequest {

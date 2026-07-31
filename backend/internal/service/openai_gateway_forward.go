@@ -16,40 +16,10 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// normalizeOpenAIRemoteCompactionV2ForForward 是 Forward 层的最终压缩路由兜底。
-// 它只处理明确的 native 信号，不根据 body 大小猜测压缩，也不裁剪普通历史。
-func normalizeOpenAIRemoteCompactionV2ForForward(c *gin.Context, body []byte) ([]byte, error) {
-	if !IsOpenAIResponsesRemoteCompactionV2Request(c, body) {
-		return body, nil
-	}
-	if c == nil || c.Request == nil || c.Request.URL == nil {
-		return body, errors.New("无法归一化 Responses 压缩请求：请求路径不存在")
-	}
-
-	c.Request.URL.Path = strings.TrimRight(c.Request.URL.Path, "/") + "/compact"
-	if gjson.GetBytes(body, "stream").Bool() {
-		MarkOpenAICompactClientStream(c)
-	}
-	normalizedBody, _, err := normalizeOpenAICompactRequestBody(body)
-	if err != nil {
-		return body, fmt.Errorf("归一化 Responses 压缩请求体失败：%w", err)
-	}
-	return normalizedBody, nil
-}
-
 // Forward forwards request to OpenAI API
 func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
 	clearGrokResponsesClientToolMapping(c)
 	startTime := time.Now()
-	// handler 已先完成提升；这里再兜底一次，避免内部调用绕过 handler 后把
-	// native 压缩信号按普通 /responses 原样转发。
-	if account != nil && account.Platform == PlatformOpenAI {
-		normalizedBody, normalizeErr := normalizeOpenAIRemoteCompactionV2ForForward(c, body)
-		if normalizeErr != nil {
-			return nil, normalizeErr
-		}
-		body = normalizedBody
-	}
 	// 固定渠道映射后的请求级 canonical body；账号 normalize/strip 不得改写跨 failover hint。
 	canonicalImageIntentBody := body
 
