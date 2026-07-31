@@ -98,6 +98,13 @@ describe('DataTable', () => {
 
     await wrapper.vm.$nextTick()
     const [capacityHeader, statusHeader] = wrapper.findAll('th')
+    const selection = window.getSelection()
+    const removeAllRangesSpy = selection ? vi.spyOn(selection, 'removeAllRanges') : null
+    const selectStartEvent = new Event('selectstart', { bubbles: true, cancelable: true })
+    capacityHeader.element.dispatchEvent(selectStartEvent)
+    expect(selectStartEvent.defaultPrevented).toBe(true)
+    expect(removeAllRangesSpy).toHaveBeenCalled()
+
     const dataTransfer = {
       effectAllowed: '',
       dropEffect: '',

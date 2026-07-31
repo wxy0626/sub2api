@@ -226,7 +226,7 @@
             <Select
               :model-value="params.proxy_id"
               :options="proxyFilterOptions"
-              class="w-36 normal-case"
+              class="w-36 flex-shrink-0 normal-case"
               :aria-label="t('admin.accounts.columns.proxy')"
               @update:model-value="handleHeaderProxyFilterChange"
             />
@@ -445,7 +445,7 @@
           </template>
           <template #header-upstream_billing_rate="{ column }">
             <div class="flex items-center gap-1">
-              <span>{{ column.label }}</span>
+              <span class="flex-shrink-0 whitespace-nowrap">{{ column.label }}</span>
               <span @click.stop>
                 <HelpTooltip :content="t('admin.accounts.upstreamBilling.trustWarning')" width-class="w-80" />
               </span>
@@ -1661,11 +1661,11 @@ const allColumns = computed<Column[]>(() => {
   }
   c.push({ key: 'usage', label: t('admin.accounts.columns.usageWindows'), sortable: false })
   c.push(
-    { key: 'proxy', label: t('admin.accounts.columns.proxy'), sortable: false, class: 'w-36 max-w-36' },
+    { key: 'proxy', label: t('admin.accounts.columns.proxy'), sortable: false, class: 'w-48 min-w-48 max-w-48' },
     { key: 'priority', label: t('admin.accounts.columns.priority'), sortable: true },
     { key: 'scheduler_score', label: t('admin.accounts.columns.schedulerScore'), sortable: false },
     { key: 'rate_multiplier', label: t('admin.accounts.columns.billingRateMultiplier'), sortable: true },
-    { key: 'upstream_billing_rate', label: t('admin.accounts.columns.upstreamBillingRate'), sortable: true, class: 'w-28 max-w-28' },
+    { key: 'upstream_billing_rate', label: t('admin.accounts.columns.upstreamBillingRate'), sortable: true, class: 'w-36 min-w-36 max-w-36' },
     { key: 'last_used_at', label: t('admin.accounts.columns.lastUsed'), sortable: true },
     { key: 'created_at', label: t('admin.accounts.columns.createdAt'), sortable: true },
     { key: 'expires_at', label: t('admin.accounts.columns.expiresAt'), sortable: true },

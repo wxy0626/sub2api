@@ -137,6 +137,7 @@
               column.class
             ]"
             @click="handleHeaderClick(column)"
+            @selectstart="handleColumnSelectStart($event, column)"
             @dragstart="handleColumnDragStart($event, column)"
             @dragover="handleColumnDragOver($event, column)"
             @drop="handleColumnDrop($event, column)"
@@ -534,6 +535,23 @@ const isColumnDraggable = (column: Column) => {
   )
 }
 
+// 清理浏览器当前文本选区，避免拖拽表头结束后留下框选高亮。
+const clearColumnTextSelection = () => {
+  if (typeof window === 'undefined') return
+  window.getSelection()?.removeAllRanges()
+}
+
+// 阻止可拖拽表头在原生拖拽开始前触发文本框选，但保留表头内控件的正常选择行为。
+const handleColumnSelectStart = (event: Event, column: Column) => {
+  if (!isColumnDraggable(column)) return
+
+  const target = event.target
+  if (target instanceof Element && target.closest('button,input,select,textarea,a,[role="button"]')) return
+
+  event.preventDefault()
+  clearColumnTextSelection()
+}
+
 // 清除按钮式拖拽预览，重复调用时保持安全。
 const clearColumnDragPreview = () => {
   columnDragPreviewElement?.remove()
@@ -607,6 +625,7 @@ const createColumnDragPreview = (column: Column) => {
 const resetColumnDragState = () => {
   draggingColumnKey.value = null
   dragOverColumnKey.value = null
+  clearColumnTextSelection()
   clearColumnDragPreview()
 }
 
@@ -625,6 +644,7 @@ const handleColumnDragStart = (event: DragEvent, column: Column) => {
 
   draggingColumnKey.value = column.key
   dragOverColumnKey.value = null
+  clearColumnTextSelection()
   if (event.dataTransfer) {
     event.dataTransfer.effectAllowed = 'move'
     event.dataTransfer.setData('text/plain', column.key)
@@ -668,6 +688,7 @@ const handleColumnDrop = (event: DragEvent, column: Column) => {
 
 // 拖拽被取消或完成后统一清理状态。
 const handleColumnDragEnd = () => {
+  clearColumnTextSelection()
   resetColumnDragState()
 }
 

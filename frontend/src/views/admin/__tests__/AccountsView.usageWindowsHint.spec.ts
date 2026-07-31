@@ -187,6 +187,6 @@ describe('admin AccountsView usage windows hint', () => {
     )).toBe(true)
     const columns = wrapper.getComponent(DataTableStub).props('columns') as Array<{ key: string; sortable: boolean; class?: string }>
     expect(columns.find(column => column.key === 'upstream_billing_rate')?.sortable).toBe(true)
-    expect(columns.find(column => column.key === 'upstream_billing_rate')?.class).toBe('w-28 max-w-28')
+    expect(columns.find(column => column.key === 'upstream_billing_rate')?.class).toBe('w-36 min-w-36 max-w-36')
   })
 })

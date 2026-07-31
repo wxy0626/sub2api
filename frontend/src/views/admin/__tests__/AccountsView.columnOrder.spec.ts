@@ -158,7 +158,7 @@ describe('admin AccountsView column order', () => {
     // 从表格属性读取当前可见列顺序，验证表头和列显示菜单使用同一结果。
     const getColumns = () => dataTable.props('columns') as Array<{ key: string; class?: string }>
     const getColumnKeys = () => getColumns().map(column => column.key)
-    expect(getColumns().find(column => column.key === 'proxy')?.class).toBe('w-36 max-w-36')
+    expect(getColumns().find(column => column.key === 'proxy')?.class).toBe('w-48 min-w-48 max-w-48')
     expect(getColumnKeys().indexOf('status')).toBeLessThan(getColumnKeys().indexOf('capacity'))
 
     dataTable.vm.$emit('column-reorder', {
