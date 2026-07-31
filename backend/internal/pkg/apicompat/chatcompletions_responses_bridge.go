@@ -259,7 +259,7 @@ func buildChatMessagesFromItems(messages []ChatMessage, rawItems []json.RawMessa
 				pendingReasoning = txt
 			}
 			continue
-		case "function_call":
+		case "function_call", "mcp_tool_call":
 			arguments := rawString(item["arguments"])
 			if strings.TrimSpace(arguments) == "" {
 				arguments = "{}"
@@ -318,19 +318,20 @@ func buildChatMessagesFromItems(messages []ChatMessage, rawItems []json.RawMessa
 			messages = appendAssistantToolCall(messages, toolCall, pendingReasoning)
 			pendingReasoning = ""
 			continue
-		case "function_call_output", "custom_tool_call_output", "tool_search_output":
-			outputRaw := bytesTrimSpace(item["output"])
-			outputText := rawString(outputRaw)
-			if outputText == "" && len(outputRaw) > 0 && string(outputRaw) != "null" && string(outputRaw) != `""` {
-				// 对象/数组形式的输出（如 tool_search 的结果列表）整体字符串化。
-				outputText = string(outputRaw)
-			}
+		case "function_call_output", "custom_tool_call_output", "tool_search_output", "mcp_tool_call_output":
+			outputText, outputImages := responsesToolOutputTextAndImages(item["output"])
 			content, _ := json.Marshal(outputText)
 			messages = append(messages, ChatMessage{
 				Role:       "tool",
 				ToolCallID: rawString(item["call_id"]),
 				Content:    content,
 			})
+			if len(outputImages) > 0 {
+				// Chat Completions 的 tool 消息不能可靠承载图片；图片作为紧随工具
+				// 结果的 user 多模态消息发送，避免把 data URI 序列化成普通文本。
+				imageContent, _ := json.Marshal(outputImages)
+				messages = append(messages, ChatMessage{Role: "user", Content: imageContent})
+			}
 			pendingReasoning = ""
 			continue
 		case "input_text", "text":
@@ -377,6 +378,78 @@ func buildChatMessagesFromItems(messages []ChatMessage, rawItems []json.RawMessa
 	}
 
 	return messages, nil
+}
+
+// responsesToolOutputTextAndImages 从工具输出中分离文本和图片。
+// 图片不能继续放进 tool 文本消息，否则 data URI 会被上游按普通 token 计算，
+// 使看图历史在 Chat fallback 中成倍膨胀；非多模态结构化输出仍保留原始 JSON 文本。
+func responsesToolOutputTextAndImages(raw json.RawMessage) (string, []ChatContentPart) {
+	raw = bytesTrimSpace(raw)
+	if len(raw) == 0 || string(raw) == "null" {
+		return "", nil
+	}
+
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		return text, nil
+	}
+
+	var parts []json.RawMessage
+	if err := json.Unmarshal(raw, &parts); err == nil {
+		textParts, images, recognized := responsesToolOutputParts(parts)
+		if recognized {
+			return strings.Join(textParts, "\n\n"), images
+		}
+	}
+
+	var part map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &part); err == nil {
+		textParts, images, recognized := responsesToolOutputParts([]json.RawMessage{raw})
+		if recognized {
+			return strings.Join(textParts, "\n\n"), images
+		}
+	}
+
+	// 对象/数组形式的普通工具结果（如 tool_search 的 groups）继续按 JSON 文本传递。
+	return string(raw), nil
+}
+
+// responsesToolOutputParts 解析 Responses 多模态工具输出中的文本和图片部分。
+// recognized 表示输入至少包含一个已知文本或图片 part；未知结构不会被误判为可安全丢弃。
+func responsesToolOutputParts(parts []json.RawMessage) ([]string, []ChatContentPart, bool) {
+	var textParts []string
+	var images []ChatContentPart
+	recognized := false
+	for _, rawPart := range parts {
+		var part map[string]json.RawMessage
+		if err := json.Unmarshal(rawPart, &part); err != nil {
+			continue
+		}
+		switch rawString(part["type"]) {
+		case "input_text", "output_text", "text":
+			recognized = true
+			if text := rawString(part["text"]); text != "" {
+				textParts = append(textParts, text)
+			}
+		case "input_image", "image_url":
+			imageURL := rawString(part["image_url"])
+			if imageURL == "" {
+				imageURL = rawNestedString(part["image_url"], "url")
+			}
+			if imageURL == "" {
+				continue
+			}
+			recognized = true
+			images = append(images, ChatContentPart{
+				Type: "image_url",
+				ImageURL: &ChatImageURL{
+					URL:    imageURL,
+					Detail: rawString(part["detail"]),
+				},
+			})
+		}
+	}
+	return textParts, images, recognized
 }
 
 // appendAssistantToolCall merges a tool call into the chat message list.
