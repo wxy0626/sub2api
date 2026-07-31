@@ -400,18 +400,28 @@ export const commonErrorCodes = [
 // 辅助函数
 // =====================
 
-// 同步白名单允许的模型前缀，仅保留 GPT-5.5、GPT-5.6 和 GPT Image 系列。
-const syncedModelAllowedPrefixes = ['gpt-5.5', 'gpt-5.6', 'gpt-image']
+// syncedGPTModelVersionPattern 匹配可比较版本号的 GPT 模型，并要求后缀以连字符分隔。
+const syncedGPTModelVersionPattern = /^gpt-(\d+)(?:\.(\d))?(?:-|$)/
 
-// 默认 OpenAI 模型白名单只开放最低的 GPT-5.5 系列，避免空白名单等价于全模型放行。
-const defaultOpenAIModelWhitelist = ['gpt-5.5']
+// syncedImageModelPrefix 是自动同步时允许的 GPT Image 2 模型前缀。
+const syncedImageModelPrefix = 'gpt-image-2'
+
+// defaultOpenAIModelWhitelist 是无既有映射时默认开放的 GPT-5.6 与 GPT Image 2 模型。
+const defaultOpenAIModelWhitelist = ['gpt-5.6', 'gpt-image-2']
 
 // isAllowedSyncedModel 判断模型是否可由“同步最新支持模型”或“同步上游支持的模型”写入白名单。
 export function isAllowedSyncedModel(model: string): boolean {
   const normalizedModel = model.trim().toLowerCase()
-  return syncedModelAllowedPrefixes.some(prefix =>
-    normalizedModel === prefix || normalizedModel.startsWith(`${prefix}-`)
-  )
+  if (normalizedModel === syncedImageModelPrefix || normalizedModel.startsWith(`${syncedImageModelPrefix}-`)) {
+    return true
+  }
+
+  const versionMatch = normalizedModel.match(syncedGPTModelVersionPattern)
+  if (!versionMatch) return false
+
+  const majorVersion = Number(versionMatch[1])
+  const minorVersion = versionMatch[2] ? Number(versionMatch[2]) : 0
+  return majorVersion > 5 || (majorVersion === 5 && minorVersion >= 6)
 }
 
 // restrictSyncedModels 清理同步结果和已有白名单，去重后只保留允许的模型系列。
@@ -431,7 +441,7 @@ export function restrictSyncedModels(models: string[]): string[] {
   return restrictedModels
 }
 
-// getDefaultModelWhitelist 返回指定平台在编辑时应采用的最小默认模型白名单。
+// getDefaultModelWhitelist 返回指定平台在编辑时应采用的默认模型白名单。
 export function getDefaultModelWhitelist(platform: string): string[] {
   if (platform.trim().toLowerCase() === 'openai') {
     return [...defaultOpenAIModelWhitelist]

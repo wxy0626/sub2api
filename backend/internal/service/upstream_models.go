@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
@@ -16,8 +18,11 @@ import (
 
 const upstreamModelsBodyLimit int64 = 8 << 20
 
-// 同步白名单允许的模型前缀，仅保留 GPT-5.5、GPT-5.6 和 GPT Image 系列。
-var syncedModelAllowedPrefixes = []string{"gpt-5.5", "gpt-5.6", "gpt-image"}
+// syncedGPTModelVersionPattern 匹配可比较版本号的 GPT 模型，并要求后缀以连字符分隔。
+var syncedGPTModelVersionPattern = regexp.MustCompile(`^gpt-(\d+)(?:\.(\d))?(?:-|$)`)
+
+// syncedImageModelPrefix 是自动同步时允许的 GPT Image 2 模型前缀。
+const syncedImageModelPrefix = "gpt-image-2"
 
 // UpstreamModelSyncErrorKind classifies model sync failures for safe HTTP mapping.
 type UpstreamModelSyncErrorKind string
@@ -621,6 +626,33 @@ func dedupeAndSortModelIDs(models []string) []string {
 	return result
 }
 
+// isSyncedModelAllowed 判断模型是否达到 GPT-5.6 版本门槛或属于 GPT Image 2。
+func isSyncedModelAllowed(model string) bool {
+	normalizedModel := strings.ToLower(strings.TrimSpace(model))
+	if normalizedModel == syncedImageModelPrefix || strings.HasPrefix(normalizedModel, syncedImageModelPrefix+"-") {
+		return true
+	}
+
+	versionMatches := syncedGPTModelVersionPattern.FindStringSubmatch(normalizedModel)
+	if len(versionMatches) == 0 {
+		return false
+	}
+
+	majorVersion, err := strconv.Atoi(versionMatches[1])
+	if err != nil {
+		return false
+	}
+	minorVersion := 0
+	if versionMatches[2] != "" {
+		minorVersion, err = strconv.Atoi(versionMatches[2])
+		if err != nil {
+			return false
+		}
+	}
+
+	return majorVersion > 5 || (majorVersion == 5 && minorVersion >= 6)
+}
+
 // filterSyncedModelIDs 清理上游模型列表，确保同步接口不会返回白名单策略之外的模型。
 func filterSyncedModelIDs(models []string) []string {
 	// filteredModels 是通过同步白名单策略的上游模型标识。
@@ -628,13 +660,8 @@ func filterSyncedModelIDs(models []string) []string {
 	for _, model := range models {
 		// normalizedModel 保留上游原始大小写，但移除意外空白。
 		normalizedModel := strings.TrimSpace(model)
-		// lowercaseModel 用于不区分大小写地匹配受支持系列。
-		lowercaseModel := strings.ToLower(normalizedModel)
-		for _, prefix := range syncedModelAllowedPrefixes {
-			if lowercaseModel == prefix || strings.HasPrefix(lowercaseModel, prefix+"-") {
-				filteredModels = append(filteredModels, normalizedModel)
-				break
-			}
+		if isSyncedModelAllowed(normalizedModel) {
+			filteredModels = append(filteredModels, normalizedModel)
 		}
 	}
 	return dedupeAndSortModelIDs(filteredModels)

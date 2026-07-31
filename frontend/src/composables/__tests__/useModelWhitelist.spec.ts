@@ -132,20 +132,25 @@ describe('useModelWhitelist', () => {
     })
   })
 
-  it('同步模型清理会删除低于 GPT-5.5 和非 GPT Image 的已有条目', () => {
+  it('同步模型清理只保留 GPT-5.6 及以上和 GPT Image 2', () => {
     expect(isAllowedSyncedModel(' GPT-5.6-LUNA ')).toBe(true)
+    expect(isAllowedSyncedModel('gpt-5.7-preview')).toBe(true)
+    expect(isAllowedSyncedModel('gpt-6')).toBe(true)
     expect(isAllowedSyncedModel('gpt-image-2')).toBe(true)
+    expect(isAllowedSyncedModel('gpt-image-2-2026-04-21')).toBe(true)
+    expect(isAllowedSyncedModel('gpt-5.5')).toBe(false)
     expect(isAllowedSyncedModel('gpt-5.4')).toBe(false)
     expect(isAllowedSyncedModel('gpt-5.50')).toBe(false)
     expect(isAllowedSyncedModel('gpt-5.6x')).toBe(false)
+    expect(isAllowedSyncedModel('gpt-image-1.5')).toBe(false)
     expect(isAllowedSyncedModel('claude-sonnet-4-6')).toBe(false)
-    expect(restrictSyncedModels(['gpt-5.4', 'gpt-5.5', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-image-2', 'o3']))
-      .toEqual(['gpt-5.5', 'gpt-5.6-luna', 'gpt-image-2'])
+    expect(restrictSyncedModels(['gpt-5.4', 'gpt-5.5', 'gpt-5.6-luna', 'gpt-5.7-preview', 'gpt-5.5', 'gpt-image-1.5', 'gpt-image-2', 'o3']))
+      .toEqual(['gpt-5.6-luna', 'gpt-5.7-preview', 'gpt-image-2'])
   })
 
-  it('OpenAI 编辑空白名单时默认只开放最低 GPT-5.5 系列', () => {
-    expect(getDefaultModelWhitelist('openai')).toEqual(['gpt-5.5'])
-    expect(getDefaultModelWhitelist('OpenAI')).toEqual(['gpt-5.5'])
+  it('OpenAI 编辑空白名单时默认开放 GPT-5.6 和 GPT Image 2', () => {
+    expect(getDefaultModelWhitelist('openai')).toEqual(['gpt-5.6', 'gpt-image-2'])
+    expect(getDefaultModelWhitelist('OpenAI')).toEqual(['gpt-5.6', 'gpt-image-2'])
     expect(getDefaultModelWhitelist('anthropic')).toEqual([])
   })
 

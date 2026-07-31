@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeDisplayErrorMessage } from '../errorMessage'
+import { getErrorStatusSummary, normalizeDisplayErrorMessage } from '../errorMessage'
 
 describe('normalizeDisplayErrorMessage', () => {
   it('将 Codex EOF 错误转换为中文', () => {
@@ -32,5 +32,15 @@ describe('normalizeDisplayErrorMessage', () => {
     const message = normalizeDisplayErrorMessage('API returned 401: access_token=secret-token Authorization: Bearer top-secret')
     expect(message).toContain('access_token=secret-token')
     expect(message).toContain('Authorization: Bearer top-secret')
+  })
+
+  it('将错误状态码转换为列表中的短说明', () => {
+    expect(getErrorStatusSummary('API returned 403: INSUFFICIENT_BALANCE')).toBe('403 额度不足')
+    expect(getErrorStatusSummary('HTTP 403: quota exceeded')).toBe('403 额度不足')
+    expect(getErrorStatusSummary('upstream returned 503: service unavailable')).toBe('503 上游异常')
+  })
+
+  it('没有状态码时仍显示错误原因', () => {
+    expect(getErrorStatusSummary('connection reset by peer')).toBe('网络异常')
   })
 })

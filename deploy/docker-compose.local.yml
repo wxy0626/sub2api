@@ -212,8 +212,8 @@ services:
         soft: 100000
         hard: 100000
     volumes:
-      # Local directory mapping for easy migration
-      - ./postgres_data:/var/lib/postgresql/data:Z
+      # PostgreSQL 18 升级后使用独立数据目录，保留原 PostgreSQL 15 数据用于回滚。
+      - ./postgres_data_pg18:/var/lib/postgresql/data:Z
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-sub2api}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}

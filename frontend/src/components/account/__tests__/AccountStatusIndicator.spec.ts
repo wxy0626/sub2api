@@ -108,6 +108,8 @@ describe('AccountStatusIndicator', () => {
 
     expect(wrapper.text()).toContain('ChatGPT 工作区已停用（HTTP 402）')
     expect(wrapper.text()).toContain('Workspace deactivated (402): workspace has been deactivated')
+    expect(wrapper.get('[data-testid="account-status-error-summary"]').text()).toBe('402 工作区停用')
+    expect(wrapper.get('[data-testid="account-status-error-details"]').exists()).toBe(true)
   })
 
   it('其他历史英文账号错误显示中文说明与技术详情', () => {
@@ -125,6 +127,44 @@ describe('AccountStatusIndicator', () => {
 
     expect(wrapper.text()).toContain('身份验证失败')
     expect(wrapper.text()).toContain('Authentication failed (401): invalid credentials')
+    expect(wrapper.get('[data-testid="account-status-error-summary"]').text()).toBe('401 认证失败')
+  })
+
+  it('额度不足和上游异常在错误状态下显示短说明', () => {
+    const quotaWrapper = mount(AccountStatusIndicator, {
+      props: {
+        account: makeAccount({
+          status: 'error',
+          error_message: 'API returned 403: INSUFFICIENT_BALANCE'
+        })
+      },
+      global: { stubs: { Icon: true } }
+    })
+    expect(quotaWrapper.get('[data-testid="account-status-error-summary"]').text()).toBe('403 额度不足')
+    expect(quotaWrapper.get('[data-testid="account-status-error-details"]').exists()).toBe(true)
+
+    const upstreamWrapper = mount(AccountStatusIndicator, {
+      props: {
+        account: makeAccount({
+          status: 'error',
+          error_message: 'upstream returned 503: service unavailable'
+        })
+      },
+      global: { stubs: { Icon: true } }
+    })
+    expect(upstreamWrapper.get('[data-testid="account-status-error-summary"]').text()).toBe('503 上游异常')
+  })
+
+  it('错误详情为空时也显示通用短说明，但不显示问号详情图标', () => {
+    const wrapper = mount(AccountStatusIndicator, {
+      props: {
+        account: makeAccount({ status: 'error', error_message: null })
+      },
+      global: { stubs: { Icon: true } }
+    })
+
+    expect(wrapper.get('[data-testid="account-status-error-summary"]').text()).toBe('请求失败')
+    expect(wrapper.find('[data-testid="account-status-error-details"]').exists()).toBe(false)
   })
 
   it('模型限流 + overages 启用 + 无 AICredits key → 显示 ⚡ (credits_active)', () => {

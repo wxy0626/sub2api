@@ -122,14 +122,25 @@
             :key="column.key"
             scope="col"
             :aria-sort="column.sortable ? getColumnAriaSort(column.key) : undefined"
+            :draggable="isColumnDraggable(column)"
+            :data-column-key="column.key"
             :class="[
               'sticky-header-cell py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400',
               getAdaptivePaddingClass(),
               { 'cursor-pointer hover:bg-gray-100 dark:hover:bg-dark-700': column.sortable },
+              { 'cursor-grab select-none': isColumnDraggable(column) },
+              { 'cursor-grabbing': draggingColumnKey === column.key },
+              {
+                'bg-primary-50/60 dark:bg-primary-900/20': dragOverColumnKey === column.key && draggingColumnKey !== column.key
+              },
               getStickyColumnClass(column, index),
               column.class
             ]"
-            @click="column.sortable && handleSort(column.key)"
+            @click="handleHeaderClick(column)"
+            @dragstart="handleColumnDragStart($event, column)"
+            @dragover="handleColumnDragOver($event, column)"
+            @drop="handleColumnDrop($event, column)"
+            @dragend="handleColumnDragEnd"
           >
             <div :class="['flex items-center space-x-1', getHeaderContentAlignmentClass(column)]">
               <slot
@@ -266,7 +277,7 @@
 import { computed, ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useVirtualizer, observeElementRect as observeElementRectDefault } from '@tanstack/vue-virtual'
 import { useI18n } from 'vue-i18n'
-import type { Column } from './types'
+import type { Column, ColumnReorderEvent } from './types'
 import Icon from '@/components/icons/Icon.vue'
 
 const { t } = useI18n()
@@ -275,13 +286,6 @@ const desktopViewportQuery = '(min-width: 768px)'
 const isDesktopViewport = ref(
   typeof window === 'undefined' ? true : window.matchMedia(desktopViewportQuery).matches
 )
-
-const emit = defineEmits<{
-  sort: [key: string, order: 'asc' | 'desc']
-  rowClick: [row: any]
-  'update:selectedKeys': [keys: Array<string | number>]
-  selectionChange: [keys: Array<string | number>]
-}>()
 
 // 表格容器引用
 const tableWrapperRef = ref<HTMLElement | null>(null)
@@ -433,6 +437,10 @@ interface Props {
   columns: Column[]
   data: any[]
   loading?: boolean
+  /** 是否允许通过拖拽调整指定表头的顺序。 */
+  draggableColumns?: boolean
+  /** 可拖拽的列键；未提供时允许拖拽全部列。 */
+  draggableColumnKeys?: string[]
   stickyFirstColumn?: boolean
   stickyActionsColumn?: boolean
   expandableActions?: boolean
@@ -475,6 +483,7 @@ interface Props {
 
 const props = withDefaults(defineProps<Props>(), {
   loading: false,
+  draggableColumns: false,
   stickyFirstColumn: true,
   stickyActionsColumn: true,
   expandableActions: true,
@@ -484,9 +493,106 @@ const props = withDefaults(defineProps<Props>(), {
   selectedKeys: () => []
 })
 
+// 表头拖拽事件只传递源列、目标列和落点方向，具体顺序由调用方统一维护。
+const emit = defineEmits<{
+  sort: [key: string, order: 'asc' | 'desc']
+  rowClick: [row: any]
+  'update:selectedKeys': [keys: Array<string | number>]
+  selectionChange: [keys: Array<string | number>]
+  columnReorder: [event: ColumnReorderEvent]
+}>()
+
 const sortKey = ref<string>('')
 const sortOrder = ref<'asc' | 'desc'>('asc')
 const actionsExpanded = ref(false)
+
+// 当前正在拖拽的列键和悬停目标列键，用于反馈拖拽状态并生成重排事件。
+const draggingColumnKey = ref<string | null>(null)
+const dragOverColumnKey = ref<string | null>(null)
+const suppressNextHeaderClick = ref(false)
+const draggableColumnKeySet = computed(() => {
+  if (!props.draggableColumnKeys) return null
+  return new Set(props.draggableColumnKeys)
+})
+
+// 判断某个表头是否允许作为拖拽源，固定列可由调用方通过键集合排除。
+const isColumnDraggable = (column: Column) => {
+  return props.draggableColumns && (
+    draggableColumnKeySet.value === null || draggableColumnKeySet.value.has(column.key)
+  )
+}
+
+// 清理表头拖拽状态，避免取消拖拽后残留高亮或错误源列。
+const resetColumnDragState = () => {
+  draggingColumnKey.value = null
+  dragOverColumnKey.value = null
+}
+
+// 过滤可交互控件上的拖拽，避免筛选下拉框和列设置按钮被误触发排序拖拽。
+const handleColumnDragStart = (event: DragEvent, column: Column) => {
+  if (!isColumnDraggable(column)) {
+    event.preventDefault()
+    return
+  }
+
+  const target = event.target
+  if (target instanceof HTMLElement && target.closest('button,input,select,textarea,a,[role="button"]')) {
+    event.preventDefault()
+    return
+  }
+
+  draggingColumnKey.value = column.key
+  dragOverColumnKey.value = null
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', column.key)
+  }
+}
+
+// 允许拖拽列悬停在任意可见表头上，目标是否可落位由业务层统一校验。
+const handleColumnDragOver = (event: DragEvent, column: Column) => {
+  if (!draggingColumnKey.value || column.key === draggingColumnKey.value) return
+  event.preventDefault()
+  dragOverColumnKey.value = column.key
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
+}
+
+// 根据目标表头的左右半区确定插入前后位置，支持直观地把列放到目标列后面。
+const handleColumnDrop = (event: DragEvent, column: Column) => {
+  const sourceKey = draggingColumnKey.value || event.dataTransfer?.getData('text/plain')
+  if (!sourceKey || sourceKey === column.key) {
+    resetColumnDragState()
+    return
+  }
+
+  event.preventDefault()
+  const targetElement = event.currentTarget
+  const targetRect = targetElement instanceof HTMLElement ? targetElement.getBoundingClientRect() : null
+  const position: ColumnReorderEvent['position'] = targetRect && event.clientX > targetRect.left + targetRect.width / 2
+    ? 'after'
+    : 'before'
+
+  emit('columnReorder', { sourceKey, targetKey: column.key, position })
+  suppressNextHeaderClick.value = true
+  window.setTimeout(() => {
+    suppressNextHeaderClick.value = false
+  }, 0)
+  resetColumnDragState()
+}
+
+// 拖拽被取消或完成后统一清理状态。
+const handleColumnDragEnd = () => {
+  resetColumnDragState()
+}
+
+// 拖拽完成后吞掉紧接着产生的点击，防止一次拖拽误触发表头排序。
+const handleHeaderClick = (column: Column) => {
+  if (suppressNextHeaderClick.value) {
+    suppressNextHeaderClick.value = false
+    return
+  }
+  if (column.sortable) handleSort(column.key)
+}
 
 type PersistedSortState = {
   key: string

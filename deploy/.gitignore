@@ -5,12 +5,16 @@
 # Data directories (generated at runtime when using docker-compose.local.yml)
 data/
 postgres_data/
+# PostgreSQL 18 升级后的运行数据，以及保留的 PostgreSQL 15 冷备。
+postgres_data_pg18/
+postgres_data_pg15_preupgrade_*/
 redis_data/
 
 # Environment configuration (contains sensitive information)
 .env
 
 # Backup files
+backups/
 *.backup
 *.bak
 

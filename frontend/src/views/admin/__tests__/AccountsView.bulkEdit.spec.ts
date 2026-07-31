@@ -99,6 +99,9 @@ const DataTableStub = {
         <div data-test="select-row"><slot name="cell-select" :row="row" /></div>
         <slot name="cell-created_at" :value="row.created_at" :row="row" />
         <slot name="cell-proxy" :row="row" />
+        <div v-if="columns.some(column => column.key === 'priority')" data-test="priority-cell">
+          <slot name="cell-priority" :value="row.priority" :row="row" />
+        </div>
       </div>
     </div>
   `
@@ -545,6 +548,141 @@ describe('admin AccountsView bulk edit scope', () => {
     await (wrapper.vm as any).handleAccountProxyChange({ ...account, proxy_id: 7 }, null)
     expect(updateAccount).toHaveBeenLastCalledWith(9, { proxy_id: 0 })
     expect(showSuccess).toHaveBeenCalledWith('admin.accounts.proxyUpdated')
+  })
+
+  it('allows manually entering and saving a row priority level', async () => {
+    localStorage.setItem('account-hidden-columns', JSON.stringify([]))
+    const account = {
+      id: 10,
+      name: 'priority-account',
+      platform: 'openai',
+      type: 'apikey',
+      status: 'active',
+      schedulable: true,
+      priority: 1,
+      created_at: '2026-03-07T10:00:00Z',
+      updated_at: '2026-03-07T10:00:00Z'
+    }
+    const updatedAccount = { ...account, priority: 7 }
+    listAccounts.mockResolvedValue({ items: [account], total: 1, page: 1, page_size: 20, pages: 1 })
+    updateAccount.mockResolvedValue(updatedAccount)
+
+    const wrapper = mount(AccountsView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: {
+            template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>'
+          },
+          DataTable: DataTableStub,
+          Pagination: true,
+          ConfirmDialog: true,
+          AccountTableActions: { template: '<div><slot name="beforeCreate" /><slot name="after" /></div>' },
+          AccountTableFilters: { template: '<div></div>' },
+          AccountBulkActionsBar: AccountBulkActionsBarStub,
+          AccountActionMenu: true,
+          ImportDataModal: true,
+          ReAuthAccountModal: true,
+          AccountStatsModal: true,
+          ScheduledTestsPanel: true,
+          SyncFromCrsModal: true,
+          TempUnschedStatusModal: true,
+          ErrorPassthroughRulesModal: true,
+          TLSFingerprintProfilesModal: true,
+          CreateAccountModal: true,
+          EditAccountModal: true,
+          BulkEditAccountModal: BulkEditAccountModalStub,
+          PlatformTypeBadge: true,
+          AccountCapacityCell: true,
+          AccountStatusIndicator: true,
+          AccountTodayStatsCell: true,
+          AccountGroupsCell: true,
+          AccountUsageCell: true,
+          Icon: true
+        }
+      }
+    })
+
+    await flushPromises()
+    const priorityInput = wrapper.get('[data-test="priority-input"]')
+    await priorityInput.setValue('7')
+    await priorityInput.trigger('change')
+    await flushPromises()
+
+    expect(updateAccount).toHaveBeenCalledWith(10, { priority: 7 })
+    expect(showSuccess).toHaveBeenCalledWith('admin.accounts.priorityUpdated')
+    expect((priorityInput.element as HTMLInputElement).value).toBe('7')
+  })
+
+  it('rejects an invalid priority level and keeps the original value', async () => {
+    localStorage.setItem('account-hidden-columns', JSON.stringify([]))
+    const account = {
+      id: 11,
+      name: 'invalid-priority-account',
+      platform: 'openai',
+      type: 'apikey',
+      status: 'active',
+      schedulable: true,
+      priority: 2,
+      created_at: '2026-03-07T10:00:00Z',
+      updated_at: '2026-03-07T10:00:00Z'
+    }
+    listAccounts.mockResolvedValue({ items: [account], total: 1, page: 1, page_size: 20, pages: 1 })
+
+    const wrapper = mount(AccountsView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: {
+            template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>'
+          },
+          DataTable: DataTableStub,
+          Pagination: true,
+          ConfirmDialog: true,
+          AccountTableActions: { template: '<div><slot name="beforeCreate" /><slot name="after" /></div>' },
+          AccountTableFilters: { template: '<div></div>' },
+          AccountBulkActionsBar: AccountBulkActionsBarStub,
+          AccountActionMenu: true,
+          ImportDataModal: true,
+          ReAuthAccountModal: true,
+          AccountStatsModal: true,
+          ScheduledTestsPanel: true,
+          SyncFromCrsModal: true,
+          TempUnschedStatusModal: true,
+          ErrorPassthroughRulesModal: true,
+          TLSFingerprintProfilesModal: true,
+          CreateAccountModal: true,
+          EditAccountModal: true,
+          BulkEditAccountModal: BulkEditAccountModalStub,
+          PlatformTypeBadge: true,
+          AccountCapacityCell: true,
+          AccountStatusIndicator: true,
+          AccountTodayStatsCell: true,
+          AccountGroupsCell: true,
+          AccountUsageCell: true,
+          Icon: true
+        }
+      }
+    })
+
+    await flushPromises()
+    const priorityInput = wrapper.get('[data-test="priority-input"]')
+    await priorityInput.setValue('-1')
+    await priorityInput.trigger('change')
+
+    expect(updateAccount).not.toHaveBeenCalled()
+    expect(showError).toHaveBeenCalledWith('admin.accounts.priorityInvalid')
+    expect((priorityInput.element as HTMLInputElement).value).toBe('2')
+
+    updateAccount.mockRejectedValue({ status: 400, message: 'priority must be >= 0' })
+    await priorityInput.setValue('3')
+    await priorityInput.trigger('change')
+    await flushPromises()
+
+    expect(showError).toHaveBeenLastCalledWith(
+      '操作失败，请根据下方技术详情定位原因。\n技术详情：priority must be >= 0'
+    )
+    expect((priorityInput.element as HTMLInputElement).value).toBe('2')
   })
 
   it('submits selected account IDs from every page for backend eligibility checks', async () => {

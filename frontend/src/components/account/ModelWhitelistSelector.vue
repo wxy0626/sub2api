@@ -303,7 +303,7 @@ const syncLatestSupportedModels = async () => {
     const results = await Promise.all(
       latestSyncPlatformNames.value.map(platform => syncPricingModels(platform))
     )
-    // latestModels 仅保留当前允许同步的 GPT-5.5、GPT-5.6 和 GPT Image 系列。
+    // latestModels 仅保留 GPT-5.6 及以上与 GPT Image 2。
     const latestModels = restrictSyncedModels(results.flatMap(result => result.models))
     emit('update:modelValue', latestModels)
     appStore.showSuccess(t('admin.accounts.syncLatestModelsSuccess', { count: latestModels.length }))

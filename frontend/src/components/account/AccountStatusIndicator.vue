@@ -1,60 +1,73 @@
 <template>
   <div class="flex items-center gap-2">
-    <!-- Rate Limit Display (429) - Two-line layout -->
-    <div v-if="isRateLimited" class="flex flex-col items-center gap-1">
-      <span class="badge text-xs badge-warning">{{ t('admin.accounts.status.rateLimited') }}</span>
-      <span class="text-[11px] text-gray-400 dark:text-gray-500">{{ rateLimitResumeText }}</span>
-    </div>
-
-    <!-- Overload Display (529) - Two-line layout -->
-    <div v-else-if="isOverloaded" class="flex flex-col items-center gap-1">
-      <span class="badge text-xs badge-danger">{{ t('admin.accounts.status.overloaded') }}</span>
-      <span class="text-[11px] text-gray-400 dark:text-gray-500">{{ overloadCountdown }}</span>
-    </div>
-
-    <!-- Main Status Badge (shown when not rate limited/overloaded) -->
-    <template v-else>
-      <button
-        v-if="isTempUnschedulable"
-        type="button"
-        :class="['badge text-xs', statusClass, 'cursor-pointer']"
-        :title="t('admin.accounts.status.viewTempUnschedDetails')"
-        @click="handleTempUnschedClick"
-      >
-        {{ statusText }}
-      </button>
-      <span v-else :class="['badge text-xs', statusClass]">
-        {{ statusText }}
-      </span>
-    </template>
-
-    <!-- Error Info Indicator -->
-    <div v-if="hasError && account.error_message" class="group/error relative">
-      <svg
-        class="h-4 w-4 cursor-help text-red-500 transition-colors hover:text-red-600 dark:text-red-400 dark:hover:text-red-300"
-        fill="none"
-        viewBox="0 0 24 24"
-        stroke="currentColor"
-        stroke-width="2"
-      >
-        <path
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z"
-        />
-      </svg>
-      <!-- Tooltip - 向下显示 -->
-      <div
-        class="invisible absolute left-0 top-full z-[100] mt-1.5 min-w-[200px] max-w-[300px] rounded-lg bg-gray-800 px-3 py-2 text-xs text-white opacity-0 shadow-xl transition-all duration-200 group-hover/error:visible group-hover/error:opacity-100 dark:bg-gray-900"
-      >
-        <div class="whitespace-pre-wrap break-words leading-relaxed text-gray-300">
-          {{ displayErrorMessage }}
+    <div class="flex flex-col items-center gap-0.5">
+      <div class="flex items-center gap-1.5">
+        <!-- Rate Limit Display (429) - Two-line layout -->
+        <div v-if="isRateLimited" class="flex flex-col items-center gap-1">
+          <span class="badge text-xs badge-warning">{{ t('admin.accounts.status.rateLimited') }}</span>
+          <span class="text-[11px] text-gray-400 dark:text-gray-500">{{ rateLimitResumeText }}</span>
         </div>
-        <!-- 上方小三角 -->
-        <div
-          class="absolute bottom-full left-3 border-[6px] border-transparent border-b-gray-800 dark:border-b-gray-900"
-        ></div>
+
+        <!-- Overload Display (529) - Two-line layout -->
+        <div v-else-if="isOverloaded" class="flex flex-col items-center gap-1">
+          <span class="badge text-xs badge-danger">{{ t('admin.accounts.status.overloaded') }}</span>
+          <span class="text-[11px] text-gray-400 dark:text-gray-500">{{ overloadCountdown }}</span>
+        </div>
+
+        <!-- Main Status Badge (shown when not rate limited/overloaded) -->
+        <template v-else>
+          <button
+            v-if="isTempUnschedulable"
+            type="button"
+            :class="['badge text-xs', statusClass, 'cursor-pointer']"
+            :title="t('admin.accounts.status.viewTempUnschedDetails')"
+            @click="handleTempUnschedClick"
+          >
+            {{ statusText }}
+          </button>
+          <span v-else :class="['badge text-xs', statusClass]">
+            {{ statusText }}
+          </span>
+        </template>
+
+        <!-- Error Info Indicator -->
+        <div v-if="hasError && account.error_message" class="group/error relative" data-testid="account-status-error-details">
+          <svg
+            class="h-4 w-4 cursor-help text-red-500 transition-colors hover:text-red-600 dark:text-red-400 dark:hover:text-red-300"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z"
+            />
+          </svg>
+          <!-- Tooltip - 向下显示 -->
+          <div
+            class="invisible absolute left-0 top-full z-[100] mt-1.5 min-w-[200px] max-w-[300px] rounded-lg bg-gray-800 px-3 py-2 text-xs text-white opacity-0 shadow-xl transition-all duration-200 group-hover/error:visible group-hover/error:opacity-100 dark:bg-gray-900"
+          >
+            <div class="whitespace-pre-wrap break-words leading-relaxed text-gray-300">
+              {{ displayErrorMessage }}
+            </div>
+            <!-- 上方小三角 -->
+            <div
+              class="absolute bottom-full left-3 border-[6px] border-transparent border-b-gray-800 dark:border-b-gray-900"
+            ></div>
+          </div>
+        </div>
       </div>
+
+      <!-- 简短错误说明固定放在错误状态下方，避免必须悬停问号才能判断原因。 -->
+      <span
+        v-if="hasError"
+        class="max-w-[180px] truncate text-[11px] leading-4 text-red-600 dark:text-red-400"
+        data-testid="account-status-error-summary"
+      >
+        {{ errorStatusSummary }}
+      </span>
     </div>
 
     <button
@@ -170,7 +183,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
-import { normalizeDisplayErrorMessage } from '@/utils/errorMessage'
+import { getErrorStatusSummary, normalizeDisplayErrorMessage } from '@/utils/errorMessage'
 import type { Account } from '@/types'
 import { formatCountdown, formatDateTime, formatDateTimeToMinute, formatCountdownWithSuffix, formatTime } from '@/utils/format'
 
@@ -297,6 +310,9 @@ const hasError = computed(() => {
 const displayErrorMessage = computed(() => {
   return normalizeDisplayErrorMessage(props.account.error_message, t('admin.accounts.testFailed'))
 })
+
+// 错误摘要只显示状态码和短原因，完整错误继续由问号图标悬浮层展示。
+const errorStatusSummary = computed(() => getErrorStatusSummary(props.account.error_message))
 
 const isQuotaExceeded = computed(() => {
   const exceeded = (used?: number | null, limit?: number | null) =>

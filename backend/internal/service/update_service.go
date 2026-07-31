@@ -654,12 +654,17 @@ func compareVersions(current, latest string) int {
 }
 
 func parseVersion(v string) [3]int {
+	// 本地版本采用 local-X.Y.Z 命名，比较更新时仍按 X.Y.Z 的发布基础版本处理。
+	v = strings.TrimPrefix(v, "local-")
 	v = strings.TrimPrefix(v, "v")
 	parts := strings.Split(v, ".")
 	result := [3]int{0, 0, 0}
 	for i := 0; i < len(parts) && i < 3; i++ {
-		// 发布基础版本忽略 -dev 等构建后缀，避免同一 Release 被误判为可更新。
+		// 发布基础版本忽略 -dev、+build 及 168a 这类构建后缀，避免同一 Release 被误判为可更新。
 		basePart := strings.SplitN(parts[i], "-", 2)[0]
+		if suffixIndex := strings.IndexFunc(basePart, func(r rune) bool { return r < '0' || r > '9' }); suffixIndex >= 0 {
+			basePart = basePart[:suffixIndex]
+		}
 		if parsed, err := strconv.Atoi(basePart); err == nil {
 			result[i] = parsed
 		}

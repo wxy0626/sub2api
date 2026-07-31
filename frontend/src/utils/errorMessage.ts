@@ -48,7 +48,16 @@ export function normalizeDisplayErrorMessage(rawMessage: unknown, fallback = '�
     normalizedMessage.includes('insufficient_balance') ||
     normalizedMessage.includes('insufficient balance') ||
     normalizedMessage.includes('insufficient_user_quota') ||
-    normalizedMessage.includes('额度不足')
+    normalizedMessage.includes('insufficient quota') ||
+    normalizedMessage.includes('insufficient credit') ||
+    normalizedMessage.includes('quota exceeded') ||
+    normalizedMessage.includes('quota exhausted') ||
+    normalizedMessage.includes('credit balance') ||
+    normalizedMessage.includes('balance too low') ||
+    normalizedMessage.includes('额度不足') ||
+    normalizedMessage.includes('配额不足') ||
+    normalizedMessage.includes('余额不足') ||
+    normalizedMessage.includes('额度耗尽')
   ) {
     return withDetailedErrorMessage('上游账号额度不足，请充值或更换账号后重试。', message)
   }
@@ -93,4 +102,55 @@ export function normalizeDisplayErrorMessage(rawMessage: unknown, fallback = '�
   // 已中文化的服务端错误可直接呈现；其他错误保留原始技术详情。
   if (!/[A-Za-z]/.test(message)) return message
   return withDetailedErrorMessage('操作失败，请根据下方技术详情定位原因。', message)
+}
+
+/**
+ * extractErrorStatusCode 从错误详情中提取最后一个 HTTP 错误状态码。
+ * 账号错误详情可能同时包含网关和上游状态码，末尾状态码通常是最终上游结果。
+ */
+function extractErrorStatusCode(message: string): number | null {
+  const matches = message.match(/\b[45]\d{2}\b/g)
+  if (!matches || matches.length === 0) return null
+  return Number(matches[matches.length - 1])
+}
+
+/**
+ * getErrorStatusSummary 生成状态列下方的短错误说明，详细原文仍由问号图标展示。
+ * 摘要只保留状态码和可执行方向，避免把上游长错误直接挤进账号列表。
+ */
+export function getErrorStatusSummary(rawMessage: unknown): string {
+  // 保留原始错误文本用于提取状态码，空值由下方通用原因兜底。
+  const message = typeof rawMessage === 'string' ? rawMessage.trim() : ''
+  // 复用详细错误的统一分类结果，确保短说明与问号详情的原因一致。
+  const displayMessage = normalizeDisplayErrorMessage(message, '操作失败，请稍后重试。').toLowerCase()
+  // 状态码从后端返回的技术详情中提取，未返回时只显示原因。
+  const statusCode = extractErrorStatusCode(message)
+  // 默认原因覆盖未识别的错误类型，保证每个错误状态都有可读摘要。
+  let reason = '请求失败'
+
+  if (displayMessage.includes('额度不足')) {
+    reason = '额度不足'
+  } else if (displayMessage.includes('上游服务暂时异常')) {
+    reason = '上游异常'
+  } else if (displayMessage.includes('工作区已停用')) {
+    reason = '工作区停用'
+  } else if (displayMessage.includes('身份验证失败')) {
+    reason = '认证失败'
+  } else if (displayMessage.includes('权限')) {
+    reason = '权限不足'
+  } else if (displayMessage.includes('资源不存在')) {
+    reason = '资源不存在'
+  } else if (displayMessage.includes('请求过于频繁')) {
+    reason = '请求频繁'
+  } else if (displayMessage.includes('网络连接失败') || displayMessage.includes('连接意外中断')) {
+    reason = '网络异常'
+  } else if (displayMessage.includes('请求超时')) {
+    reason = '请求超时'
+  } else if (displayMessage.includes('上游请求失败')) {
+    reason = '上游请求失败'
+  } else if (displayMessage.includes('未知错误')) {
+    reason = '未知错误'
+  }
+
+  return statusCode == null ? reason : `${statusCode} ${reason}`
 }

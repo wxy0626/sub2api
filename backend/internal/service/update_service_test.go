@@ -94,8 +94,20 @@ func TestUpdateServiceCheckUpdateComparesReleaseBaseVersion(t *testing.T) {
 			hasUpdate: false,
 		},
 		{
-			name:      "本地标签构建与相同发布版本相等",
-			current:   "v0.1.168-local-1",
+			name:      "local 版本构建与相同发布版本相等",
+			current:   "local-0.1.168",
+			latest:    "v0.1.168",
+			hasUpdate: false,
+		},
+		{
+			name:      "local 字母后缀构建与相同发布版本相等",
+			current:   "local-0.1.168a",
+			latest:    "v0.1.168",
+			hasUpdate: false,
+		},
+		{
+			name:      "local 数字后缀构建与相同发布版本相等",
+			current:   "local-0.1.168-1",
 			latest:    "v0.1.168",
 			hasUpdate: false,
 		},

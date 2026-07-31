@@ -356,7 +356,7 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[0]?.[1]?.concurrency).toBe(5)
   })
 
-  it('编辑没有模型映射的 OpenAI 账号时默认只开放 GPT-5.5', async () => {
+  it('编辑没有模型映射的 OpenAI 账号时默认开放 GPT-5.6 和 GPT Image 2', async () => {
     const account = buildAccount()
     delete account.credentials.model_mapping
     updateAccountMock.mockReset()
@@ -366,13 +366,14 @@ describe('EditAccountModal', () => {
 
     const wrapper = mountModal(account)
 
-    expect(wrapper.get('[data-testid="model-whitelist-value"]').text()).toBe('gpt-5.5')
+    expect(wrapper.get('[data-testid="model-whitelist-value"]').text()).toBe('gpt-5.6,gpt-image-2')
 
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
 
     expect(updateAccountMock).toHaveBeenCalledTimes(1)
     expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.model_mapping).toEqual({
-      'gpt-5.5': 'gpt-5.5'
+      'gpt-5.6': 'gpt-5.6',
+      'gpt-image-2': 'gpt-image-2'
     })
   })
 

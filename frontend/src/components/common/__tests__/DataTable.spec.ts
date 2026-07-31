@@ -83,6 +83,49 @@ describe('DataTable', () => {
     expect(nameHeader.findAll('svg')[1].classes()).toContain('text-primary-600')
   })
 
+  it('emits the source, target, and drop side when a draggable header is moved', async () => {
+    const wrapper = mount(DataTable, {
+      props: {
+        columns: [
+          { key: 'capacity', label: 'Capacity' },
+          { key: 'status', label: 'Status' }
+        ],
+        data: [],
+        draggableColumns: true,
+        draggableColumnKeys: ['capacity', 'status']
+      }
+    })
+
+    await wrapper.vm.$nextTick()
+    const [capacityHeader, statusHeader] = wrapper.findAll('th')
+    const dataTransfer = {
+      effectAllowed: '',
+      dropEffect: '',
+      setData: vi.fn(),
+      getData: vi.fn().mockReturnValue('capacity')
+    }
+    vi.spyOn(statusHeader.element, 'getBoundingClientRect').mockReturnValue({
+      left: 0,
+      right: 100,
+      top: 0,
+      bottom: 32,
+      width: 100,
+      height: 32,
+      x: 0,
+      y: 0,
+      toJSON: () => ({})
+    })
+
+    await capacityHeader.trigger('dragstart', { dataTransfer })
+    await statusHeader.trigger('dragover', { dataTransfer })
+    await statusHeader.trigger('drop', { dataTransfer, clientX: 80 })
+
+    expect(wrapper.emitted('columnReorder')).toEqual([[
+      { sourceKey: 'capacity', targetKey: 'status', position: 'after' }
+    ]])
+    expect(dataTransfer.setData).toHaveBeenCalledWith('text/plain', 'capacity')
+  })
+
   it('renders every row with no virtual padding spacer for small datasets (virtualization off)', async () => {
     const data = Array.from({ length: 8 }, (_, i) => ({ id: i + 1, name: `Row ${i + 1}` }))
     const wrapper = mount(DataTable, {

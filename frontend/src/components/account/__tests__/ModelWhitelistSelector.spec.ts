@@ -47,7 +47,7 @@ describe('ModelWhitelistSelector', () => {
 
   it('同步最新支持模型会从实时目录替换旧值，并过滤不允许的系列', async () => {
     syncPricingModelsMock.mockResolvedValue({
-      models: ['gpt-5.6-luna', 'gpt-5.5', 'gpt-5.4', 'gpt-image-2', 'claude-sonnet-4-6']
+      models: ['gpt-5.6-luna', 'gpt-5.7-preview', 'gpt-5.5', 'gpt-5.4', 'gpt-image-1.5', 'gpt-image-2', 'claude-sonnet-4-6']
     })
     const wrapper = mount(ModelWhitelistSelector, {
       props: {
@@ -70,14 +70,14 @@ describe('ModelWhitelistSelector', () => {
 
     expect(syncPricingModelsMock).toHaveBeenCalledWith('openai')
     expect(wrapper.emitted('update:modelValue')?.[0]).toEqual([
-      ['gpt-5.6-luna', 'gpt-5.5', 'gpt-image-2']
+      ['gpt-5.6-luna', 'gpt-5.7-preview', 'gpt-image-2']
     ])
     expect(showSuccessMock).toHaveBeenCalled()
   })
 
   it('同步上游支持模型会替换白名单，并移除上游已不支持的模型', async () => {
     syncUpstreamModelsMock.mockResolvedValue({
-      models: ['gpt-5.6-luna', 'gpt-image-2', 'gpt-5.4']
+      models: ['gpt-5.6-luna', 'gpt-5.5', 'gpt-image-1.5', 'gpt-image-2', 'gpt-5.4']
     })
     const wrapper = mount(ModelWhitelistSelector, {
       props: {

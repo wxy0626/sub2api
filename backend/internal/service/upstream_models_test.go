@@ -337,7 +337,7 @@ func TestFetchUpstreamSupportedModelsParsesOpenAIResponse(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	require.Equal(t, []string{"gpt-5.5", "gpt-5.6-luna", "gpt-image-2"}, models)
+	require.Equal(t, []string{"gpt-5.6-luna", "gpt-image-2"}, models)
 	require.Equal(t, "https://openai.example.com/v1/models", upstream.lastReq.URL.String())
 	require.Equal(t, "Bearer openai-key", upstream.lastReq.Header.Get("Authorization"))
 }
@@ -373,11 +373,11 @@ func TestFetchUpstreamSupportedModelsParsesGrokAPIKeyResponse(t *testing.T) {
 func TestFilterSyncedModelIDs(t *testing.T) {
 	t.Parallel()
 
-	// 测试同步结果会去重、排序，并删除低版本及非 GPT Image 模型。
+	// 测试同步结果会去重、排序，并只保留 GPT-5.6 及以上与 GPT Image 2。
 	got := filterSyncedModelIDs([]string{
-		"gpt-5.6-luna", "gpt-5.4", "gpt-5.50", "gpt-image-2", "GPT-5.5", "gpt-5.6x", "gpt-5.6-luna", "claude-sonnet-4-6",
+		"gpt-5.6-luna", "gpt-5.4", "gpt-5.50", "gpt-5.7-preview", "gpt-6", "gpt-image-1.5", "gpt-image-2", "gpt-image-2-2026-04-21", "GPT-5.5", "gpt-5.6x", "gpt-5.6-luna", "claude-sonnet-4-6",
 	})
-	require.Equal(t, []string{"GPT-5.5", "gpt-5.6-luna", "gpt-image-2"}, got)
+	require.Equal(t, []string{"gpt-5.6-luna", "gpt-5.7-preview", "gpt-6", "gpt-image-2", "gpt-image-2-2026-04-21"}, got)
 }
 
 func TestFetchUpstreamSupportedModelsParsesGrokOAuthResponse(t *testing.T) {

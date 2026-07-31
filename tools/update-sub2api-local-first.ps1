@@ -65,10 +65,13 @@ function Resolve-ApplicationVersion {
         [string]$ProjectRoot
     )
 
+    # 版本格式同时覆盖 local-X.Y.Z[a] 和已有的常规构建后缀。
+    $版本格式 = '^(?:local-\d+\.\d+\.\d+(?:[A-Za-z][0-9A-Za-z.-]*|[-+][0-9A-Za-z.-]+)?|v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)$'
+
     # 显式版本：调用方指定时优先使用，方便复现正式发布镜像。
     if (-not [string]::IsNullOrWhiteSpace($RequestedVersion)) {
-        if ($RequestedVersion -notmatch '^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$') {
-            throw "应用版本格式不合法：$RequestedVersion。请使用如 v0.1.168-local-1 的本地版本。"
+        if ($RequestedVersion -notmatch $版本格式) {
+            throw "应用版本格式不合法：$RequestedVersion。请使用如 local-0.1.168a 或 local-0.1.168-1 的本地版本。"
         }
         return $RequestedVersion
     }
@@ -77,7 +80,7 @@ function Resolve-ApplicationVersion {
     $版本文件路径 = Join-Path $ProjectRoot 'backend\cmd\server\VERSION'
     if (Test-Path $版本文件路径) {
         $版本文件值 = (Get-Content -Raw -LiteralPath $版本文件路径).Trim()
-        if ($版本文件值 -match '^v?\d+\.\d+\.\d+-local(?:-[0-9]+)?$') {
+        if ($版本文件值 -match $版本格式) {
             return $版本文件值
         }
     }

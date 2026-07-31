@@ -9,7 +9,7 @@ VERSION_FILE="$BACKEND_DIR/cmd/server/VERSION"
 # 本地版本文件带 local 标识时优先保留，避免可达的上游 vX.Y.Z 标签覆盖本地版本标识。
 VERSION_FILE_VALUE="$(tr -d '\r\n' < "$VERSION_FILE")"
 case "$VERSION_FILE_VALUE" in
-  v[0-9]*-local-[0-9]*|[0-9]*-local-[0-9]*|v[0-9]*-local|[0-9]*-local)
+  local-[0-9]*.[0-9]*.[0-9]*[A-Za-z]*|v[0-9]*-local-[0-9]*|[0-9]*-local-[0-9]*|v[0-9]*-local|[0-9]*-local)
     printf '%s\n' "$VERSION_FILE_VALUE"
     exit 0
     ;;

@@ -3196,7 +3196,7 @@ const normalizePoolModeRetryCount = (value: number) => {
   return normalized
 }
 
-// loadModelRestrictionFromMapping 从账号映射恢复编辑状态；无 OpenAI 白名单时采用 GPT-5.5 最小默认集。
+// loadModelRestrictionFromMapping 从账号映射恢复编辑状态；无 OpenAI 白名单时采用 GPT-5.6 与 GPT Image 2 默认集。
 const loadModelRestrictionFromMapping = (rawMapping?: Record<string, unknown>) => {
   const parsed = splitModelMappingObject(rawMapping)
   allowedModels.value = parsed.allowedModels.length > 0 || parsed.modelMappings.length > 0

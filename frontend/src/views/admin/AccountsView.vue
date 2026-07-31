@@ -20,7 +20,8 @@
                 <button
                   @click="
                     showAutoRefreshDropdown = !showAutoRefreshDropdown;
-                    showAccountToolsDropdown = false
+                    showAccountToolsDropdown = false;
+                    showColumnSettingsDropdown = false
                   "
                   class="btn btn-secondary px-2 md:px-3"
                   :title="t('admin.accounts.autoRefresh')"
@@ -132,26 +133,6 @@
                         <span class="flex-1 text-left">{{ t('admin.tlsFingerprintProfiles.title') }}</span>
                       </button>
 
-                      <div class="my-2 border-t border-gray-100 dark:border-dark-700"></div>
-                      <div class="px-2 py-2">
-                        <div class="flex items-center justify-between gap-3">
-                          <span class="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
-                            {{ t('admin.accounts.viewColumns') }}
-                          </span>
-                          <Icon name="grid" size="sm" class="text-gray-400" />
-                        </div>
-                      </div>
-                      <div class="grid grid-cols-1 gap-1">
-                        <button
-                          v-for="col in toggleableColumns"
-                          :key="col.key"
-                          @click="toggleColumn(col.key)"
-                          class="flex w-full items-center justify-between rounded-md px-3 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-dark-700"
-                        >
-                          <span class="truncate">{{ col.label }}</span>
-                          <Icon v-if="isColumnVisible(col.key)" name="check" size="sm" class="text-primary-500" />
-                        </button>
-                      </div>
                     </div>
                   </div>
                 </Teleport>
@@ -194,7 +175,10 @@
           :loading="loading"
           row-key="id"
           :server-side-sort="true"
+          :draggable-columns="true"
+          :draggable-column-keys="reorderableColumnKeys"
           @sort="handleSort"
+          @column-reorder="handleColumnReorder"
           default-sort-key="name"
           default-sort-order="asc"
           :sort-storage-key="ACCOUNT_SORT_STORAGE_KEY"
@@ -246,6 +230,64 @@
               :aria-label="t('admin.accounts.columns.proxy')"
               @update:model-value="handleHeaderProxyFilterChange"
             />
+          </template>
+          <template #header-actions="{ column }">
+            <div class="flex w-full items-center justify-between gap-2 normal-case">
+              <span>{{ column.label }}</span>
+              <button
+                ref="columnSettingsTriggerRef"
+                type="button"
+                data-test="column-settings-button"
+                class="inline-flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-gray-500 transition-colors hover:bg-gray-200 hover:text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:text-dark-400 dark:hover:bg-dark-700 dark:hover:text-white"
+                :title="t('admin.accounts.viewColumns')"
+                :aria-label="t('admin.accounts.viewColumns')"
+                :aria-expanded="showColumnSettingsDropdown"
+                @click.stop="toggleColumnSettingsDropdown"
+              >
+                <Icon name="grid" size="sm" />
+              </button>
+            </div>
+            <Teleport to="body">
+              <div
+                v-if="showColumnSettingsDropdown"
+                ref="columnSettingsDropdownRef"
+                class="fixed z-[9999] origin-top-right overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-dark-700 dark:bg-dark-800"
+                :style="columnSettingsDropdownStyle"
+                data-test="column-settings-dropdown"
+                @click.stop
+              >
+                <div class="overflow-y-auto p-2" :style="{ maxHeight: `${columnSettingsPosition.maxHeight}px` }">
+                  <div class="px-2 py-2">
+                    <div class="flex items-center justify-between gap-3">
+                      <span class="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                        {{ t('admin.accounts.viewColumns') }}
+                      </span>
+                      <Icon name="grid" size="sm" class="text-gray-400" />
+                    </div>
+                  </div>
+                  <VueDraggable
+                    v-model="columnDisplayItems"
+                    :animation="150"
+                    :handle="'.column-display-drag-handle'"
+                    item-key="key"
+                    tag="div"
+                    class="grid grid-cols-1 gap-1"
+                  >
+                    <button
+                      v-for="col in columnDisplayItems"
+                      :key="col.key"
+                      type="button"
+                      class="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-dark-700"
+                      @click="toggleColumn(col.key)"
+                    >
+                      <Icon name="menu" size="sm" class="column-display-drag-handle flex-shrink-0 cursor-grab text-gray-400" />
+                      <span class="min-w-0 flex-1 truncate text-left">{{ col.label }}</span>
+                      <Icon v-if="isColumnVisible(col.key)" name="check" size="sm" class="flex-shrink-0 text-primary-500" />
+                    </button>
+                  </VueDraggable>
+                </div>
+              </div>
+            </Teleport>
           </template>
           <template #cell-select="{ row }">
             <input type="checkbox" :checked="isSelected(row.id)" @change="toggleSel(row.id)" class="rounded border-gray-300 text-primary-600 focus:ring-primary-500" />
@@ -319,7 +361,12 @@
             </div>
           </template>
           <template #cell-capacity="{ row }">
-            <AccountCapacityCell :account="row" />
+            <AccountCapacityCell
+              :account="row"
+              :editable="true"
+              :saving="updatingCapacityAccountIds.has(row.id)"
+              @save="handleAccountCapacityChange(row, $event)"
+            />
           </template>
           <template #cell-status="{ row }">
             <div class="flex items-center gap-1.5">
@@ -413,8 +460,18 @@
               @probe="handleProbeUpstreamBilling(row)"
             />
           </template>
-          <template #cell-priority="{ value }">
-            <span class="text-sm text-gray-700 dark:text-gray-300">{{ value }}</span>
+          <template #cell-priority="{ row, value }">
+            <input
+              :value="value"
+              type="number"
+              min="0"
+              step="1"
+              class="input w-20 py-1 text-sm"
+              :aria-label="t('admin.accounts.columns.priority')"
+              :disabled="updatingPriorityAccountIds.has(row.id)"
+              data-test="priority-input"
+              @change="handleAccountPriorityChange(row, $event)"
+            />
           </template>
           <template #header-scheduler_score="{ column }">
             <div class="flex items-center">
@@ -535,6 +592,7 @@ import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import DataTable from '@/components/common/DataTable.vue'
+import { VueDraggable } from 'vue-draggable-plus'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
@@ -557,6 +615,7 @@ import AccountCapacityCell from '@/components/account/AccountCapacityCell.vue'
 import UpstreamBillingRateCell from '@/components/account/UpstreamBillingRateCell.vue'
 import PlatformTypeBadge from '@/components/common/PlatformTypeBadge.vue'
 import Icon from '@/components/icons/Icon.vue'
+import type { ColumnReorderEvent } from '@/components/common/types'
 import ErrorPassthroughRulesModal from '@/components/admin/ErrorPassthroughRulesModal.vue'
 import TLSFingerprintProfilesModal from '@/components/admin/TLSFingerprintProfilesModal.vue'
 import { buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
@@ -567,7 +626,7 @@ import { resolveAccountTestModelSelection } from '@/utils/accountTestModelSelect
 import type { AccountTestMode } from '@/api/admin/accounts'
 import { sanitizeUrl } from '@/utils/url'
 import { getFloatingPanelPosition } from '@/utils/floatingPanel'
-import type { Account, AccountPlatform, AccountSchedulerGroupScore, AccountType, Proxy as AccountProxy, AdminGroup, WindowStats, ClaudeModel, UpstreamBillingProbeSnapshot } from '@/types'
+import type { Account, AccountPlatform, AccountSchedulerGroupScore, AccountType, Proxy as AccountProxy, AdminGroup, WindowStats, ClaudeModel, UpstreamBillingProbeSnapshot, UpdateAccountRequest } from '@/types'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -689,6 +748,10 @@ const showTest = ref(false)
 const testingAccountIds = reactive(new Set<number>())
 // 正在更新代理的账号 ID：避免同一行在请求未完成时重复提交。
 const updatingProxyAccountIds = reactive(new Set<number>())
+// 正在更新并发容量的账号 ID：避免同一行在请求未完成时重复提交。
+const updatingCapacityAccountIds = reactive(new Set<number>())
+// 正在更新优先等级的账号 ID：避免同一行重复提交并在请求期间锁定输入框。
+const updatingPriorityAccountIds = reactive(new Set<number>())
 const showStats = ref(false)
 const showErrorPassthrough = ref(false)
 const showTLSFingerprintProfiles = ref(false)
@@ -728,9 +791,30 @@ const accountToolsDropdownStyle = computed(() => ({
   left: `${accountToolsDropdownPosition.left}px`,
   width: `${accountToolsDropdownPosition.width}px`
 }))
+// 列设置浮层状态与触发按钮引用，浮层挂载到 body 以免被表格滚动容器裁切。
+const showColumnSettingsDropdown = ref(false)
+const columnSettingsTriggerRef = ref<HTMLElement | null>(null)
+const columnSettingsDropdownRef = ref<HTMLElement | null>(null)
+const columnSettingsPosition = reactive({
+  top: null as number | null,
+  bottom: null as number | null,
+  left: 16,
+  width: 320,
+  maxHeight: 0
+})
+const columnSettingsDropdownStyle = computed(() => ({
+  top: columnSettingsPosition.top == null ? 'auto' : `${columnSettingsPosition.top}px`,
+  bottom: columnSettingsPosition.bottom == null ? 'auto' : `${columnSettingsPosition.bottom}px`,
+  left: `${columnSettingsPosition.left}px`,
+  width: `${columnSettingsPosition.width}px`
+}))
 const hiddenColumns = reactive<Set<string>>(new Set())
 const DEFAULT_HIDDEN_COLUMNS = ['today_stats', 'proxy', 'notes', 'priority', 'scheduler_score', 'rate_multiplier']
 const HIDDEN_COLUMNS_KEY = 'account-hidden-columns'
+// 列顺序与隐藏状态分开保存，避免改变显示开关时丢失用户已经调整的顺序。
+const ACCOUNT_COLUMN_ORDER_KEY = 'account-column-order'
+const PINNED_COLUMN_KEYS = new Set(['select', 'name', 'actions'])
+const columnOrder = ref<string[]>([])
 // One-time migration: hide scheduler score for existing admins too, because showing it opt-ins to heavy backend scoring.
 const HIDDEN_COLUMNS_VERSION_KEY = 'account-hidden-columns-version'
 const HIDDEN_COLUMNS_CURRENT_VERSION = 'scheduler-score-hidden-by-default'
@@ -910,6 +994,29 @@ const loadSavedColumns = () => {
   }
 }
 
+// 读取已保存的列顺序，只接受字符串数组；新增列会在计算展示顺序时自动追加到末尾。
+const loadSavedColumnOrder = () => {
+  try {
+    const saved = localStorage.getItem(ACCOUNT_COLUMN_ORDER_KEY)
+    if (!saved) return
+    const parsed: unknown = JSON.parse(saved)
+    if (Array.isArray(parsed)) {
+      columnOrder.value = parsed.filter((key): key is string => typeof key === 'string')
+    }
+  } catch (e) {
+    console.error('Failed to load saved column order:', e)
+  }
+}
+
+// 保存列顺序的唯一来源，隐藏列也保留在数组中以便再次显示后恢复准确位置。
+const saveColumnOrderToStorage = (order: string[]) => {
+  try {
+    localStorage.setItem(ACCOUNT_COLUMN_ORDER_KEY, JSON.stringify(order))
+  } catch (e) {
+    console.error('Failed to save column order:', e)
+  }
+}
+
 const saveColumnsToStorage = () => {
   try {
     localStorage.setItem(HIDDEN_COLUMNS_KEY, JSON.stringify([...hiddenColumns]))
@@ -950,6 +1057,7 @@ const saveAutoRefreshToStorage = () => {
 
 if (typeof window !== 'undefined') {
   loadSavedColumns()
+  loadSavedColumnOrder()
   loadSavedAutoRefresh()
 }
 
@@ -1323,8 +1431,37 @@ const updateAccountToolsDropdownPosition = () => {
 const toggleAccountToolsDropdown = () => {
   const nextVisible = !showAccountToolsDropdown.value
   showAutoRefreshDropdown.value = false
+  showColumnSettingsDropdown.value = false
   if (nextVisible) updateAccountToolsDropdownPosition()
   showAccountToolsDropdown.value = nextVisible
+}
+
+// 关闭列设置浮层，供外部点击、滚动和其他顶部菜单切换时复用。
+const closeColumnSettingsDropdown = () => {
+  showColumnSettingsDropdown.value = false
+}
+
+// 根据操作列表头按钮重新计算列设置浮层位置，避免浮层脱离当前表头。
+const updateColumnSettingsDropdownPosition = () => {
+  const trigger = columnSettingsTriggerRef.value
+  if (!trigger) return
+
+  const position = getFloatingPanelPosition(
+    trigger.getBoundingClientRect(),
+    document.documentElement.clientWidth || window.innerWidth,
+    window.innerHeight,
+    { maxWidth: 320 }
+  )
+  Object.assign(columnSettingsPosition, position)
+}
+
+// 打开列设置浮层时关闭其他顶部菜单，避免多个浮层同时占用焦点和遮挡内容。
+const toggleColumnSettingsDropdown = () => {
+  const nextVisible = !showColumnSettingsDropdown.value
+  showAutoRefreshDropdown.value = false
+  showAccountToolsDropdown.value = false
+  if (nextVisible) updateColumnSettingsDropdownPosition()
+  showColumnSettingsDropdown.value = nextVisible
 }
 
 const openSyncFromCrs = () => {
@@ -1365,7 +1502,7 @@ const { pause: pauseAutoRefresh, resume: resumeAutoRefresh } = useIntervalFn(
     if (document.hidden) return
     if (loading.value || autoRefreshFetching.value) return
     if (isAnyModalOpen.value) return
-    if (menu.show || showAccountToolsDropdown.value || showAutoRefreshDropdown.value) return
+    if (menu.show || showAccountToolsDropdown.value || showAutoRefreshDropdown.value || showColumnSettingsDropdown.value) return
     if (inAutoRefreshSilentWindow()) {
       autoRefreshCountdown.value = Math.max(
         0,
@@ -1538,15 +1675,88 @@ const allColumns = computed(() => {
   return c
 })
 
-// Columns that can be toggled (exclude select, name, and actions)
-const toggleableColumns = computed(() =>
-  allColumns.value.filter(col => col.key !== 'select' && col.key !== 'name' && col.key !== 'actions')
+// 当前可自由排序的列键，选择列、名称列和操作列保持固定以维持表格的选择与吸附行为。
+const reorderableColumnKeys = computed(() =>
+  allColumns.value
+    .filter(column => !PINNED_COLUMN_KEYS.has(column.key))
+    .map(column => column.key)
 )
 
-// Filtered columns based on visibility
+// 将保存的顺序与当前列集合合并，过滤已删除列并把新列追加到末尾。
+const normalizeColumnOrder = (candidate: string[], availableKeys: string[]) => {
+  const available = new Set(availableKeys)
+  const seen = new Set<string>()
+  const normalized: string[] = []
+  for (const key of candidate) {
+    if (available.has(key) && !seen.has(key)) {
+      normalized.push(key)
+      seen.add(key)
+    }
+  }
+  for (const key of availableKeys) {
+    if (!seen.has(key)) normalized.push(key)
+  }
+  return normalized
+}
+
+// 表头和列显示菜单都从这份计算结果读取顺序，确保任意一侧拖拽都会同步到另一侧。
+const orderedAllColumns = computed(() => {
+  const columnsByKey = new Map(allColumns.value.map(column => [column.key, column]))
+  const leadingColumns = allColumns.value.filter(column => column.key === 'select' || column.key === 'name')
+  const reorderableColumns = normalizeColumnOrder(columnOrder.value, reorderableColumnKeys.value)
+    .map(key => columnsByKey.get(key))
+    .filter((column): column is NonNullable<typeof column> => Boolean(column))
+  const trailingColumns = allColumns.value.filter(column => column.key === 'actions')
+  return [...leadingColumns, ...reorderableColumns, ...trailingColumns]
+})
+
+// 列显示菜单直接暴露同一份可排序列对象，不再维护第二套顺序数组。
+const toggleableColumns = computed(() =>
+  orderedAllColumns.value.filter(column => !PINNED_COLUMN_KEYS.has(column.key))
+)
+
+// 统一写入列顺序并持久化，表头拖拽和菜单拖拽均只能通过此入口更新状态。
+const applyColumnOrder = (nextOrder: string[]) => {
+  const normalized = normalizeColumnOrder(nextOrder, reorderableColumnKeys.value)
+  columnOrder.value = normalized
+  saveColumnOrderToStorage(normalized)
+}
+
+const columnDisplayItems = computed({
+  get: () => toggleableColumns.value,
+  set: (nextColumns) => {
+    applyColumnOrder(nextColumns.map(column => column.key))
+  }
+})
+
+// 响应 DataTable 的表头拖拽事件，支持把列放在目标列前面或后面。
+const handleColumnReorder = (event: ColumnReorderEvent) => {
+  const currentOrder = [...normalizeColumnOrder(columnOrder.value, reorderableColumnKeys.value)]
+  if (!reorderableColumnKeys.value.includes(event.sourceKey)) return
+
+  const sourceIndex = currentOrder.indexOf(event.sourceKey)
+  if (sourceIndex < 0) return
+  currentOrder.splice(sourceIndex, 1)
+
+  // 操作列始终固定在末尾，拖到它上面等价于放到所有可排序列最后。
+  if (event.targetKey === 'actions') {
+    currentOrder.push(event.sourceKey)
+    applyColumnOrder(currentOrder)
+    return
+  }
+
+  if (!reorderableColumnKeys.value.includes(event.targetKey)) return
+  const targetIndex = currentOrder.indexOf(event.targetKey)
+  if (targetIndex < 0) return
+  const insertIndex = event.position === 'after' ? targetIndex + 1 : targetIndex
+  currentOrder.splice(insertIndex, 0, event.sourceKey)
+  applyColumnOrder(currentOrder)
+}
+
+// 表格实际列保留共享顺序，同时移除当前被隐藏的列。
 const cols = computed(() =>
-  allColumns.value.filter(col =>
-    col.key === 'select' || col.key === 'name' || col.key === 'actions' || !hiddenColumns.has(col.key)
+  orderedAllColumns.value.filter(column =>
+    PINNED_COLUMN_KEYS.has(column.key) || !hiddenColumns.has(column.key)
   )
 )
 
@@ -2002,6 +2212,58 @@ const handleAccountProxyChange = async (account: Account, value: string | number
   }
 }
 
+// 校验并通过既有账号更新接口保存列表中的优先等级，失败时恢复输入框并保留后端技术详情。
+const handleAccountPriorityChange = async (account: Account, event: Event) => {
+  const inputElement = event.currentTarget
+  if (!(inputElement instanceof HTMLInputElement)) return
+
+  const rawPriority = inputElement.value.trim()
+  const priority = Number(rawPriority)
+  if (!rawPriority || !Number.isSafeInteger(priority) || priority < 0) {
+    inputElement.value = String(account.priority)
+    appStore.showError(t('admin.accounts.priorityInvalid'))
+    return
+  }
+  if (priority === account.priority || updatingPriorityAccountIds.has(account.id)) {
+    inputElement.value = String(account.priority)
+    return
+  }
+
+  updatingPriorityAccountIds.add(account.id)
+  try {
+    const updatedAccount = await adminAPI.accounts.update(account.id, { priority })
+    patchAccountInList(updatedAccount)
+    appStore.showSuccess(t('admin.accounts.priorityUpdated'))
+  } catch (error) {
+    console.error('Failed to update account priority:', error)
+    inputElement.value = String(account.priority)
+    appStore.showError(extractApiErrorMessage(error, t('admin.accounts.priorityUpdateFailed')))
+  } finally {
+    updatingPriorityAccountIds.delete(account.id)
+  }
+}
+
+// 保存账号列表内联编辑的并发容量和负载因子，并用服务端结果更新当前行。
+const handleAccountCapacityChange = async (
+  account: Account,
+  updates: Pick<UpdateAccountRequest, 'concurrency' | 'load_factor'>
+) => {
+  if (updatingCapacityAccountIds.has(account.id)) return
+
+  updatingCapacityAccountIds.add(account.id)
+  try {
+    const updatedAccount = await adminAPI.accounts.update(account.id, updates)
+    patchAccountInList(updatedAccount)
+    enterAutoRefreshSilentWindow()
+    appStore.showSuccess(t('admin.accounts.concurrencyCapacityUpdated'))
+  } catch (error) {
+    console.error('Failed to update account concurrency capacity:', error)
+    appStore.showError(extractApiErrorMessage(error, t('admin.accounts.concurrencyCapacityUpdateFailed')))
+  } finally {
+    updatingCapacityAccountIds.delete(account.id)
+  }
+}
+
 // refreshTestedAccountInList 测试结束后只刷新目标账号，保持当前列表位置和滚动位置不变。
 const refreshTestedAccountInList = async (accountID: number) => {
   try {
@@ -2341,10 +2603,12 @@ const proxyExpiryText = (p: AccountProxy): string => {
 const handleScroll = () => {
   menu.show = false
   if (showAccountToolsDropdown.value) updateAccountToolsDropdownPosition()
+  if (showColumnSettingsDropdown.value) updateColumnSettingsDropdownPosition()
 }
 
 const handleViewportResize = () => {
   if (showAccountToolsDropdown.value) updateAccountToolsDropdownPosition()
+  if (showColumnSettingsDropdown.value) updateColumnSettingsDropdownPosition()
 }
 
 // 点击外部关闭顶部下拉菜单
@@ -2355,6 +2619,14 @@ const handleClickOutside = (event: MouseEvent) => {
   }
   if (autoRefreshDropdownRef.value && !autoRefreshDropdownRef.value.contains(target)) {
     showAutoRefreshDropdown.value = false
+  }
+  if (
+    columnSettingsDropdownRef.value &&
+    !columnSettingsDropdownRef.value.contains(target) &&
+    columnSettingsTriggerRef.value &&
+    !columnSettingsTriggerRef.value.contains(target)
+  ) {
+    closeColumnSettingsDropdown()
   }
 }
 
