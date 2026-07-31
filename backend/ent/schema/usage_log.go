@@ -109,6 +109,16 @@ func (UsageLog) Fields() []ent.Field {
 			Optional().
 			Nillable().
 			SchemaType(map[string]string{dialect.Postgres: "decimal(10,4)"}),
+		// RequestBodyBytes 记录请求体实际字节数；NULL 表示历史数据或未采集。
+		field.Int64("request_body_bytes").
+			Optional().
+			Nillable().
+			Comment("请求体实际字节数，NULL 表示未知"),
+		// MaxRequestBodyBytes 记录请求实际生效的 gateway.max_body_size。
+		field.Int64("max_request_body_bytes").
+			Optional().
+			Nillable().
+			Comment("请求实际生效的 gateway.max_body_size，NULL 表示未知"),
 
 		// 其他字段
 		field.Int8("billing_type").

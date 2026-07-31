@@ -34,6 +34,7 @@
             v-model="editBaseUrl"
             type="text"
             class="input"
+            data-testid="account-base-url-input"
             :placeholder="
               account.platform === 'openai'
                 ? 'https://api.openai.com'
@@ -43,6 +44,8 @@
                     ? 'https://cloudcode-pa.googleapis.com'
                     : account.platform === 'grok'
                       ? 'https://api.x.ai/v1'
+                      : account.platform === 'deepseek'
+                        ? 'https://api.deepseek.com'
                       : 'https://api.anthropic.com'
             "
           />
@@ -59,6 +62,7 @@
             v-model="editApiKey"
             type="password"
             class="input font-mono"
+            data-testid="account-api-key-input"
             autocomplete="new-password"
             data-1p-ignore
             data-lpignore="true"
@@ -72,6 +76,8 @@
                     ? 'sk-...'
                     : account.platform === 'grok'
                       ? 'xai-...'
+                      : account.platform === 'deepseek'
+                        ? 'sk-...'
                       : 'sk-ant-...'
             "
           />
@@ -2688,6 +2694,7 @@ const baseUrlHint = computed(() => {
   if (props.account.platform === 'openai') return t('admin.accounts.openai.baseUrlHint')
   if (props.account.platform === 'gemini') return t('admin.accounts.gemini.baseUrlHint')
   if (props.account.platform === 'grok') return ''
+  if (props.account.platform === 'deepseek') return t('admin.accounts.deepseek.baseUrlHint')
   return t('admin.accounts.baseUrlHint')
 })
 
@@ -3140,6 +3147,7 @@ const defaultBaseUrl = computed(() => {
   if (props.account?.platform === 'openai') return 'https://api.openai.com'
   if (props.account?.platform === 'gemini') return 'https://generativelanguage.googleapis.com'
   if (props.account?.platform === 'grok') return 'https://api.x.ai/v1'
+  if (props.account?.platform === 'deepseek') return 'https://api.deepseek.com'
   return 'https://api.anthropic.com'
 })
 
@@ -3473,6 +3481,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
           ? 'https://generativelanguage.googleapis.com'
           : newAccount.platform === 'grok'
             ? 'https://api.x.ai/v1'
+            : newAccount.platform === 'deepseek'
+              ? 'https://api.deepseek.com'
             : 'https://api.anthropic.com'
     editBaseUrl.value = (credentials.base_url as string) || platformDefaultUrl
 
@@ -3544,6 +3554,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
           ? 'https://generativelanguage.googleapis.com'
           : newAccount.platform === 'grok'
             ? 'https://api.x.ai/v1'
+            : newAccount.platform === 'deepseek'
+              ? 'https://api.deepseek.com'
             : 'https://api.anthropic.com'
     editBaseUrl.value = platformDefaultUrl
 

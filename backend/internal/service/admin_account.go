@@ -514,6 +514,9 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 }
 
 func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccountInput) (*Account, error) {
+	if err := ValidateAccountPlatformCredentials(input.Platform, input.Type, input.Credentials); err != nil {
+		return nil, err
+	}
 	accountExtra, err := normalizeOpenAILongContextBillingExtra(input.Platform, input.Extra)
 	if err != nil {
 		return nil, err
@@ -601,6 +604,14 @@ type accountProbeEnabledAtomicUpdater interface {
 func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *UpdateAccountInput) (*Account, error) {
 	account, err := s.accountRepo.GetByID(ctx, id)
 	if err != nil {
+		return nil, err
+	}
+	// effectiveCredentials 是合并脱敏编辑请求后真正会落库的凭据集合。
+	effectiveCredentials := account.Credentials
+	if input.Credentials != nil {
+		effectiveCredentials = MergePreservingSensitiveCreds(account.Credentials, input.Credentials)
+	}
+	if err := ValidateAccountPlatformCredentials(account.Platform, firstNonEmpty(input.Type, account.Type), effectiveCredentials); err != nil {
 		return nil, err
 	}
 	var normalizedExtra map[string]any

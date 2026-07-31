@@ -39,3 +39,11 @@ func gatewayMaxBodySize(cfg *config.Config) int64 {
 	}
 	return cfg.Gateway.MaxBodySize
 }
+
+// gatewayTextMaxBodySize 返回文本类网关入口实际使用的请求体上限。
+func gatewayTextMaxBodySize(cfg *config.Config) int64 {
+	if cfg == nil {
+		return 0
+	}
+	return cfg.Gateway.TextMaxBodySize
+}

@@ -197,6 +197,20 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				nil,
 			)
 		}
+		// WebSocket 入站不会经过 HTTP Forward，这里提前清理上游会校验的 item ID。
+		if account.Platform == PlatformOpenAI {
+			sanitized, changed, sanitizeErr := sanitizeOpenAIResponsesInputItemIDs(normalized)
+			if sanitizeErr != nil {
+				return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(
+					coderws.StatusPolicyViolation,
+					"WebSocket 请求体无效：Responses 输入项 ID 清理失败；技术详情："+sanitizeErr.Error(),
+					sanitizeErr,
+				)
+			}
+			if changed {
+				normalized = sanitized
+			}
+		}
 		if hooks != nil && (hooks.MaxReasoningEffort != "" || len(hooks.ReasoningEffortMappings) > 0) {
 			if capped, changed := ApplyOpenAIReasoningEffortPolicy(normalized, hooks.MaxReasoningEffort, hooks.ReasoningEffortMappings); changed {
 				normalized = capped
@@ -767,6 +781,22 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	sendAndRelay := func(turn int, lease *openAIWSConnLease, payload []byte, payloadBytes int, originalModel string, imageBillingModel string, imageSizeTier string, imageInputSize string) (*OpenAIForwardResult, error) {
 		if lease == nil {
 			return nil, errors.New("upstream websocket lease is nil")
+		}
+		if account.Platform == PlatformOpenAI {
+			// replay/input 合并和续链恢复可能在首帧清理后重新构建 input；
+			// 这里是普通 ingress 写入 WS 上游前的最终字节边界。
+			sanitizedPayload, changed, sanitizeErr := sanitizeOpenAIResponsesInputItemIDs(payload)
+			if sanitizeErr != nil {
+				return nil, wrapOpenAIWSIngressTurnError(
+					"sanitize_upstream_payload",
+					fmt.Errorf("sanitize OpenAI Responses input item IDs before websocket write: %w", sanitizeErr),
+					false,
+				)
+			}
+			if changed {
+				payload = sanitizedPayload
+				payloadBytes = len(payload)
+			}
 		}
 		turnStart := time.Now()
 		wroteDownstream := false

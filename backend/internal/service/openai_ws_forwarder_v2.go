@@ -312,7 +312,22 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		return nil, err
 	}
 
-	if err := lease.WriteJSONWithContextTimeout(ctx, payload, s.openAIWSWriteTimeout()); err != nil {
+	// map payload 在这里序列化为最终字节后再清理，覆盖 retry strategy、
+	// OAuth transform 和其他中间 map 重建对 input 的再次写入。
+	payloadJSON, marshalErr := json.Marshal(payload)
+	if marshalErr != nil {
+		lease.MarkBroken()
+		return nil, wrapOpenAIWSFallback("marshal_request_payload", marshalErr)
+	}
+	if account.Platform == PlatformOpenAI {
+		sanitizedPayload, _, sanitizeErr := sanitizeOpenAIResponsesInputItemIDs(payloadJSON)
+		if sanitizeErr != nil {
+			lease.MarkBroken()
+			return nil, wrapOpenAIWSFallback("sanitize_request_payload", sanitizeErr)
+		}
+		payloadJSON = sanitizedPayload
+	}
+	if err := lease.WriteJSONWithContextTimeout(ctx, json.RawMessage(payloadJSON), s.openAIWSWriteTimeout()); err != nil {
 		lease.MarkBroken()
 		logOpenAIWSModeInfo(
 			"write_request_fail account_id=%d conn_id=%s cause=%s payload_bytes=%d",

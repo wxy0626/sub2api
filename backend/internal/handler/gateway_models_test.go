@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -39,6 +40,27 @@ type gatewayReasoningEffortOptionForTest struct {
 	Value   string `json:"value"`
 	Label   string `json:"label"`
 	Default bool   `json:"default"`
+}
+
+// gatewayModelsFetcherStub 模拟按账号凭据读取上游模型目录。
+type gatewayModelsFetcherStub struct {
+	models      []string
+	err         error
+	calls       int
+	lastAccount *service.Account
+}
+
+// FetchUpstreamSupportedModels 返回测试用的上游模型目录并记录账号。
+func (s *gatewayModelsFetcherStub) FetchUpstreamSupportedModels(_ context.Context, account *service.Account) ([]string, error) {
+	s.calls++
+	if account != nil {
+		accountCopy := *account
+		s.lastAccount = &accountCopy
+	}
+	if s.err != nil {
+		return nil, s.err
+	}
+	return append([]string(nil), s.models...), nil
 }
 
 func (s *gatewayModelsAccountRepoStub) ListSchedulableByGroupID(ctx context.Context, groupID int64) ([]service.Account, error) {
@@ -99,6 +121,115 @@ func TestGatewayModels_GeminiGroupFallsBackToGeminiModels(t *testing.T) {
 	require.Equal(t, "list", got.Object)
 	require.Contains(t, modelIDsForTest(got.Data), "gemini-2.5-flash")
 	require.NotContains(t, modelIDsForTest(got.Data), "claude-sonnet-4-6")
+}
+
+// TestGatewayModels_DeepSeekUsesFetchedUpstreamModels 验证 DeepSeek /v1/models 只返回 API Key 上游目录。
+func TestGatewayModels_DeepSeekUsesFetchedUpstreamModels(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	groupID := int64(201)
+	h := newGatewayModelsHandlerForTest(&gatewayModelsAccountRepoStub{
+		byGroup: map[int64][]service.Account{
+			groupID: {{
+				ID:       1,
+				Platform: service.PlatformDeepSeek,
+				Type:     service.AccountTypeAPIKey,
+				Credentials: map[string]any{
+					"api_key": "sk-deepseek-test-only",
+				},
+			}},
+		},
+	})
+	fetcher := &gatewayModelsFetcherStub{models: []string{"deepseek-v4-pro", "deepseek-live-only"}}
+	h.gatewayService.SetUpstreamModelsFetcher(fetcher)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+		Group: &service.Group{ID: groupID, Platform: service.PlatformDeepSeek},
+	})
+
+	h.Models(c)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got gatewayModelsResponseForTest
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.Equal(t, []string{"deepseek-live-only", "deepseek-v4-pro"}, modelIDsForTest(got.Data))
+	require.NotContains(t, modelIDsForTest(got.Data), "deepseek-v4-flash")
+	require.Equal(t, 1, fetcher.calls)
+	require.NotNil(t, fetcher.lastAccount)
+	require.Equal(t, "sk-deepseek-test-only", fetcher.lastAccount.GetCredential("api_key"))
+}
+
+// TestGatewayModels_DeepSeekUpstreamFailureDoesNotUseStaticFallback 验证上游失败时不伪造静态模型。
+func TestGatewayModels_DeepSeekUpstreamFailureDoesNotUseStaticFallback(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	groupID := int64(202)
+	h := newGatewayModelsHandlerForTest(&gatewayModelsAccountRepoStub{
+		byGroup: map[int64][]service.Account{
+			groupID: {{
+				ID:       1,
+				Platform: service.PlatformDeepSeek,
+				Type:     service.AccountTypeAPIKey,
+				Credentials: map[string]any{
+					"api_key": "sk-deepseek-test-only",
+				},
+			}},
+		},
+	})
+	h.gatewayService.SetUpstreamModelsFetcher(&gatewayModelsFetcherStub{err: errors.New("HTTP 401 invalid api key")})
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+		Group: &service.Group{ID: groupID, Platform: service.PlatformDeepSeek},
+	})
+
+	h.Models(c)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got gatewayModelsResponseForTest
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.Empty(t, got.Data)
+}
+
+// TestGatewayModels_CompositeUsesOnlyFetchedDeepSeekModels 验证 Composite 不补出未经上游确认的 DeepSeek 模型。
+func TestGatewayModels_CompositeUsesOnlyFetchedDeepSeekModels(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	groupID := int64(203)
+	h := newGatewayModelsHandlerForTest(&gatewayModelsAccountRepoStub{
+		byGroup: map[int64][]service.Account{
+			groupID: {{
+				ID:       1,
+				Platform: service.PlatformDeepSeek,
+				Type:     service.AccountTypeAPIKey,
+				Credentials: map[string]any{
+					"api_key": "sk-deepseek-test-only",
+				},
+			}},
+		},
+	})
+	h.gatewayService.SetUpstreamModelsFetcher(&gatewayModelsFetcherStub{models: []string{"deepseek-live-only"}})
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+		Group: &service.Group{ID: groupID, Platform: service.PlatformComposite},
+	})
+
+	h.Models(c)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got gatewayModelsResponseForTest
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.Equal(t, []string{"deepseek-live-only"}, modelIDsForTest(got.Data))
+	require.NotContains(t, modelIDsForTest(got.Data), "deepseek-v4-flash")
+	require.NotContains(t, modelIDsForTest(got.Data), "deepseek-v4-pro")
 }
 
 func TestGatewayModels_Grok45AdvertisesReasoningEffortForGrokBuild(t *testing.T) {

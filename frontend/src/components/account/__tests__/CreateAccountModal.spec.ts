@@ -97,6 +97,35 @@ const ProxySelectorStub = defineComponent({
   template: '<span data-testid="proxy-value">{{ modelValue === null ? "none" : modelValue }}</span>',
 })
 
+// 模型白名单桩组件，用于验证 DeepSeek 只有用户主动选择模型后才提交映射。
+const ModelWhitelistSelectorStub = defineComponent({
+  name: 'ModelWhitelistSelector',
+  props: {
+    modelValue: {
+      type: Array,
+      default: () => [],
+    },
+    platform: {
+      type: String,
+      default: '',
+    },
+  },
+  emits: ['update:modelValue'],
+  template: `
+    <div data-testid="model-whitelist-selector">
+      <span data-testid="selected-models">{{ modelValue.join(',') }}</span>
+      <button
+        v-if="platform === 'deepseek'"
+        type="button"
+        data-testid="select-deepseek-model"
+        @click="$emit('update:modelValue', ['deepseek-v4-flash'])"
+      >
+        select
+      </button>
+    </div>
+  `,
+})
+
 function mountModal(proxies: any[] = []) {
   return mount(CreateAccountModal, {
     props: { show: true, proxies, groups: [] },
@@ -111,7 +140,7 @@ function mountModal(proxies: any[] = []) {
         ProxySelector: ProxySelectorStub,
         ProxyAdBanner: true,
         GroupSelector: true,
-        ModelWhitelistSelector: true,
+        ModelWhitelistSelector: ModelWhitelistSelectorStub,
         QuotaLimitCard: true,
       },
     },
@@ -145,6 +174,12 @@ async function submitApiKeyAccount(
   await wrapper.get('form#create-account-form').trigger('submit.prevent')
   await flushPromises()
   return wrapper
+}
+
+// selectDeepSeekPlatform 用于在测试中模拟用户主动切换到 DeepSeek 平台。
+async function selectDeepSeekPlatform(wrapper: ReturnType<typeof mountModal>) {
+  await wrapper.get('[data-testid="deepseek-platform-option"]').trigger('click')
+  await flushPromises()
 }
 
 async function openCodexImportStep(toggleClicks = 0) {
@@ -336,5 +371,41 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     await flushPromises()
 
     expect(createOpenAICodexPATMock.mock.calls[0]?.[0]?.extra?.openai_long_context_billing_enabled).toBe(false)
+  })
+})
+
+describe('CreateAccountModal DeepSeek model mapping', () => {
+  beforeEach(() => {
+    createAccountMock.mockReset().mockResolvedValue({ id: 42, platform: 'deepseek', type: 'apikey' })
+    probeUpstreamBillingMock.mockReset().mockResolvedValue({})
+  })
+
+  it('keeps the default DeepSeek API key payload free of an explicit model mapping', async () => {
+    const wrapper = mountModal()
+    await selectDeepSeekPlatform(wrapper)
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('DeepSeek account')
+    await wrapper.get('form#create-account-form input[type="password"]').setValue('test-api-key')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    expect(createAccountMock.mock.calls[0]?.[0]?.platform).toBe('deepseek')
+    expect(createAccountMock.mock.calls[0]?.[0]?.credentials?.model_mapping).toBeUndefined()
+  })
+
+  it('submits a mapping after the user actively selects a DeepSeek model', async () => {
+    const wrapper = mountModal()
+    await selectDeepSeekPlatform(wrapper)
+    expect(wrapper.get('[data-testid="selected-models"]').text()).toBe('')
+
+    await wrapper.get('[data-testid="select-deepseek-model"]').trigger('click')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('DeepSeek account')
+    await wrapper.get('form#create-account-form input[type="password"]').setValue('test-api-key')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createAccountMock.mock.calls[0]?.[0]?.credentials?.model_mapping).toEqual({
+      'deepseek-v4-flash': 'deepseek-v4-flash'
+    })
   })
 })

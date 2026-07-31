@@ -148,6 +148,31 @@ describe('useModelWhitelist', () => {
       .toEqual(['gpt-5.6-luna', 'gpt-5.7-preview', 'gpt-image-2'])
   })
 
+  it('DeepSeek 同步模型保留非空上游模型并去重，不套用 GPT 白名单', () => {
+    expect(getModelsByPlatform('deepseek')).toEqual([
+      'deepseek-v4-flash',
+      'deepseek-v4-pro'
+    ])
+    expect(isAllowedSyncedModel('deepseek-v4-flash', 'deepseek')).toBe(true)
+    expect(isAllowedSyncedModel('deepseek-custom-model', 'deepseek')).toBe(true)
+    expect(isAllowedSyncedModel('   ', 'deepseek')).toBe(false)
+    expect(restrictSyncedModels([
+      'deepseek-v4-flash',
+      '',
+      ' deepseek-chat ',
+      'deepseek-v4-flash',
+      'deepseek-v4-pro',
+      'deepseek-custom-model',
+      'gpt-5.5'
+    ], 'deepseek'))
+      .toEqual(['deepseek-v4-flash', 'deepseek-chat', 'deepseek-v4-pro', 'deepseek-custom-model', 'gpt-5.5'])
+  })
+
+  it('非 OpenAI 平台同步模型保留非空模型并去重', () => {
+    expect(restrictSyncedModels(['claude-sonnet-4-6', 'claude-sonnet-4-6', '  ', 'custom-model'], 'anthropic'))
+      .toEqual(['claude-sonnet-4-6', 'custom-model'])
+  })
+
   it('OpenAI 编辑空白名单时默认开放 GPT-5.6 和 GPT Image 2', () => {
     expect(getDefaultModelWhitelist('openai')).toEqual(['gpt-5.6', 'gpt-image-2'])
     expect(getDefaultModelWhitelist('OpenAI')).toEqual(['gpt-5.6', 'gpt-image-2'])

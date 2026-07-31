@@ -180,6 +180,12 @@ export default {
         codexNote: 'Save config.toml under ~/.codex and set SUB2API_API_KEY before starting Codex.',
         codexNoteWindows: 'Save config.toml under %USERPROFILE%\\.codex and set SUB2API_API_KEY in PowerShell before starting Codex.',
       },
+      deepseek: {
+        description: 'Configure DeepSeek Codex CLI to send requests through your current Sub2API DeepSeek group. The Responses catalog includes deepseek-v4-flash; deepseek-v4-pro uses Chat Completions.',
+        configTomlHint: 'Save config.toml and models.json in the same .codex directory, keeping the ~/.codex/models.json path in the configuration.',
+        note: 'Save config.toml and models.json under ~/.codex, then start Codex to use the DeepSeek Responses API.',
+        noteWindows: 'Save config.toml and models.json under %USERPROFILE%\\.codex, then start Codex to use the DeepSeek Responses API.',
+      },
       opencode: {
         title: 'OpenCode Example',
         subtitle: 'opencode.json',
@@ -305,6 +311,7 @@ export default {
     inboundEndpoint: 'Inbound Endpoint',
     upstreamEndpoint: 'Upstream Endpoint',
     type: 'Type',
+    requestSize: 'Request Size',
     tokens: 'Tokens',
     cost: 'Cost',
     firstToken: 'First Token',

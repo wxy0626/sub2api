@@ -342,6 +342,36 @@ func TestFetchUpstreamSupportedModelsParsesOpenAIResponse(t *testing.T) {
 	require.Equal(t, "Bearer openai-key", upstream.lastReq.Header.Get("Authorization"))
 }
 
+// TestFetchUpstreamSupportedModelsParsesDeepSeekAPIKeyResponse 验证 DeepSeek API Key 使用 /v1/models 并保留上游模型结果。
+func TestFetchUpstreamSupportedModelsParsesDeepSeekAPIKeyResponse(t *testing.T) {
+	t.Parallel()
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"data":[{"id":"deepseek-v4-pro"},{"id":"deepseek-v4-flash"}]}`)),
+	}}
+	svc := &AccountTestService{
+		httpUpstream: upstream,
+		cfg:          upstreamModelSyncTestConfig(),
+	}
+
+	models, err := svc.FetchUpstreamSupportedModels(context.Background(), &Account{
+		ID:       11,
+		Platform: PlatformDeepSeek,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":  "test-deepseek-key",
+			"base_url": "https://api.deepseek.com",
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{"deepseek-v4-flash", "deepseek-v4-pro"}, models)
+	require.NotNil(t, upstream.lastReq)
+	require.Equal(t, "https://api.deepseek.com/v1/models", upstream.lastReq.URL.String())
+	require.Equal(t, "Bearer test-deepseek-key", upstream.lastReq.Header.Get("Authorization"))
+}
+
 func TestFetchUpstreamSupportedModelsParsesGrokAPIKeyResponse(t *testing.T) {
 	t.Parallel()
 

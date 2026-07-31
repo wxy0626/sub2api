@@ -160,6 +160,20 @@
             <PlatformIcon platform="grok" size="sm" />
             Grok
           </button>
+          <button
+            type="button"
+            data-testid="deepseek-platform-option"
+            @click="form.platform = 'deepseek'"
+            :class="[
+              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
+              form.platform === 'deepseek'
+                ? 'bg-white text-cyan-600 shadow-sm dark:bg-dark-600 dark:text-cyan-400'
+                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
+            ]"
+          >
+            <PlatformIcon platform="deepseek" size="sm" />
+            DeepSeek
+          </button>
         </div>
       </div>
 
@@ -349,6 +363,39 @@
             </div>
           </button>
 
+        </div>
+      </div>
+
+      <!-- Account Type Selection (DeepSeek): only API Key is supported. -->
+      <div v-if="form.platform === 'deepseek'">
+        <label class="input-label">{{ t('admin.accounts.accountType') }}</label>
+        <div class="mt-2 grid grid-cols-1 gap-3" data-tour="account-form-type">
+          <button
+            type="button"
+            data-testid="deepseek-account-type-api-key"
+            @click="accountCategory = 'apikey'"
+            :class="[
+              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
+              accountCategory === 'apikey'
+                ? 'border-cyan-500 bg-cyan-50 dark:bg-cyan-900/20'
+                : 'border-gray-200 hover:border-cyan-300 dark:border-dark-600 dark:hover:border-cyan-700'
+            ]"
+          >
+            <div
+              :class="[
+                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
+                accountCategory === 'apikey'
+                  ? 'bg-cyan-500 text-white'
+                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
+              ]"
+            >
+              <Icon name="key" size="sm" />
+            </div>
+            <div>
+              <span class="block text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.accounts.apiKey') }}</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.types.deepseekApiKey') }}</span>
+            </div>
+          </button>
         </div>
       </div>
 
@@ -1106,6 +1153,7 @@
             v-model="apiKeyBaseUrl"
             type="text"
             class="input"
+            data-testid="account-base-url-input"
             :placeholder="
               form.platform === 'openai'
                 ? 'https://api.openai.com'
@@ -1113,6 +1161,8 @@
                   ? 'https://generativelanguage.googleapis.com'
                   : form.platform === 'grok'
                     ? 'https://api.x.ai/v1'
+                    : form.platform === 'deepseek'
+                      ? 'https://api.deepseek.com'
                     : 'https://api.anthropic.com'
             "
           />
@@ -1130,6 +1180,7 @@
             type="password"
             required
             class="input font-mono"
+            data-testid="account-api-key-input"
             :placeholder="
               form.platform === 'openai'
                 ? 'sk-proj-...'
@@ -1137,6 +1188,8 @@
                   ? 'AIza...'
                   : form.platform === 'grok'
                     ? 'xai-...'
+                    : form.platform === 'deepseek'
+                      ? 'sk-...'
                     : 'sk-ant-...'
             "
           />
@@ -3599,6 +3652,7 @@ const baseUrlHint = computed(() => {
   if (form.platform === 'openai') return t('admin.accounts.openai.baseUrlHint')
   if (form.platform === 'gemini') return t('admin.accounts.gemini.baseUrlHint')
   if (form.platform === 'grok') return ''
+  if (form.platform === 'deepseek') return t('admin.accounts.deepseek.baseUrlHint')
   return t('admin.accounts.baseUrlHint')
 })
 
@@ -3606,6 +3660,7 @@ const apiKeyHint = computed(() => {
   if (form.platform === 'openai') return t('admin.accounts.openai.apiKeyHint')
   if (form.platform === 'gemini') return t('admin.accounts.gemini.apiKeyHint')
   if (form.platform === 'grok') return ''
+  if (form.platform === 'deepseek') return t('admin.accounts.deepseek.apiKeyHint')
   return t('admin.accounts.apiKeyHint')
 })
 
@@ -4123,8 +4178,8 @@ watch(
       adminAPI.tlsFingerprintProfiles.list()
         .then(profiles => { tlsFingerprintProfiles.value = profiles.map(p => ({ id: p.id, name: p.name })) })
         .catch(() => { tlsFingerprintProfiles.value = [] })
-      // Modal opened - fill related models
-      allowedModels.value = [...getModelsByPlatform(form.platform)]
+      // DeepSeek 默认开放上游全部模型，静态候选只用于选择器展示，不应自动写入映射。
+      allowedModels.value = form.platform === 'deepseek' ? [] : [...getModelsByPlatform(form.platform)]
       // Antigravity: 默认使用映射模式并填充默认映射
       if (form.platform === 'antigravity') {
         antigravityModelRestrictionMode.value = 'mapping'
@@ -4204,6 +4259,8 @@ watch(
           ? 'https://generativelanguage.googleapis.com'
           : newPlatform === 'grok'
             ? 'https://api.x.ai/v1'
+            : newPlatform === 'deepseek'
+              ? 'https://api.deepseek.com'
             : 'https://api.anthropic.com'
     // Clear model-related settings
     allowedModels.value = []
@@ -4228,6 +4285,14 @@ watch(
       accountCategory.value = 'oauth-based'
       addMethod.value = 'oauth'
       modelRestrictionMode.value = 'mapping'
+      form.concurrency = 5
+      form.load_factor = null
+    }
+    if (newPlatform === 'deepseek') {
+      // DeepSeek 目前仅支持 API Key，切换平台时强制关闭所有 OAuth 状态。
+      accountCategory.value = 'apikey'
+      addMethod.value = 'oauth'
+      modelRestrictionMode.value = 'whitelist'
       form.concurrency = 5
       form.load_factor = null
     }
@@ -4326,7 +4391,8 @@ const handleSelectGeminiOAuthType = (oauthType: 'code_assist' | 'google_one' | '
 watch(
   [modelRestrictionMode, () => form.platform],
   ([newMode]) => {
-    if (newMode === 'whitelist') {
+    // DeepSeek 的静态候选不能因切换白名单模式而自动变成显式映射。
+    if (newMode === 'whitelist' && form.platform !== 'deepseek') {
       allowedModels.value = [...getModelsByPlatform(form.platform)]
     }
   }
@@ -5081,6 +5147,8 @@ const handleSubmit = async () => {
         ? 'https://generativelanguage.googleapis.com'
         : form.platform === 'grok'
           ? 'https://api.x.ai/v1'
+          : form.platform === 'deepseek'
+            ? 'https://api.deepseek.com'
           : 'https://api.anthropic.com'
 
   // Build credentials with optional model mapping

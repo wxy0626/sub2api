@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 )
@@ -43,6 +44,7 @@ const (
 	PlatformGemini      = domain.PlatformGemini
 	PlatformAntigravity = domain.PlatformAntigravity
 	PlatformGrok        = domain.PlatformGrok
+	PlatformDeepSeek    = domain.PlatformDeepSeek
 	PlatformComposite   = domain.PlatformComposite
 )
 
@@ -55,6 +57,42 @@ var AllowedQuotaPlatforms = []string{
 	PlatformGemini,
 	PlatformAntigravity,
 	PlatformGrok,
+	PlatformDeepSeek,
+}
+
+// DeepSeekDefaultModelIDs 是前端选择器和 Codex 配置保留的最新 DeepSeek 候选模型。
+var DeepSeekDefaultModelIDs = []string{
+	"deepseek-v4-flash",
+	"deepseek-v4-pro",
+}
+
+// DeepSeekResponsesModel 是唯一允许走 DeepSeek Responses API 的模型。
+const DeepSeekResponsesModel = "deepseek-v4-flash"
+
+// ValidateAccountPlatformType 校验平台与账号认证类型的组合是否受支持。
+func ValidateAccountPlatformType(platform, accountType string) error {
+	if platform != PlatformDeepSeek {
+		return nil
+	}
+	if accountType != AccountTypeAPIKey {
+		return fmt.Errorf("DeepSeek 平台目前仅支持 API Key 账号，收到的账号类型为 %q；请将 type 改为 apikey，并在 credentials.api_key 中填写密钥", accountType)
+	}
+	return nil
+}
+
+// ValidateAccountPlatformCredentials 校验平台、账号类型和创建或更新后生效的凭据。
+func ValidateAccountPlatformCredentials(platform, accountType string, credentials map[string]any) error {
+	if err := ValidateAccountPlatformType(platform, accountType); err != nil {
+		return err
+	}
+	if platform != PlatformDeepSeek {
+		return nil
+	}
+	apiKey, ok := credentials["api_key"].(string)
+	if !ok || strings.TrimSpace(apiKey) == "" {
+		return fmt.Errorf("DeepSeek API Key 未配置：请在 credentials.api_key 中填写非空 API Key")
+	}
+	return nil
 }
 
 // IsAllowedQuotaPlatform 报告 s 是否为合法的 quota platform 标识。

@@ -263,6 +263,26 @@ func TestAccountTestService_OpenAIStreamEOFBeforeCompletedFails(t *testing.T) {
 	require.NotContains(t, recorder.Body.String(), `"success":true`)
 }
 
+// TestDeepSeekResponsesStreamIncompleteCompletes 验证 DeepSeek Responses 的正常不完整结束事件可完成账号测试。
+func TestDeepSeekResponsesStreamIncompleteCompletes(t *testing.T) {
+	ctx, recorder := newTestContext()
+	service := &AccountTestService{}
+	account := &Account{
+		ID:          92,
+		Platform:    PlatformDeepSeek,
+		Type:        AccountTypeAPIKey,
+		Credentials: map[string]any{"api_key": "sk-deepseek-test"},
+	}
+	body := strings.NewReader("data: {\"type\":\"response.incomplete\",\"response\":{\"status\":\"incomplete\"}}\n\n")
+
+	err := service.processOpenAIStream(ctx, body, false, account)
+
+	require.NoError(t, err)
+	require.Contains(t, recorder.Body.String(), "\"type\":\"test_complete\"")
+	require.Contains(t, recorder.Body.String(), "\"success\":true")
+	require.NotContains(t, recorder.Body.String(), "\"type\":\"error\"")
+}
+
 func TestAccountTestService_OpenAIOAuthRetriesEOFBeforeReceivingResponse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, recorder := newTestContext()

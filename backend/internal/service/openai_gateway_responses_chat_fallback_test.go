@@ -5,6 +5,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -102,6 +103,41 @@ func TestForwardResponses_ForceChatCompletionsRoutesStreamingToChatCompletions(t
 	require.NotNil(t, result.FirstTokenMs)
 }
 
+func TestForwardResponses_ForceChatCompletionsContextWindow400KeepsClientError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"gpt-5.4","input":"large prompt","stream":false}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	// 模拟截图中 Chat fallback 上游返回的英文上下文超限详情。
+	const upstreamMessage = "prompt is too long: Your input exceeds the context window of this model"
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusBadRequest,
+		Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid_resp_chat_context"}},
+		Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"` + upstreamMessage + `","type":"invalid_request_error"}}`)),
+	}}
+	svc := &OpenAIGatewayService{
+		cfg:          rawChatCompletionsTestConfig(),
+		httpUpstream: upstream,
+	}
+
+	result, err := svc.Forward(context.Background(), c, forceChatResponsesFallbackAccount(), body)
+
+	require.Error(t, err)
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.False(t, errors.As(err, &failoverErr), "确定性上下文超限不得触发账号切换")
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Equal(t, "invalid_request_error", gjson.Get(rec.Body.String(), "error.type").String())
+	require.Equal(t, "context_length_exceeded", gjson.Get(rec.Body.String(), "error.code").String())
+	require.Contains(t, gjson.Get(rec.Body.String(), "error.message").String(), "请求内容超过模型的上下文窗口")
+	require.Contains(t, gjson.Get(rec.Body.String(), "error.message").String(), upstreamMessage)
+	require.Len(t, upstream.requests, 1, "确定性上下文超限不得重试或切换账号")
+}
+
 func TestForwardResponses_DeepSeekReasoningOnlyStreamProducesVisibleText(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -174,6 +210,55 @@ func TestForwardResponses_AutoSupportedAccountStillUsesResponsesEndpoint(t *test
 	require.True(t, gjson.GetBytes(upstream.lastBody, "input").Exists())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "messages").Exists())
 	require.Equal(t, "ok", gjson.Get(rec.Body.String(), "output.0.content.0.text").String())
+}
+
+func TestForwardResponses_CompactRequestNeverFallsBackToChatCompletions(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name   string
+		path   string
+		body   []byte
+		header string
+	}{
+		{
+			name: "explicit compact path",
+			path: "/v1/responses/compact",
+			body: []byte(`{"model":"gpt-5.4","input":[{"type":"compaction_trigger"}],"stream":false}`),
+		},
+		{
+			name:   "native remote compaction v2",
+			path:   "/v1/responses",
+			body:   []byte(`{"model":"gpt-5.4","input":[{"type":"compaction_trigger"}],"stream":true}`),
+			header: "remote_compaction_v2",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, tt.path, bytes.NewReader(tt.body))
+			c.Request.Header.Set("Content-Type", "application/json")
+			if tt.header != "" {
+				c.Request.Header.Set("x-codex-beta-features", tt.header)
+			}
+
+			upstream := &httpUpstreamRecorder{}
+			svc := &OpenAIGatewayService{
+				cfg:          rawChatCompletionsTestConfig(),
+				httpUpstream: upstream,
+			}
+
+			result, err := svc.Forward(context.Background(), c, forceChatResponsesFallbackAccount(), tt.body)
+			require.Error(t, err)
+			require.Nil(t, result)
+			require.Empty(t, upstream.requests, "compact must not call /chat/completions")
+			require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+			require.Equal(t, "responses_compaction_not_supported", gjson.Get(rec.Body.String(), "error.type").String())
+			require.Contains(t, gjson.Get(rec.Body.String(), "error.message").String(), "会话压缩请求必须使用上游 Responses API")
+		})
+	}
 }
 
 func forceChatResponsesFallbackAccount() *Account {

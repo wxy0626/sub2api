@@ -583,6 +583,60 @@ func (_u *UsageLogUpdate) ClearAccountRateMultiplier() *UsageLogUpdate {
 	return _u
 }
 
+// SetRequestBodyBytes sets the "request_body_bytes" field.
+func (_u *UsageLogUpdate) SetRequestBodyBytes(v int64) *UsageLogUpdate {
+	_u.mutation.ResetRequestBodyBytes()
+	_u.mutation.SetRequestBodyBytes(v)
+	return _u
+}
+
+// SetNillableRequestBodyBytes sets the "request_body_bytes" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableRequestBodyBytes(v *int64) *UsageLogUpdate {
+	if v != nil {
+		_u.SetRequestBodyBytes(*v)
+	}
+	return _u
+}
+
+// AddRequestBodyBytes adds value to the "request_body_bytes" field.
+func (_u *UsageLogUpdate) AddRequestBodyBytes(v int64) *UsageLogUpdate {
+	_u.mutation.AddRequestBodyBytes(v)
+	return _u
+}
+
+// ClearRequestBodyBytes clears the value of the "request_body_bytes" field.
+func (_u *UsageLogUpdate) ClearRequestBodyBytes() *UsageLogUpdate {
+	_u.mutation.ClearRequestBodyBytes()
+	return _u
+}
+
+// SetMaxRequestBodyBytes sets the "max_request_body_bytes" field.
+func (_u *UsageLogUpdate) SetMaxRequestBodyBytes(v int64) *UsageLogUpdate {
+	_u.mutation.ResetMaxRequestBodyBytes()
+	_u.mutation.SetMaxRequestBodyBytes(v)
+	return _u
+}
+
+// SetNillableMaxRequestBodyBytes sets the "max_request_body_bytes" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableMaxRequestBodyBytes(v *int64) *UsageLogUpdate {
+	if v != nil {
+		_u.SetMaxRequestBodyBytes(*v)
+	}
+	return _u
+}
+
+// AddMaxRequestBodyBytes adds value to the "max_request_body_bytes" field.
+func (_u *UsageLogUpdate) AddMaxRequestBodyBytes(v int64) *UsageLogUpdate {
+	_u.mutation.AddMaxRequestBodyBytes(v)
+	return _u
+}
+
+// ClearMaxRequestBodyBytes clears the value of the "max_request_body_bytes" field.
+func (_u *UsageLogUpdate) ClearMaxRequestBodyBytes() *UsageLogUpdate {
+	_u.mutation.ClearMaxRequestBodyBytes()
+	return _u
+}
+
 // SetBillingType sets the "billing_type" field.
 func (_u *UsageLogUpdate) SetBillingType(v int8) *UsageLogUpdate {
 	_u.mutation.ResetBillingType()
@@ -1224,6 +1278,24 @@ func (_u *UsageLogUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.AccountRateMultiplierCleared() {
 		_spec.ClearField(usagelog.FieldAccountRateMultiplier, field.TypeFloat64)
+	}
+	if value, ok := _u.mutation.RequestBodyBytes(); ok {
+		_spec.SetField(usagelog.FieldRequestBodyBytes, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedRequestBodyBytes(); ok {
+		_spec.AddField(usagelog.FieldRequestBodyBytes, field.TypeInt64, value)
+	}
+	if _u.mutation.RequestBodyBytesCleared() {
+		_spec.ClearField(usagelog.FieldRequestBodyBytes, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.MaxRequestBodyBytes(); ok {
+		_spec.SetField(usagelog.FieldMaxRequestBodyBytes, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedMaxRequestBodyBytes(); ok {
+		_spec.AddField(usagelog.FieldMaxRequestBodyBytes, field.TypeInt64, value)
+	}
+	if _u.mutation.MaxRequestBodyBytesCleared() {
+		_spec.ClearField(usagelog.FieldMaxRequestBodyBytes, field.TypeInt64)
 	}
 	if value, ok := _u.mutation.BillingType(); ok {
 		_spec.SetField(usagelog.FieldBillingType, field.TypeInt8, value)
@@ -2040,6 +2112,60 @@ func (_u *UsageLogUpdateOne) ClearAccountRateMultiplier() *UsageLogUpdateOne {
 	return _u
 }
 
+// SetRequestBodyBytes sets the "request_body_bytes" field.
+func (_u *UsageLogUpdateOne) SetRequestBodyBytes(v int64) *UsageLogUpdateOne {
+	_u.mutation.ResetRequestBodyBytes()
+	_u.mutation.SetRequestBodyBytes(v)
+	return _u
+}
+
+// SetNillableRequestBodyBytes sets the "request_body_bytes" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableRequestBodyBytes(v *int64) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetRequestBodyBytes(*v)
+	}
+	return _u
+}
+
+// AddRequestBodyBytes adds value to the "request_body_bytes" field.
+func (_u *UsageLogUpdateOne) AddRequestBodyBytes(v int64) *UsageLogUpdateOne {
+	_u.mutation.AddRequestBodyBytes(v)
+	return _u
+}
+
+// ClearRequestBodyBytes clears the value of the "request_body_bytes" field.
+func (_u *UsageLogUpdateOne) ClearRequestBodyBytes() *UsageLogUpdateOne {
+	_u.mutation.ClearRequestBodyBytes()
+	return _u
+}
+
+// SetMaxRequestBodyBytes sets the "max_request_body_bytes" field.
+func (_u *UsageLogUpdateOne) SetMaxRequestBodyBytes(v int64) *UsageLogUpdateOne {
+	_u.mutation.ResetMaxRequestBodyBytes()
+	_u.mutation.SetMaxRequestBodyBytes(v)
+	return _u
+}
+
+// SetNillableMaxRequestBodyBytes sets the "max_request_body_bytes" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableMaxRequestBodyBytes(v *int64) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetMaxRequestBodyBytes(*v)
+	}
+	return _u
+}
+
+// AddMaxRequestBodyBytes adds value to the "max_request_body_bytes" field.
+func (_u *UsageLogUpdateOne) AddMaxRequestBodyBytes(v int64) *UsageLogUpdateOne {
+	_u.mutation.AddMaxRequestBodyBytes(v)
+	return _u
+}
+
+// ClearMaxRequestBodyBytes clears the value of the "max_request_body_bytes" field.
+func (_u *UsageLogUpdateOne) ClearMaxRequestBodyBytes() *UsageLogUpdateOne {
+	_u.mutation.ClearMaxRequestBodyBytes()
+	return _u
+}
+
 // SetBillingType sets the "billing_type" field.
 func (_u *UsageLogUpdateOne) SetBillingType(v int8) *UsageLogUpdateOne {
 	_u.mutation.ResetBillingType()
@@ -2711,6 +2837,24 @@ func (_u *UsageLogUpdateOne) sqlSave(ctx context.Context) (_node *UsageLog, err 
 	}
 	if _u.mutation.AccountRateMultiplierCleared() {
 		_spec.ClearField(usagelog.FieldAccountRateMultiplier, field.TypeFloat64)
+	}
+	if value, ok := _u.mutation.RequestBodyBytes(); ok {
+		_spec.SetField(usagelog.FieldRequestBodyBytes, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedRequestBodyBytes(); ok {
+		_spec.AddField(usagelog.FieldRequestBodyBytes, field.TypeInt64, value)
+	}
+	if _u.mutation.RequestBodyBytesCleared() {
+		_spec.ClearField(usagelog.FieldRequestBodyBytes, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.MaxRequestBodyBytes(); ok {
+		_spec.SetField(usagelog.FieldMaxRequestBodyBytes, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedMaxRequestBodyBytes(); ok {
+		_spec.AddField(usagelog.FieldMaxRequestBodyBytes, field.TypeInt64, value)
+	}
+	if _u.mutation.MaxRequestBodyBytesCleared() {
+		_spec.ClearField(usagelog.FieldMaxRequestBodyBytes, field.TypeInt64)
 	}
 	if value, ok := _u.mutation.BillingType(); ok {
 		_spec.SetField(usagelog.FieldBillingType, field.TypeInt8, value)

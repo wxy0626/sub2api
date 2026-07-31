@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -167,6 +168,258 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_KeepLeaseAcrossT
 	require.Equal(t, int64(1), metrics.AcquireTotal, "同一 ingress 会话多 turn 应只获取一次上游 lease")
 	require.Equal(t, 1, captureDialer.DialCount(), "同一 ingress 会话应保持同一上游连接")
 	require.Len(t, captureConn.writes, 2, "应向同一上游连接发送两轮 response.create")
+}
+
+// TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_SanitizesReasoningItemIDs
+// 验证普通 WebSocket ingress 在发送 response.create 前会清理非法 reasoning item ID，
+// 同时保留上游要求以 rs 开头的合法 ID。
+func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_SanitizesReasoningItemIDs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	// cfg 使用非 passthrough 的 ctx_pool 模式，确保覆盖普通 ingress 转发链路。
+	cfg := &config.Config{}
+	cfg.Security.URLAllowlist.Enabled = false
+	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+	cfg.Gateway.OpenAIWS.Enabled = true
+	cfg.Gateway.OpenAIWS.OAuthEnabled = true
+	cfg.Gateway.OpenAIWS.APIKeyEnabled = true
+	cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
+	cfg.Gateway.OpenAIWS.ModeRouterV2Enabled = true
+	cfg.Gateway.OpenAIWS.IngressModeDefault = OpenAIWSIngressModeCtxPool
+	cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 1
+	cfg.Gateway.OpenAIWS.MinIdlePerAccount = 0
+	cfg.Gateway.OpenAIWS.MaxIdlePerAccount = 1
+	cfg.Gateway.OpenAIWS.QueueLimitPerConn = 8
+	cfg.Gateway.OpenAIWS.DialTimeoutSeconds = 3
+	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 3
+	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
+
+	// captureConn 捕获普通 ingress 实际写入上游的 response.create 帧。
+	captureConn := &openAIWSCaptureConn{
+		events: [][]byte{
+			[]byte(`{"type":"response.completed","response":{"id":"resp_reasoning_ingress","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`),
+		},
+	}
+	captureDialer := &openAIWSCaptureDialer{conn: captureConn}
+	pool := newOpenAIWSConnPool(cfg)
+	pool.setClientDialerForTest(captureDialer)
+	defer pool.Close()
+
+	svc := &OpenAIGatewayService{
+		cfg:              cfg,
+		httpUpstream:     &httpUpstreamRecorder{},
+		cache:            &stubGatewayCache{},
+		openaiWSResolver: NewOpenAIWSProtocolResolver(cfg),
+		toolCorrector:    NewCodexToolCorrector(),
+		openaiWSPool:     pool,
+	}
+
+	// account 明确启用 Responses WebSocket，但保持默认 ctx_pool 模式而非 passthrough。
+	account := &Account{
+		ID:          117,
+		Name:        "openai-ingress-reasoning-item-id",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Credentials: map[string]any{"api_key": "sk-test"},
+		Extra: map[string]any{
+			"responses_websockets_v2_enabled": true,
+		},
+	}
+
+	serverErrCh := make(chan error, 1)
+	wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := coderws.Accept(w, r, &coderws.AcceptOptions{
+			CompressionMode: coderws.CompressionContextTakeover,
+		})
+		if err != nil {
+			serverErrCh <- err
+			return
+		}
+		defer func() { _ = conn.CloseNow() }()
+
+		rec := httptest.NewRecorder()
+		ginCtx, _ := gin.CreateTestContext(rec)
+		ginCtx.Request = r.Clone(r.Context())
+
+		readCtx, cancelRead := context.WithTimeout(r.Context(), 3*time.Second)
+		msgType, firstMessage, readErr := conn.Read(readCtx)
+		cancelRead()
+		if readErr != nil {
+			serverErrCh <- readErr
+			return
+		}
+		if msgType != coderws.MessageText && msgType != coderws.MessageBinary {
+			serverErrCh <- errors.New("unsupported websocket client message type")
+			return
+		}
+
+		serverErrCh <- svc.ProxyResponsesWebSocketFromClient(r.Context(), ginCtx, conn, account, "sk-test", firstMessage, nil)
+	}))
+	defer wsServer.Close()
+
+	dialCtx, cancelDial := context.WithTimeout(context.Background(), 3*time.Second)
+	clientConn, _, err := coderws.Dial(dialCtx, "ws"+strings.TrimPrefix(wsServer.URL, "http"), nil)
+	cancelDial()
+	require.NoError(t, err)
+	defer func() { _ = clientConn.CloseNow() }()
+
+	// requestItems 构造 80 项上下文，把真实报错中的非法 ID 放到 input[79]。
+	requestItems := make([]string, 80)
+	for index := 0; index < len(requestItems)-2; index++ {
+		requestItems[index] = fmt.Sprintf(`{"type":"input_text","text":"context-%d"}`, index)
+	}
+	// validReasoningItem 是必须保留的合法 rs 前缀 reasoning item。
+	validReasoningItem := `{"type":"reasoning","id":"rs_valid_reasoning_78","summary":[]}`
+	requestItems[len(requestItems)-2] = validReasoningItem
+	// invalidReasoningItem 精确复现 input[79].id 的 item_ 前缀错误。
+	invalidReasoningItem := `{"type":"reasoning","id":"item_a0eff49cf12148c9fe8bd274","summary":[]}`
+	requestItems[len(requestItems)-1] = invalidReasoningItem
+	requestBody := []byte(`{"type":"response.create","model":"gpt-5.1","stream":false,"input":[` + strings.Join(requestItems, ",") + `]}`)
+	writeCtx, cancelWrite := context.WithTimeout(context.Background(), 3*time.Second)
+	err = clientConn.Write(writeCtx, coderws.MessageText, requestBody)
+	cancelWrite()
+	require.NoError(t, err)
+
+	readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
+	_, event, readErr := clientConn.Read(readCtx)
+	cancelRead()
+	require.NoError(t, readErr)
+	require.Equal(t, "response.completed", gjson.GetBytes(event, "type").String())
+
+	require.NoError(t, clientConn.Close(coderws.StatusNormalClosure, "done"))
+	select {
+	case serverErr := <-serverErrCh:
+		require.NoError(t, serverErr)
+	case <-time.After(5 * time.Second):
+		t.Fatal("等待普通 ingress websocket 结束超时")
+	}
+
+	require.Len(t, captureConn.writes, 1, "普通 ingress 应只向上游发送一条 response.create")
+	// forwarded 是上游捕获到的规范化 JSON，断言第 80 项非法 ID 已移除且数组未丢项。
+	forwarded := requestToJSONString(captureConn.writes[0])
+	require.Len(t, gjson.Get(forwarded, "input").Array(), 80, "清理 ID 不应删除 input 项本身")
+	require.Equal(t, "rs_valid_reasoning_78", gjson.Get(forwarded, "input.78.id").String(), "合法 rs reasoning item ID 应保留")
+	require.False(t, gjson.Get(forwarded, "input.79.id").Exists(), "input[79].id 的非法 item_ 前缀不应发送给上游")
+}
+
+// TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughSanitizesReasoningItemIDs
+// 验证 WS v2 passthrough 首帧直接写入上游前也会删除非法 reasoning item ID，
+// 并保留合法的 rs ID，避免绕过普通 HTTP 清理入口。
+func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughSanitizesReasoningItemIDs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	// cfg 开启 WS v2 passthrough 所需的路由配置，但测试仍使用本地捕获上游。
+	cfg := &config.Config{}
+	cfg.Security.URLAllowlist.Enabled = false
+	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+	cfg.Gateway.OpenAIWS.Enabled = true
+	cfg.Gateway.OpenAIWS.OAuthEnabled = true
+	cfg.Gateway.OpenAIWS.APIKeyEnabled = true
+	cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
+	cfg.Gateway.OpenAIWS.ModeRouterV2Enabled = true
+	cfg.Gateway.OpenAIWS.IngressModeDefault = OpenAIWSIngressModeCtxPool
+	cfg.Gateway.OpenAIWS.DialTimeoutSeconds = 3
+	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 3
+	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
+
+	// upstreamConn 记录 passthrough adapter 直接写给上游的原始 JSON 帧。
+	upstreamConn := &openAIWSCaptureConn{
+		events: [][]byte{
+			[]byte(`{"type":"response.completed","response":{"id":"resp_reasoning_passthrough","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`),
+		},
+	}
+	captureDialer := &openAIWSCaptureDialer{conn: upstreamConn}
+
+	svc := &OpenAIGatewayService{
+		cfg:                       cfg,
+		httpUpstream:              &httpUpstreamRecorder{},
+		cache:                     &stubGatewayCache{},
+		openaiWSResolver:          NewOpenAIWSProtocolResolver(cfg),
+		toolCorrector:             NewCodexToolCorrector(),
+		openaiWSPassthroughDialer: captureDialer,
+	}
+
+	// account 强制使用 OpenAI API Key 的 WS v2 passthrough 模式。
+	account := &Account{
+		ID:          118,
+		Name:        "openai-passthrough-reasoning-item-id",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Credentials: map[string]any{"api_key": "sk-test"},
+		Extra: map[string]any{
+			"openai_apikey_responses_websockets_v2_mode": OpenAIWSIngressModePassthrough,
+		},
+	}
+
+	serverErrCh := make(chan error, 1)
+	wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := coderws.Accept(w, r, &coderws.AcceptOptions{
+			CompressionMode: coderws.CompressionContextTakeover,
+		})
+		if err != nil {
+			serverErrCh <- err
+			return
+		}
+		defer func() { _ = conn.CloseNow() }()
+
+		rec := httptest.NewRecorder()
+		ginCtx, _ := gin.CreateTestContext(rec)
+		ginCtx.Request = r.Clone(r.Context())
+
+		readCtx, cancelRead := context.WithTimeout(r.Context(), 3*time.Second)
+		msgType, firstMessage, readErr := conn.Read(readCtx)
+		cancelRead()
+		if readErr != nil {
+			serverErrCh <- readErr
+			return
+		}
+		if msgType != coderws.MessageText && msgType != coderws.MessageBinary {
+			serverErrCh <- errors.New("unsupported websocket client message type")
+			return
+		}
+
+		serverErrCh <- svc.ProxyResponsesWebSocketFromClient(r.Context(), ginCtx, conn, account, "sk-test", firstMessage, nil)
+	}))
+	defer wsServer.Close()
+
+	dialCtx, cancelDial := context.WithTimeout(context.Background(), 3*time.Second)
+	clientConn, _, err := coderws.Dial(dialCtx, "ws"+strings.TrimPrefix(wsServer.URL, "http"), nil)
+	cancelDial()
+	require.NoError(t, err)
+	defer func() { _ = clientConn.CloseNow() }()
+
+	// requestBody 是 passthrough 首个 response.create 帧，包含两类 reasoning ID。
+	requestBody := []byte(`{"type":"response.create","model":"gpt-5.1","stream":false,"input":[{"type":"reasoning","id":"item_bad_reasoning","summary":[]},{"type":"reasoning","id":"rs_valid_reasoning","summary":[]}] }`)
+	writeCtx, cancelWrite := context.WithTimeout(context.Background(), 3*time.Second)
+	err = clientConn.Write(writeCtx, coderws.MessageText, requestBody)
+	cancelWrite()
+	require.NoError(t, err)
+
+	readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
+	_, event, readErr := clientConn.Read(readCtx)
+	cancelRead()
+	require.NoError(t, readErr)
+	require.Equal(t, "response.completed", gjson.GetBytes(event, "type").String())
+
+	require.NoError(t, clientConn.Close(coderws.StatusNormalClosure, "done"))
+	select {
+	case serverErr := <-serverErrCh:
+		require.NoError(t, serverErr)
+	case <-time.After(5 * time.Second):
+		t.Fatal("等待 passthrough ingress websocket 结束超时")
+	}
+
+	require.Len(t, upstreamConn.writes, 1, "passthrough 应只向上游发送一条 response.create")
+	// forwarded 是 passthrough 上游实际收到的 JSON，断言非法 ID 已移除且合法 ID 保留。
+	forwarded := requestToJSONString(upstreamConn.writes[0])
+	require.False(t, gjson.Get(forwarded, "input.0.id").Exists(), "非法 reasoning item ID 不应发送给 passthrough 上游")
+	require.Equal(t, "rs_valid_reasoning", gjson.Get(forwarded, "input.1.id").String(), "合法 rs reasoning item ID 应保留")
 }
 
 func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_IdleTimeoutReleasesStoreDisabledSession(t *testing.T) {

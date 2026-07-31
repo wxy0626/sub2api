@@ -1070,4 +1070,37 @@ describe('EditAccountModal', () => {
       'antigravity_project_id'
     )
   })
+
+  it('edits a DeepSeek API Key account with its default URL, key, and model mapping', async () => {
+    const account = {
+      ...buildAccount(),
+      id: 7,
+      name: 'DeepSeek API Key',
+      platform: 'deepseek',
+      credentials: {
+        api_key: 'sk-deepseek-old',
+        base_url: 'https://api.deepseek.com',
+        model_mapping: { 'deepseek-chat': 'deepseek-chat' }
+      }
+    } as any
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+
+    const wrapper = mountModal(account)
+    const baseUrl = wrapper.get<HTMLInputElement>('[data-testid="account-base-url-input"]')
+    const apiKey = wrapper.get<HTMLInputElement>('[data-testid="account-api-key-input"]')
+    expect(baseUrl.element.value).toBe('https://api.deepseek.com')
+
+    await baseUrl.setValue('https://proxy.example/v1')
+    await apiKey.setValue('sk-deepseek-new')
+    await wrapper.get('[data-testid="rewrite-to-snapshot"]').trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).toMatchObject({
+      base_url: 'https://proxy.example/v1',
+      api_key: 'sk-deepseek-new',
+      model_mapping: { 'gpt-5.2-2025-12-11': 'gpt-5.2-2025-12-11' }
+    })
+  })
 })

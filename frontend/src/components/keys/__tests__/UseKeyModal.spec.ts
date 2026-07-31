@@ -230,6 +230,95 @@ describe('UseKeyModal', () => {
     expect(codeBlocks).toContain('$env:SUB2API_API_KEY="sk-grok-codex-test"')
   })
 
+  it('renders only the Responses-capable DeepSeek Flash model in the Codex catalog', async () => {
+    const wrapper = mount(UseKeyModal, {
+      props: {
+        show: true,
+        apiKey: 'sk-deepseek-test',
+        baseUrl: 'https://proxy.example.com/v1/',
+        platform: 'deepseek'
+      },
+      global: {
+        stubs: {
+          BaseDialog: {
+            template: '<div><slot /><slot name="footer" /></div>'
+          },
+          Icon: {
+            template: '<span />'
+          }
+        }
+      }
+    })
+
+    expect(wrapper.findAll('button').some((button) =>
+      button.text().includes('keys.useKeyModal.cliTabs.codexCli')
+    )).toBe(true)
+
+    const codeBlocks = wrapper.findAll('pre code').map((code) => code.text())
+    expect(codeBlocks).toHaveLength(2)
+
+    const configToml = codeBlocks.find((content) => content.includes('[model_providers.deepseek]'))
+    expect(configToml).toBeDefined()
+    expect(configToml).toContain('model = "deepseek-v4-flash"')
+    expect(configToml).toContain('model_provider = "deepseek"')
+    expect(configToml).toContain('preferred_auth_method = "apikey"')
+    expect(configToml).toContain('forced_login_method = "api"')
+    expect(configToml).toContain('model_reasoning_effort = "high"')
+    expect(configToml).toContain('model_catalog_json = "~/.codex/models.json"')
+    expect(configToml).toContain('base_url = "https://proxy.example.com/"')
+    expect(configToml).toContain('wire_api = "responses"')
+    expect(configToml).toContain('experimental_bearer_token = "sk-deepseek-test"')
+    expect(configToml).not.toContain('auth.json')
+    expect(configToml).not.toContain('OPENAI_API_KEY')
+    expect(configToml).not.toContain('requires_openai_auth')
+    expect(configToml).not.toContain('env_key')
+
+    const modelsJson = codeBlocks.find((content) => content.includes('\"models\"') && content.includes('deepseek-v4-flash'))
+    expect(modelsJson).toBeDefined()
+    const parsedModels = JSON.parse(modelsJson!)
+    expect(parsedModels.models).toHaveLength(1)
+    expect(parsedModels.models.map((model: { slug: string }) => model.slug)).toEqual([
+      'deepseek-v4-flash'
+    ])
+    expect(parsedModels.models[0]).toMatchObject({
+      prefer_websockets: false,
+      support_verbosity: true,
+      apply_patch_tool_type: 'freeform',
+      web_search_tool_type: 'text',
+      input_modalities: ['text'],
+      supports_parallel_tool_calls: true,
+      multi_agent_version: 'v2',
+      context_window: 1048576,
+      max_context_window: 1048576,
+      default_reasoning_level: 'high',
+      supported_in_api: true,
+      shell_type: 'shell_command',
+      visibility: 'list'
+    })
+    expect(parsedModels.models[0].supported_reasoning_levels.map((level: { effort: string }) => level.effort)).toEqual([
+      'low',
+      'high',
+      'max'
+    ])
+    expect(modelsJson).not.toContain('deepseek-v4-pro')
+    expect(parsedModels.models.map((model: { slug: string }) => model.slug)).not.toContain('deepseek-chat')
+    expect(parsedModels.models.map((model: { slug: string }) => model.slug)).not.toContain('deepseek-reasoner')
+    expect(wrapper.text()).toContain('~/.codex/config.toml')
+    expect(wrapper.text()).toContain('~/.codex/models.json')
+    expect(wrapper.text()).not.toMatch(/auth\.json|env_key|requires_openai_auth/)
+
+    const windowsTab = wrapper.findAll('button').find(
+      (button) => button.text().trim() === 'Windows'
+    )
+    expect(windowsTab).toBeDefined()
+    await windowsTab!.trigger('click')
+    await nextTick()
+    expect(wrapper.text()).toContain('%USERPROFILE%\\.codex/config.toml')
+    expect(wrapper.findAll('pre code').map((code) => code.text()).join('\n')).toContain(
+      'base_url = "https://proxy.example.com/"'
+    )
+  })
+
   it('keeps legacy OpenAI Codex config as the default', () => {
     const wrapper = mount(UseKeyModal, {
       props: {

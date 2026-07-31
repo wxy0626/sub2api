@@ -76,9 +76,20 @@ func (s *OpenAIGatewayService) performOpenAIWSGeneratePrewarm(
 		prewarmPayload[k] = v
 	}
 	prewarmPayload["generate"] = false
-	prewarmPayloadJSON := payloadAsJSONBytes(prewarmPayload)
+	prewarmPayloadJSON, marshalErr := json.Marshal(prewarmPayload)
+	if marshalErr != nil {
+		return wrapOpenAIWSFallback("marshal_prewarm_payload", marshalErr)
+	}
+	if account.Platform == PlatformOpenAI {
+		// 预热 payload 也是独立的一次上游写入，不能复用未清理的原始 map。
+		sanitizedPayload, _, sanitizeErr := sanitizeOpenAIResponsesInputItemIDs(prewarmPayloadJSON)
+		if sanitizeErr != nil {
+			return wrapOpenAIWSFallback("sanitize_prewarm_payload", sanitizeErr)
+		}
+		prewarmPayloadJSON = sanitizedPayload
+	}
 
-	if err := lease.WriteJSONWithContextTimeout(ctx, prewarmPayload, s.openAIWSWriteTimeout()); err != nil {
+	if err := lease.WriteJSONWithContextTimeout(ctx, json.RawMessage(prewarmPayloadJSON), s.openAIWSWriteTimeout()); err != nil {
 		lease.MarkBroken()
 		logOpenAIWSModeInfo(
 			"prewarm_write_fail account_id=%d conn_id=%s cause=%s",
@@ -502,7 +513,7 @@ func (s *OpenAIGatewayService) resolveAccountByPreviousResponseIDForCapability(
 	if requestedModel != "" && !account.IsModelSupported(requestedModel) {
 		return 0, nil, "", nil
 	}
-	if !account.SupportsOpenAIEndpointCapability(requiredCapability) {
+	if !account.SupportsOpenAIEndpointCapabilityForModel(requiredCapability, requestedModel) {
 		return 0, nil, "", nil
 	}
 	// Quota auto-pause must also gate the previous_response_id sticky path; otherwise an
@@ -529,7 +540,7 @@ func (s *OpenAIGatewayService) resolveAccountByPreviousResponseIDForCapability(
 		if requestedModel != "" && !latest.IsModelSupported(requestedModel) {
 			return 0, nil, "", nil
 		}
-		if !latest.SupportsOpenAIEndpointCapability(requiredCapability) {
+		if !latest.SupportsOpenAIEndpointCapabilityForModel(requiredCapability, requestedModel) {
 			return 0, nil, "", nil
 		}
 		if paused, _ := shouldAutoPauseOpenAIAccountByQuota(ctx, latest); paused {

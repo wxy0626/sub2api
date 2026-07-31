@@ -218,6 +218,10 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 		return s.testOpenAIAccountConnection(c, account, modelID, prompt, normalizeAccountTestMode(mode))
 	}
 
+	if account.IsDeepSeek() {
+		return s.testDeepSeekAccountConnection(c, account, modelID, prompt, normalizeAccountTestMode(mode))
+	}
+
 	if account.IsGemini() {
 		return s.testGeminiAccountConnection(c, account, modelID, prompt)
 	}
@@ -231,6 +235,39 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 	}
 
 	return s.testClaudeAccountConnection(c, account, modelID)
+}
+
+// testDeepSeekAccountConnection 测试 DeepSeek API Key 账号，并按模型选择协议。
+func (s *AccountTestService) testDeepSeekAccountConnection(c *gin.Context, account *Account, modelID string, prompt string, mode string) error {
+	testModelID := strings.TrimSpace(modelID)
+	if testModelID == "" {
+		testModelID = "deepseek-chat"
+		if mode == AccountTestModeResponses {
+			testModelID = DeepSeekResponsesModel
+		}
+	}
+	if mode == AccountTestModeResponses && !strings.EqualFold(testModelID, DeepSeekResponsesModel) {
+		return s.sendErrorAndEnd(c, fmt.Sprintf("DeepSeek 模型 %q 不支持 /v1/responses；只有 %s 支持 Responses，请改用 Chat Completions 或选择 %s。", testModelID, DeepSeekResponsesModel, DeepSeekResponsesModel))
+	}
+	if mode == AccountTestModeResponses {
+		// 只有 deepseek-v4-flash 进入现有的 Responses 诊断流程。
+		return s.testOpenAIAccountConnection(c, account, testModelID, prompt, mode)
+	}
+	if mode == AccountTestModeCompact {
+		return s.sendErrorAndEnd(c, "DeepSeek 不支持 /v1/responses/compact 测试，请使用 Chat Completions 或 deepseek-v4-flash 的 Responses 测试。")
+	}
+
+	// 普通 DeepSeek 模型始终走 Chat Completions，避免沿用 OpenAI API Key 的
+	// Responses 自动探测默认值而误请求 /v1/responses。
+	authToken := strings.TrimSpace(account.GetCredential("api_key"))
+	if authToken == "" {
+		return s.sendErrorAndEnd(c, deepSeekAccountTestMissingAPIKeyMessage())
+	}
+	normalizedBaseURL, err := s.validateUpstreamBaseURL(account.GetDeepSeekBaseURL())
+	if err != nil {
+		return s.sendErrorAndEnd(c, deepSeekAccountTestBaseURLError(account, err))
+	}
+	return s.testOpenAIChatCompletionsConnection(c, account, testModelID, prompt, normalizedBaseURL, authToken)
 }
 
 // testClaudeAccountConnection tests an Anthropic Claude account's connection
@@ -599,15 +636,24 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		// API Key - use Platform API
 		authToken = credentialAccount.GetOpenAIApiKey()
 		if authToken == "" {
+			if credentialAccount.IsDeepSeek() {
+				return s.sendErrorAndEnd(c, deepSeekAccountTestMissingAPIKeyMessage())
+			}
 			return s.sendErrorAndEnd(c, "No API key available")
 		}
 
 		baseURL := credentialAccount.GetOpenAIBaseURL()
+		if credentialAccount.IsDeepSeek() {
+			baseURL = credentialAccount.GetDeepSeekBaseURL()
+		}
 		if baseURL == "" {
 			baseURL = "https://api.openai.com"
 		}
 		normalizedBaseURL, err := s.validateUpstreamBaseURL(baseURL)
 		if err != nil {
+			if credentialAccount.IsDeepSeek() {
+				return s.sendErrorAndEnd(c, deepSeekAccountTestBaseURLError(credentialAccount, err))
+			}
 			return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
 		}
 		// /responses 测试只影响本次请求，忽略 capability 缓存且不回写账号 Extra。
@@ -728,6 +774,9 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	if err != nil {
 		log.Printf("OpenAI account test request failed: account_id=%d error=%v", account.ID, err)
 		if mode == AccountTestModeResponses {
+			if credentialAccount.IsDeepSeek() {
+				return s.sendErrorAndEnd(c, fmt.Sprintf("通过 /v1/responses 测试 DeepSeek 连接失败：无法连接上游服务，请检查 DeepSeek Base URL、代理和网络配置。原始技术详情：%s", deepSeekAccountTestErrorDetail(credentialAccount, err.Error())))
+			}
 			return s.sendErrorAndEnd(c, fmt.Sprintf("通过 /v1/responses 测试连接失败：无法连接上游服务，请检查 API Base URL、网络和 API Key。原始技术详情：%s", err.Error()))
 		}
 		return s.sendErrorAndEnd(c, openAIAccountTestTransportErrorMessage(err))
@@ -764,12 +813,21 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
 		}
 		if mode == AccountTestModeResponses {
+			if credentialAccount.IsDeepSeek() {
+				return s.sendErrorAndEnd(c, fmt.Sprintf("通过 /v1/responses 测试 DeepSeek 连接失败：上游返回 HTTP %d，请检查 API Key、模型权限和 Responses 接口兼容性。原始技术详情：%s", resp.StatusCode, deepSeekAccountTestErrorDetail(credentialAccount, string(body))))
+			}
 			return s.sendErrorAndEnd(c, fmt.Sprintf("通过 /v1/responses 测试连接失败：上游返回 HTTP %d，请检查接口兼容性、模型权限和 API Key。原始技术详情：%s", resp.StatusCode, string(body)))
+		}
+		if credentialAccount.IsDeepSeek() {
+			return s.sendErrorAndEnd(c, fmt.Sprintf("通过 /v1/responses 测试 DeepSeek 连接失败：上游返回 HTTP %d，请检查 API Key、模型权限和接口兼容性。原始技术详情：%s", resp.StatusCode, deepSeekAccountTestErrorDetail(credentialAccount, string(body))))
 		}
 		return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
 	}
 
 	if isAPIKeyResponsesDiagnostic {
+		if credentialAccount.IsDeepSeek() {
+			return s.processDeepSeekResponsesBody(c, resp.Body, credentialAccount)
+		}
 		// Codex++ 诊断是非流式 JSON 响应，HTTP 小于 400 即视为请求成功。
 		responsePreview, _ := io.ReadAll(io.LimitReader(resp.Body, 320))
 		if preview := strings.TrimSpace(string(responsePreview)); preview == "" {
@@ -782,7 +840,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	}
 
 	// API Key 探测在收到首个有效文本后即可确认模型可用，不等待上游完成整段生成。
-	return s.processOpenAIStream(c, resp.Body, credentialAccount.Type == AccountTypeAPIKey)
+	return s.processOpenAIStream(c, resp.Body, credentialAccount.Type == AccountTypeAPIKey, credentialAccount)
 }
 
 // testGrokAccountConnection tests a Grok OAuth or API-key account through xAI's Responses API.
@@ -901,7 +959,7 @@ func (s *AccountTestService) testGrokAccountConnection(c *gin.Context, account *
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Grok Responses API returned %d: %s", resp.StatusCode, string(body)))
 	}
 
-	return s.processOpenAIStream(c, resp.Body, false)
+	return s.processOpenAIStream(c, resp.Body, false, account)
 }
 
 // testOpenAIChatCompletionsConnection tests an OpenAI-compatible APIKey account
@@ -948,6 +1006,9 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 
 	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 	if err != nil {
+		if account.IsDeepSeek() {
+			return s.sendErrorAndEnd(c, fmt.Sprintf("通过 /v1/chat/completions 测试 DeepSeek 连接失败：无法连接上游服务，请检查 DeepSeek Base URL、代理和网络配置。原始技术详情：%s", deepSeekAccountTestErrorDetail(account, err.Error())))
+		}
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Chat Completions API (/v1/chat/completions) request failed: %s", err.Error()))
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -961,11 +1022,14 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 			errMsg := fmt.Sprintf("Chat Completions authentication failed (401): %s", string(body))
 			_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
 		}
+		if account.IsDeepSeek() {
+			return s.sendErrorAndEnd(c, fmt.Sprintf("通过 /v1/chat/completions 测试 DeepSeek 连接失败：上游返回 HTTP %d，请检查 API Key、模型权限和 Chat Completions 接口兼容性。原始技术详情：%s", resp.StatusCode, deepSeekAccountTestErrorDetail(account, string(body))))
+		}
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Chat Completions API (/v1/chat/completions) returned %d: %s", resp.StatusCode, string(body)))
 	}
 
 	// Chat Completions 连通性测试同样以首个有效文本作为成功条件。
-	return s.processOpenAIChatCompletionsStream(c, resp.Body, true)
+	return s.processOpenAIChatCompletionsStream(c, resp.Body, true, account)
 }
 
 // testOpenAICompactConnection probes /responses/compact and persists the
@@ -1653,7 +1717,9 @@ func (s *AccountTestService) processClaudeStream(c *gin.Context, body io.Reader)
 
 // processOpenAIChatCompletionsStream processes SSE chunks from the
 // OpenAI-compatible Chat Completions API.
-func (s *AccountTestService) processOpenAIChatCompletionsStream(c *gin.Context, body io.Reader, completeOnFirstText bool) error {
+func (s *AccountTestService) processOpenAIChatCompletionsStream(c *gin.Context, body io.Reader, completeOnFirstText bool, account *Account) error {
+	// deepSeekAccount 仅用于为 DeepSeek 测试保留中文诊断信息，不改变其他平台文案。
+	deepSeekAccount := firstDeepSeekAccount(account)
 	reader := bufio.NewReader(body)
 	seenJSON := false
 	seenFinish := false
@@ -1668,9 +1734,18 @@ func (s *AccountTestService) processOpenAIChatCompletionsStream(c *gin.Context, 
 					return nil
 				}
 				if seenJSON {
+					if deepSeekAccount != nil {
+						return s.sendErrorAndEnd(c, "DeepSeek Chat Completions 流在收到响应后提前结束，原始技术详情：缺少 data: [DONE]")
+					}
 					return s.sendErrorAndEnd(c, "Chat Completions stream from /v1/chat/completions ended before [DONE]")
 				}
+				if deepSeekAccount != nil {
+					return s.sendErrorAndEnd(c, "DeepSeek Chat Completions 响应解析失败：未收到有效的 SSE JSON 数据，原始技术详情：EOF")
+				}
 				return s.sendErrorAndEnd(c, "Invalid Chat Completions response from /v1/chat/completions: expected SSE JSON data")
+			}
+			if deepSeekAccount != nil {
+				return s.sendErrorAndEnd(c, fmt.Sprintf("DeepSeek Chat Completions 流读取失败，请检查上游响应格式。原始技术详情：%s", deepSeekAccountTestErrorDetail(deepSeekAccount, err.Error())))
 			}
 			return s.sendErrorAndEnd(c, fmt.Sprintf("Chat Completions stream read error from /v1/chat/completions: %s", err.Error()))
 		}
@@ -1689,11 +1764,17 @@ func (s *AccountTestService) processOpenAIChatCompletionsStream(c *gin.Context, 
 
 		var data map[string]any
 		if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+			if deepSeekAccount != nil {
+				return s.sendErrorAndEnd(c, fmt.Sprintf("DeepSeek Chat Completions 响应解析失败：上游返回的 SSE 数据不是有效 JSON。原始技术详情：%s", deepSeekAccountTestErrorDetail(deepSeekAccount, err.Error())))
+			}
 			return s.sendErrorAndEnd(c, "Invalid Chat Completions response from /v1/chat/completions: expected JSON data")
 		}
 		seenJSON = true
 
 		if errData, ok := data["error"].(map[string]any); ok {
+			if deepSeekAccount != nil {
+				return s.sendErrorAndEnd(c, fmt.Sprintf("DeepSeek Chat Completions 返回上游错误，请检查模型、API Key 和请求参数。原始技术详情：%s", deepSeekAccountTestErrorDetail(deepSeekAccount, string(jsonStr))))
+			}
 			errorMsg := "Chat Completions API (/v1/chat/completions) returned an error"
 			if msg, ok := errData["message"].(string); ok && msg != "" {
 				errorMsg = msg
@@ -1738,7 +1819,9 @@ func (s *AccountTestService) processOpenAIChatCompletionsStream(c *gin.Context, 
 }
 
 // processOpenAIStream processes the SSE stream from OpenAI Responses API
-func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader, completeOnFirstText bool) error {
+func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader, completeOnFirstText bool, account *Account) error {
+	// deepSeekAccount 仅用于为 DeepSeek Responses 测试保留中文诊断信息。
+	deepSeekAccount := firstDeepSeekAccount(account)
 	reader := bufio.NewReader(body)
 	seenCompleted := false
 
@@ -1750,7 +1833,13 @@ func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader,
 					s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
 					return nil
 				}
+				if deepSeekAccount != nil {
+					return s.sendErrorAndEnd(c, "DeepSeek Responses 流响应解析失败：结束前未收到 response.completed，原始技术详情：EOF")
+				}
 				return s.sendErrorAndEnd(c, "Stream ended before response.completed")
+			}
+			if deepSeekAccount != nil {
+				return s.sendErrorAndEnd(c, fmt.Sprintf("DeepSeek Responses 流读取失败，请检查上游响应格式。原始技术详情：%s", deepSeekAccountTestErrorDetail(deepSeekAccount, err.Error())))
 			}
 			return s.sendErrorAndEnd(c, fmt.Sprintf("Stream read error: %s", err.Error()))
 		}
@@ -1771,6 +1860,9 @@ func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader,
 
 		var data map[string]any
 		if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+			if deepSeekAccount != nil {
+				return s.sendErrorAndEnd(c, fmt.Sprintf("DeepSeek Responses 响应解析失败：上游返回的 SSE 数据不是有效 JSON。原始技术详情：%s", deepSeekAccountTestErrorDetail(deepSeekAccount, err.Error())))
+			}
 			continue
 		}
 
@@ -1787,10 +1879,13 @@ func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader,
 					return nil
 				}
 			}
-		case "response.completed", "response.done":
+		case "response.completed", "response.done", "response.incomplete":
 			s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
 			return nil
 		case "response.failed":
+			if deepSeekAccount != nil {
+				return s.sendErrorAndEnd(c, fmt.Sprintf("DeepSeek Responses 返回失败，请检查模型权限和请求参数。原始技术详情：%s", deepSeekAccountTestErrorDetail(deepSeekAccount, string(jsonStr))))
+			}
 			errorMsg := "OpenAI response failed"
 			if responseData, ok := data["response"].(map[string]any); ok {
 				if errData, ok := responseData["error"].(map[string]any); ok {
@@ -1801,6 +1896,9 @@ func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader,
 			}
 			return s.sendErrorAndEnd(c, errorMsg)
 		case "error":
+			if deepSeekAccount != nil {
+				return s.sendErrorAndEnd(c, fmt.Sprintf("DeepSeek Responses 返回上游错误，请检查 API Key、模型权限和请求参数。原始技术详情：%s", deepSeekAccountTestErrorDetail(deepSeekAccount, string(jsonStr))))
+			}
 			errorMsg := "Unknown error"
 			if errData, ok := data["error"].(map[string]any); ok {
 				if msg, ok := errData["message"].(string); ok {
@@ -2030,6 +2128,66 @@ func (s *AccountTestService) testOpenAIImageOAuth(c *gin.Context, ctx context.Co
 		})
 	}
 
+	s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+	return nil
+}
+
+// firstDeepSeekAccount 返回可选参数中的 DeepSeek 账号，用于只对 DeepSeek 定制诊断文案。
+func firstDeepSeekAccount(accounts ...*Account) *Account {
+	for _, account := range accounts {
+		if account != nil && account.IsDeepSeek() {
+			return account
+		}
+	}
+	return nil
+}
+
+// deepSeekAccountTestErrorDetail 保留上游技术详情，同时移除当前账号 API Key。
+func deepSeekAccountTestErrorDetail(account *Account, detail string) string {
+	detail = strings.TrimSpace(detail)
+	if account != nil {
+		apiKey := strings.TrimSpace(account.GetCredential("api_key"))
+		if apiKey != "" {
+			detail = strings.ReplaceAll(detail, apiKey, "[REDACTED_API_KEY]")
+		}
+	}
+	if detail == "" {
+		return "（上游未返回技术详情）"
+	}
+	return detail
+}
+
+// deepSeekAccountTestMissingAPIKeyMessage 说明 DeepSeek API Key 的实际配置字段。
+func deepSeekAccountTestMissingAPIKeyMessage() string {
+	return "DeepSeek API Key 未配置：请在 credentials.api_key 中填写 API Key。"
+}
+
+// deepSeekAccountTestBaseURLError 将 Base URL 校验错误转换为中文说明并保留底层详情。
+func deepSeekAccountTestBaseURLError(account *Account, err error) string {
+	detail := ""
+	if err != nil {
+		detail = err.Error()
+	}
+	return fmt.Sprintf("DeepSeek Base URL 无效：请检查 credentials.base_url、URL 格式和安全白名单配置。原始技术详情：%s", deepSeekAccountTestErrorDetail(account, detail))
+}
+
+// processDeepSeekResponsesBody 校验 DeepSeek Responses API 的非流式诊断响应。
+func (s *AccountTestService) processDeepSeekResponsesBody(c *gin.Context, body io.Reader, account *Account) error {
+	responseBody, err := io.ReadAll(body)
+	if err != nil {
+		return s.sendErrorAndEnd(c, fmt.Sprintf("DeepSeek Responses 响应读取失败：无法读取上游响应。原始技术详情：%s", deepSeekAccountTestErrorDetail(account, err.Error())))
+	}
+
+	var responsePayload any
+	if err := json.Unmarshal(responseBody, &responsePayload); err != nil {
+		return s.sendErrorAndEnd(c, fmt.Sprintf("DeepSeek Responses 响应解析失败：上游返回的内容不是有效 JSON。原始技术详情：%s；上游响应：%s", deepSeekAccountTestErrorDetail(account, err.Error()), deepSeekAccountTestErrorDetail(account, string(responseBody))))
+	}
+
+	preview := strings.TrimSpace(string(responseBody))
+	if len(preview) > 320 {
+		preview = preview[:320] + "..."
+	}
+	s.sendEvent(c, TestEvent{Type: "content", Text: fmt.Sprintf("DeepSeek Responses 诊断响应：%s", deepSeekAccountTestErrorDetail(account, preview))})
 	s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
 	return nil
 }

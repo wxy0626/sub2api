@@ -73,8 +73,17 @@
         </template>
 
         <template #cell-reasoning_effort="{ row }">
-          <span class="text-sm text-gray-900 dark:text-white">
+          <span class="inline-flex items-center gap-1 text-sm text-gray-900 dark:text-white">
             {{ formatReasoningEffort(row.reasoning_effort) }}
+            <Icon
+              v-if="normalizeUsageServiceTier(row.service_tier) === 'priority'"
+              name="bolt"
+              size="xs"
+              class="text-amber-500 dark:text-amber-400"
+              title="GPT 快速模式"
+              aria-label="GPT 快速模式"
+              data-testid="reasoning-fast-marker"
+            />
           </span>
         </template>
 
@@ -108,6 +117,10 @@
           <span class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium" :class="getBillingModeBadgeClass(getDisplayBillingMode(row))">
             {{ getBillingModeLabel(getDisplayBillingMode(row), t) }}
           </span>
+        </template>
+
+        <template #cell-request_size="{ row }">
+          <span data-testid="request-size-cell" class="text-sm tabular-nums text-gray-900 dark:text-white">{{ formatRequestSize(row) }}</span>
         </template>
 
         <template #cell-tokens="{ row }">
@@ -466,7 +479,7 @@ import { useI18n } from 'vue-i18n'
 import { formatDateTime, formatReasoningEffort } from '@/utils/format'
 import { formatCacheTokens, formatMultiplier } from '@/utils/formatters'
 import { formatTokenPricePerMillion } from '@/utils/usagePricing'
-import { getUsageServiceTierLabel } from '@/utils/usageServiceTier'
+import { getUsageServiceTierLabel, normalizeUsageServiceTier } from '@/utils/usageServiceTier'
 import { resolveUsageRequestType } from '@/utils/usageRequestType'
 import {
   LATENCY_BAR_CLASSES,
@@ -513,6 +526,9 @@ import Icon from '@/components/icons/Icon.vue'
 import { fetchBatch, getEntry } from '@/utils/ipGeoLookup'
 import type { AdminUsageLog } from '@/types'
 import type { Column } from '@/components/common/types'
+
+// 请求大小字段使用字节，前端统一按二进制 MiB 展示。
+const BYTES_PER_MIB = 1024 * 1024
 
 interface Props {
   data: AdminUsageLog[]
@@ -598,6 +614,20 @@ const getRequestTypeBadgeClass = (row: AdminUsageLog): string => {
   if (requestType === 'stream') return 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200'
   if (requestType === 'sync') return 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200'
   return 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200'
+}
+
+// 将请求大小格式化为唯一的“当前/最大MiB”单元格。
+const formatRequestSize = (row: Pick<AdminUsageLog, 'request_body_bytes' | 'max_request_body_bytes'>): string => {
+  const requestBytes = row.request_body_bytes
+  const maxRequestBytes = row.max_request_body_bytes
+  if (requestBytes == null || maxRequestBytes == null) return '-'
+  if (!Number.isFinite(requestBytes) || !Number.isFinite(maxRequestBytes) || requestBytes < 0 || maxRequestBytes < 0) {
+    return '-'
+  }
+
+  // 保留最多两位小数，并移除整数值末尾多余的零。
+  const formatMiB = (bytes: number): string => (bytes / BYTES_PER_MIB).toFixed(2).replace(/\.?0+$/, '')
+  return `${formatMiB(requestBytes)}/${formatMiB(maxRequestBytes)}MiB`
 }
 
 

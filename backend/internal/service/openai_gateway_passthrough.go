@@ -19,6 +19,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 	"go.uber.org/zap"
@@ -330,6 +331,18 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	body []byte,
 	token string,
 ) (*http.Request, error) {
+	// 透传 OAuth/API Key 可能在入口后再次归一化 input；请求构建前再清理一次，
+	// 确保实际写入 HTTP body 的字节不含非法 reasoning item ID。
+	if account != nil && account.Platform == PlatformOpenAI {
+		sanitizedBody, changed, sanitizeErr := sanitizeOpenAIResponsesInputItemIDs(body)
+		if sanitizeErr != nil {
+			return nil, fmt.Errorf("sanitize OpenAI Responses input item IDs before passthrough request: %w", sanitizeErr)
+		}
+		if changed {
+			body = sanitizedBody
+		}
+	}
+
 	targetURL := openaiPlatformAPIURL
 	switch account.Type {
 	case AccountTypeOAuth:
@@ -556,6 +569,110 @@ func writeOpenAIPassthroughErrorEnvelope(c *gin.Context, downstreamStatus int, u
 	c.Data(downstreamStatus, "application/json; charset=utf-8", body)
 }
 
+// appendOpenAIContextWindowPassthroughError 记录透传上下文超限事件，供 HTTP 错误路径复用。
+func appendOpenAIContextWindowPassthroughError(c *gin.Context, account *Account, resp *http.Response, upstreamMsg, upstreamDetail string) {
+	if c == nil || resp == nil {
+		return
+	}
+	event := OpsUpstreamErrorEvent{
+		Platform:             PlatformOpenAI,
+		UpstreamStatusCode:   resp.StatusCode,
+		UpstreamRequestID:    resp.Header.Get("x-request-id"),
+		Passthrough:          true,
+		Kind:                 "http_error",
+		Message:              upstreamMsg,
+		Detail:               upstreamDetail,
+		UpstreamResponseBody: upstreamDetail,
+	}
+	if account != nil {
+		event.Platform = account.Platform
+		event.AccountID = account.ID
+		event.AccountName = account.Name
+	}
+	appendOpsUpstreamError(c, event)
+}
+
+// writeOpenAIContextWindowPassthroughError 统一回写上下文超限错误；compact 心跳已经
+// 提交 200 时改用标准 response.failed 终止事件，避免再写 JSON 造成响应协议混杂。
+func writeOpenAIContextWindowPassthroughError(c *gin.Context, upstreamHeaders http.Header, upstreamMsg string) {
+	if c == nil {
+		return
+	}
+	message := openAIContextWindowClientMessage(upstreamMsg)
+	if openAICompactClientWantsStream(c) && StopOpenAICompactSSEKeepaliveCommitted(c) {
+		MarkResponseCommitted(c)
+		writeOpenAIContextWindowSSEFailure(c, message)
+		return
+	}
+
+	MarkResponseCommitted(c)
+	writeOpenAIPassthroughErrorHeaders(c.Writer.Header(), upstreamHeaders)
+	c.JSON(http.StatusBadRequest, gin.H{
+		"error": gin.H{
+			"type":    openAIContextWindowClientErrorType,
+			"code":    openAIContextWindowClientErrorCode,
+			"message": message,
+		},
+	})
+}
+
+// writeOpenAIContextWindowSSEFailure 写出带标准 type/code 的流内上下文超限终止事件。
+func writeOpenAIContextWindowSSEFailure(c *gin.Context, message string) {
+	if c == nil {
+		return
+	}
+	// 流式响应一旦写出该终止事件，就已经向客户端提交了响应；统一记录
+	// committed 状态，避免外层继续尝试写 JSON 或执行换号。
+	MarkResponseCommitted(c)
+	MarkOpsStreamError(c, openAIContextWindowClientErrorCode, message, http.StatusBadRequest)
+	payload, err := json.Marshal(gin.H{
+		"type": "response.failed",
+		"response": gin.H{
+			"id":     "resp_" + strings.ReplaceAll(uuid.NewString(), "-", ""),
+			"object": "response",
+			"status": "failed",
+			"output": []any{},
+			"error": gin.H{
+				"type":    openAIContextWindowClientErrorType,
+				"code":    openAIContextWindowClientErrorCode,
+				"message": message,
+			},
+		},
+	})
+	if err != nil {
+		return
+	}
+	_, _ = c.Writer.Write([]byte("event: response.failed\ndata: "))
+	_, _ = c.Writer.Write(payload)
+	_, _ = c.Writer.Write([]byte("\n\n"))
+	c.Writer.Flush()
+}
+
+// normalizeOpenAIContextWindowStreamFailedEvent 为 Responses 流内上下文超限事件补齐
+// 标准 type/code，并保留中文处理建议与上游原始英文详情。
+func normalizeOpenAIContextWindowStreamFailedEvent(payload []byte, failedMessage string) ([]byte, bool) {
+	if len(payload) == 0 || !gjson.ValidBytes(payload) || !isOpenAIContextWindowError(failedMessage, payload) {
+		return payload, false
+	}
+	errorPath := "error"
+	if gjson.GetBytes(payload, "response").Exists() {
+		errorPath = "response.error"
+	}
+	updated, err := sjson.SetBytes(payload, errorPath+".type", openAIContextWindowClientErrorType)
+	if err != nil {
+		return payload, false
+	}
+	updated, err = sjson.SetBytes(updated, errorPath+".code", openAIContextWindowClientErrorCode)
+	if err != nil {
+		return payload, false
+	}
+	updated, err = sjson.SetBytes(updated, errorPath+".message", openAIContextWindowClientMessage(failedMessage))
+	if err != nil {
+		return payload, false
+	}
+	return updated, !bytes.Equal(updated, payload)
+}
+
 func (s *OpenAIGatewayService) handleFailoverErrorResponsePassthrough(
 	ctx context.Context,
 	resp *http.Response,
@@ -578,6 +695,11 @@ func (s *OpenAIGatewayService) handleFailoverErrorResponsePassthrough(
 	}
 	setOpsUpstreamError(c, resp.StatusCode, upstreamMsg, upstreamDetail)
 	logOpenAIInstructionsRequiredDebug(ctx, c, account, resp.StatusCode, upstreamMsg, requestBody, body)
+	if isOpenAIContextWindowError(upstreamMsg, body) {
+		appendOpenAIContextWindowPassthroughError(c, account, resp, upstreamMsg, upstreamDetail)
+		writeOpenAIContextWindowPassthroughError(c, resp.Header, upstreamMsg)
+		return fmt.Errorf("upstream context window exceeded: %s", upstreamMsg)
+	}
 	reqModel, _, _ := extractOpenAIRequestMetaFromBody(requestBody)
 	canonicalModel := canonicalOpenAIAccountSchedulingModel(account, reqModel)
 	shouldDisable := s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, body, canonicalModel)
@@ -638,6 +760,11 @@ func (s *OpenAIGatewayService) handleErrorResponsePassthrough(
 	}
 	setOpsUpstreamError(c, resp.StatusCode, upstreamMsg, upstreamDetail)
 	logOpenAIInstructionsRequiredDebug(ctx, c, account, resp.StatusCode, upstreamMsg, requestBody, body)
+	if !cyberHit && isOpenAIContextWindowError(upstreamMsg, body) {
+		appendOpenAIContextWindowPassthroughError(c, account, resp, upstreamMsg, upstreamDetail)
+		writeOpenAIContextWindowPassthroughError(c, resp.Header, upstreamMsg)
+		return fmt.Errorf("upstream context window exceeded: %s", upstreamMsg)
+	}
 	// 错误体虽不会原样透传，运行态账号状态仍需更新，避免粘性路由继续复用
 	// 刚被限流的账号。cyber 例外：不冷却账号。
 	if !cyberHit {
@@ -1093,7 +1220,8 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 						UpstreamOutTok: usage.OutputTokens,
 					})
 				}
-				if !openAIStreamClientOutputStarted(c, clientOutputStarted) {
+				clientOutputStartedForError := openAIStreamClientOutputStarted(c, clientOutputStarted)
+				if !clientOutputStartedForError {
 					if status, errType, errMsg, matched := applyOpenAIStreamFailedErrorPassthroughRule(c, account.Platform, dataBytes, failedMessage); matched {
 						// 命中透传规则也要记录 ops 上游错误事件（对齐 CC/Messages 与
 						// antigravity 先例），否则透传命中的 failed 在监控中不可见。
@@ -1108,9 +1236,24 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 						})
 						return resultWithUsage(), fmt.Errorf("upstream response failed: passthrough rule matched message=%s", errMsg)
 					}
+					if isOpenAIContextWindowError(failedMessage, dataBytes) {
+						s.recordOpenAIStreamUpstreamError(c, account, true, upstreamRequestID, "http_error", dataBytes, openAIContextWindowClientMessage(failedMessage))
+						// 上游已经选择了 SSE 的 response.failed 协议；即使此前只有
+						// response.created 等待中的前导事件，也不能改写成 JSON。
+						writeOpenAIContextWindowSSEFailure(c, openAIContextWindowClientMessage(failedMessage))
+						return resultWithUsage(), fmt.Errorf("upstream response failed: %s", failedMessage)
+					}
 					if openAIStreamFailedEventShouldFailover(dataBytes, failedMessage) {
 						return resultWithUsage(),
 							s.newOpenAIStreamFailoverError(c, account, true, upstreamRequestID, dataBytes, failedMessage)
+					}
+				}
+				if clientOutputStartedForError && isOpenAIContextWindowError(failedMessage, dataBytes) {
+					if normalizedData, normalized := normalizeOpenAIContextWindowStreamFailedEvent(dataBytes, failedMessage); normalized {
+						dataBytes = normalizedData
+						trimmedData = strings.TrimSpace(string(normalizedData))
+						line = "data: " + string(normalizedData)
+						failedMessage = openAIContextWindowClientMessage(failedMessage)
 					}
 				}
 				forceFlushFailedEvent = true

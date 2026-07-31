@@ -273,6 +273,37 @@ func IsOpenAIResponsesCompactPathForTest(c *gin.Context) bool {
 	return isOpenAIResponsesCompactPath(c)
 }
 
+// IsOpenAIResponsesRemoteCompactionV2Request 判断尚未提升路径的 native
+// remote_compaction_v2 请求。请求必须同时具备裸 /responses、stream=true、
+// beta feature 标记和 compaction_trigger，避免把普通 Responses 请求误判为压缩请求。
+func IsOpenAIResponsesRemoteCompactionV2Request(c *gin.Context, body []byte) bool {
+	if c == nil || c.Request == nil || c.Request.URL == nil {
+		return false
+	}
+	normalizedPath := strings.TrimRight(strings.TrimSpace(c.Request.URL.Path), "/")
+	stream := gjson.GetBytes(body, "stream")
+	if !strings.HasSuffix(normalizedPath, "/responses") || stream.Type != gjson.True || !HasCompactionTriggerInInput(body) {
+		return false
+	}
+	for _, header := range c.Request.Header.Values("x-codex-beta-features") {
+		for _, feature := range strings.Split(header, ",") {
+			if strings.EqualFold(strings.TrimSpace(feature), "remote_compaction_v2") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// IsOpenAICompactionRequest 判断本次请求是否属于会话压缩协议；显式 compact
+// 路径和尚未提升的 native 信号都禁止进入 Responses -> Chat fallback。
+func IsOpenAICompactionRequest(c *gin.Context, body []byte) bool {
+	if isOpenAIResponsesCompactPath(c) {
+		return true
+	}
+	return IsOpenAIResponsesRemoteCompactionV2Request(c, body)
+}
+
 func OpenAICompactSessionSeedKeyForTest() string {
 	return openAICompactSessionSeedKey
 }

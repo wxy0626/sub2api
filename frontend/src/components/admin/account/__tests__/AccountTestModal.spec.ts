@@ -110,6 +110,97 @@ describe('AccountTestModal', () => {
     }))
   })
 
+  it('DeepSeek 的 V4 Flash 默认显示 Responses 并发送 responses 模式', async () => {
+    getAvailableModels.mockResolvedValue([
+      { id: 'deepseek-chat', type: 'model', display_name: 'deepseek-chat' },
+      { id: 'deepseek-v4-flash', type: 'model', display_name: 'deepseek-v4-flash' }
+    ])
+    const wrapper = mount(AccountTestModal, {
+      props: {
+        show: false,
+        account: { id: 46, name: 'DeepSeek API Key', platform: 'deepseek', type: 'apikey', status: 'active' } as any
+      },
+      global: {
+        stubs: {
+          BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' },
+          Select: true,
+          TextArea: true,
+          Icon: true
+        }
+      }
+    })
+
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+
+    expect((wrapper.vm as any).testMode).toBe('responses')
+    expect((wrapper.vm as any).testModeOptions.map((option: { value: string }) => option.value)).toEqual(['default', 'responses'])
+    await (wrapper.vm as any).startTest()
+    await flushPromises()
+
+    expect(global.fetch).toHaveBeenCalledWith('/api/v1/admin/accounts/46/test', expect.objectContaining({
+      body: JSON.stringify({ model_id: 'deepseek-v4-flash', prompt: '', mode: 'responses' })
+    }))
+  })
+
+  it('普通 DeepSeek 模型默认发送 Chat Completions 模式', async () => {
+    getAvailableModels.mockResolvedValue([{ id: 'deepseek-chat', type: 'model', display_name: 'deepseek-chat' }])
+    const wrapper = mount(AccountTestModal, {
+      props: {
+        show: false,
+        account: { id: 47, name: 'DeepSeek Chat', platform: 'deepseek', type: 'apikey', status: 'active' } as any
+      },
+      global: {
+        stubs: {
+          BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' },
+          Select: true,
+          TextArea: true,
+          Icon: true
+        }
+      }
+    })
+
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    await (wrapper.vm as any).startTest()
+    await flushPromises()
+
+    expect((wrapper.vm as any).testMode).toBe('default')
+    expect(global.fetch).toHaveBeenCalledWith('/api/v1/admin/accounts/47/test', expect.objectContaining({
+      body: JSON.stringify({ model_id: 'deepseek-chat', prompt: '', mode: 'default' })
+    }))
+  })
+
+  it('Grok API Key 测试下拉直接使用管理端返回的上游白名单', async () => {
+    getAvailableModels.mockResolvedValue([
+      { id: 'grok-live-only', type: 'model', display_name: 'grok-live-only' },
+      { id: 'grok-4.5', type: 'model', display_name: 'grok-4.5' }
+    ])
+    const wrapper = mount(AccountTestModal, {
+      props: {
+        show: false,
+        account: { id: 60, name: 'Grok API Key', platform: 'grok', type: 'apikey', status: 'active' } as any
+      },
+      global: {
+        stubs: {
+          BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' },
+          Select: true,
+          TextArea: true,
+          Icon: true
+        }
+      }
+    })
+
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+
+    expect((wrapper.vm as any).availableModels.map((model: { id: string }) => model.id)).toEqual([
+      'grok-live-only',
+      'grok-4.5'
+    ])
+    expect((wrapper.vm as any).selectedModelId).toBe('grok-live-only')
+  })
+
   it('打开时读取保存的模式，切换后立即保存并回传完整账号', async () => {
     const account = {
       id: 44,

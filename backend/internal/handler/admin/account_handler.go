@@ -11,6 +11,7 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -28,6 +29,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/Wei-Shaw/sub2api/internal/util/logredact"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/sync/errgroup"
@@ -1113,13 +1115,13 @@ type TestAccountRequest struct {
 
 const accountTestModeExtraKey = "account_test_mode"
 
-// UpdateAccountTestModeRequest 仅接收管理员模型测试使用的 OpenAI 请求模式。
+// UpdateAccountTestModeRequest 接收管理员模型测试使用的 OpenAI 或 DeepSeek 请求模式。
 // 独立接口避免通用账号更新误覆盖 Extra 中的运行态数据。
 type UpdateAccountTestModeRequest struct {
 	Mode string `json:"mode" binding:"required,oneof=default responses compact workspace"`
 }
 
-// UpdateTestMode 保存 OpenAI 账号的模型测试模式。
+// UpdateTestMode 保存 OpenAI 或 DeepSeek 账号的模型测试模式。
 // PUT /api/v1/admin/accounts/:id/test-mode
 func (h *AccountHandler) UpdateTestMode(c *gin.Context) {
 	// 账号ID必须为正整数，避免把无效路径参数传入服务层。
@@ -1141,12 +1143,16 @@ func (h *AccountHandler) UpdateTestMode(c *gin.Context) {
 		response.ErrorWithDetails(c, statusCode, "保存模型测试模式失败：未能读取账号，请确认账号仍存在并刷新后重试。技术详情："+err.Error(), status.Reason, status.Metadata)
 		return
 	}
-	if account == nil || account.Platform != service.PlatformOpenAI {
+	if account == nil || (account.Platform != service.PlatformOpenAI && account.Platform != service.PlatformDeepSeek) {
 		platform := "unknown"
 		if account != nil {
 			platform = account.Platform
 		}
-		response.BadRequest(c, "保存模型测试模式失败：仅 OpenAI 账号支持该设置，请在 OpenAI 账号中使用模型测试。技术详情：account platform is "+platform)
+		response.BadRequest(c, "保存模型测试模式失败：仅 OpenAI 或 DeepSeek 账号支持该设置，请在支持的平台账号中使用模型测试。技术详情：account platform is "+platform)
+		return
+	}
+	if account.Platform == service.PlatformDeepSeek && req.Mode != "default" && req.Mode != "responses" {
+		response.BadRequest(c, "保存模型测试模式失败：DeepSeek 账号仅支持 default 或 responses 模式，请重新选择后重试。技术详情：account platform is deepseek; requested mode is "+req.Mode)
 		return
 	}
 
@@ -2561,6 +2567,7 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 
 	// Handle Grok accounts
 	if account.Platform == service.PlatformGrok {
+		// defaultModels 是 Grok OAuth 账号在没有实时模型目录时继续使用的静态模型集。
 		defaultModels := xai.DefaultModels()
 
 		hasExplicitMapping := false
@@ -2569,6 +2576,32 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 			hasExplicitMapping = len(rawMapping) > 0
 		case map[string]string:
 			hasExplicitMapping = len(rawMapping) > 0
+		}
+		if account.Type == service.AccountTypeAPIKey && !hasExplicitMapping {
+			// upstreamModelIDs 是 Grok API Key 实时目录，也是首次模型测试下拉的唯一来源。
+			if h.accountTestService == nil {
+				respondUpstreamModelSyncError(c, "Grok", account, &service.UpstreamModelSyncError{
+					Kind:    service.UpstreamModelSyncErrorConfiguration,
+					Message: "Grok 模型同步服务未配置，请联系管理员检查服务初始化",
+				})
+				return
+			}
+			upstreamModelIDs, syncErr := h.accountTestService.FetchUpstreamSupportedModels(c.Request.Context(), account)
+			if syncErr != nil {
+				respondUpstreamModelSyncError(c, "Grok", account, syncErr)
+				return
+			}
+			models := make([]xai.Model, 0, len(upstreamModelIDs))
+			for _, modelID := range upstreamModelIDs {
+				models = append(models, xai.Model{
+					ID:          modelID,
+					Object:      "model",
+					OwnedBy:     "xai",
+					DisplayName: modelID,
+				})
+			}
+			response.Success(c, models)
+			return
 		}
 		if !hasExplicitMapping {
 			response.Success(c, defaultModels)
@@ -2586,6 +2619,7 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 			defaultByID[model.ID] = model
 		}
 
+		// requestedModels 保存管理员配置的模型别名，并在返回前排序以稳定接口顺序。
 		requestedModels := make([]string, 0, len(mapping))
 		for requestedModel := range mapping {
 			requestedModels = append(requestedModels, requestedModel)
@@ -2606,6 +2640,42 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 			})
 		}
 		response.Success(c, models)
+		return
+	}
+
+	// Handle DeepSeek API Key accounts
+	if account.Platform == service.PlatformDeepSeek {
+		// GetModelMapping 可能包含服务层生成的默认映射，因此这里单独判断是否配置了显式映射。
+		hasExplicitMapping := false
+		switch rawMapping := account.Credentials["model_mapping"].(type) {
+		case map[string]any:
+			hasExplicitMapping = len(rawMapping) > 0
+		case map[string]string:
+			hasExplicitMapping = len(rawMapping) > 0
+		}
+
+		if !hasExplicitMapping {
+			if h.accountTestService == nil {
+				response.Error(c, http.StatusInternalServerError, "获取 DeepSeek 上游模型失败：后端模型同步服务未配置，请联系管理员检查服务初始化。原始技术详情：account test service is not configured")
+				return
+			}
+
+			modelIDs, syncErr := h.accountTestService.FetchUpstreamSupportedModels(c.Request.Context(), account)
+			if syncErr != nil {
+				respondDeepSeekAvailableModelsError(c, account, syncErr)
+				return
+			}
+			response.Success(c, buildDeepSeekAvailableModels(modelIDs))
+			return
+		}
+
+		mapping := account.GetModelMapping()
+		requestedModels := make([]string, 0, len(mapping))
+		for requestedModel := range mapping {
+			requestedModels = append(requestedModels, requestedModel)
+		}
+		sort.Strings(requestedModels)
+		response.Success(c, buildDeepSeekAvailableModels(requestedModels))
 		return
 	}
 
@@ -2650,6 +2720,80 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 	response.Success(c, models)
 }
 
+// buildDeepSeekAvailableModels 将 DeepSeek 模型 ID 转换为管理端统一的模型对象格式。
+func buildDeepSeekAvailableModels(modelIDs []string) []claude.Model {
+	models := make([]claude.Model, 0, len(modelIDs))
+	for _, modelID := range modelIDs {
+		models = append(models, claude.Model{
+			ID:          modelID,
+			Type:        "model",
+			DisplayName: modelID,
+			CreatedAt:   "",
+		})
+	}
+	return models
+}
+
+// adminAuthorizationBearerPattern 匹配错误详情中的 Authorization Bearer 凭据值。
+var adminAuthorizationBearerPattern = regexp.MustCompile(`(?i)(\bauthorization\b\s*[:=]\s*bearer\s+)[^\s,;]+`)
+
+// redactUpstreamModelTechnicalDetail 在返回管理员错误前清理账号凭据和常见认证头。
+func redactUpstreamModelTechnicalDetail(detail string, account *service.Account) string {
+	redacted := strings.TrimSpace(detail)
+	if account != nil {
+		for _, credentialKey := range []string{
+			"authorization", "api_key", "apikey", "access_token", "refresh_token",
+			"token", "password", "secret", "cookie",
+		} {
+			credential := strings.TrimSpace(account.GetCredential(credentialKey))
+			if credential != "" {
+				redacted = strings.ReplaceAll(redacted, credential, "***")
+			}
+		}
+	}
+
+	redacted = adminAuthorizationBearerPattern.ReplaceAllString(redacted, `$1***`)
+	return strings.TrimSpace(logredact.RedactText(redacted,
+		"authorization", "cookie", "api_key", "api-key", "apikey",
+		"access_token", "access-token", "refresh_token", "refresh-token",
+		"password", "secret", "token",
+	))
+}
+
+// respondUpstreamModelSyncError 将模型目录同步错误统一转换为中文原因和脱敏技术详情。
+func respondUpstreamModelSyncError(c *gin.Context, platform string, account *service.Account, err error) {
+	statusCode := http.StatusBadGateway
+	message := fmt.Sprintf("获取 %s 上游模型失败：上游 /v1/models 请求未成功，请检查 API Key、Base URL、代理和网络连接。", platform)
+	technicalDetail := "未提供原始技术详情"
+
+	var syncErr *service.UpstreamModelSyncError
+	if errors.As(err, &syncErr) {
+		technicalDetail = syncErr.Error()
+		switch syncErr.Kind {
+		case service.UpstreamModelSyncErrorConfiguration:
+			statusCode = http.StatusBadRequest
+			message = fmt.Sprintf("获取 %s 上游模型失败：账号配置无效，请检查 API Key、账号类型和 Base URL。", platform)
+		case service.UpstreamModelSyncErrorUnsupported:
+			statusCode = http.StatusBadRequest
+			message = fmt.Sprintf("获取 %s 上游模型失败：当前账号类型或平台不支持模型同步，请使用 API Key 账号并检查配置。", platform)
+		}
+	} else if err != nil {
+		technicalDetail = err.Error()
+	}
+
+	// 错误详情可能来自上游或请求链路，返回前统一脱敏，避免泄露凭据。
+	technicalDetail = redactUpstreamModelTechnicalDetail(technicalDetail, account)
+	if technicalDetail == "" {
+		technicalDetail = "未提供原始技术详情"
+	}
+	response.Error(c, statusCode, message+"原始技术详情："+technicalDetail)
+}
+
+// respondDeepSeekAvailableModelsError 保留 DeepSeek 既有调用入口，统一复用模型同步错误处理。
+func respondDeepSeekAvailableModelsError(c *gin.Context, account *service.Account, err error) {
+	respondUpstreamModelSyncError(c, "DeepSeek", account, err)
+}
+
 // SyncUpstreamModels handles syncing live supported models from an account's upstream.
 // POST /api/v1/admin/accounts/:id/models/sync-upstream
 func (h *AccountHandler) SyncUpstreamModels(c *gin.Context) {
@@ -2666,12 +2810,35 @@ func (h *AccountHandler) SyncUpstreamModels(c *gin.Context) {
 	}
 
 	if h.accountTestService == nil {
+		if account.Platform == service.PlatformDeepSeek {
+			respondDeepSeekAvailableModelsError(c, account, &service.UpstreamModelSyncError{
+				Kind:    service.UpstreamModelSyncErrorConfiguration,
+				Message: "DeepSeek 模型同步服务未配置，请联系管理员检查服务初始化",
+			})
+			return
+		}
+		if account.Platform == service.PlatformGrok {
+			respondUpstreamModelSyncError(c, "Grok", account, &service.UpstreamModelSyncError{
+				Kind:    service.UpstreamModelSyncErrorConfiguration,
+				Message: "Grok 模型同步服务未配置，请联系管理员检查服务初始化",
+			})
+			return
+		}
 		response.InternalError(c, "Account test service is not configured")
 		return
 	}
 
 	models, err := h.accountTestService.FetchUpstreamSupportedModels(c.Request.Context(), account)
 	if err != nil {
+		if account.Platform == service.PlatformDeepSeek {
+			respondDeepSeekAvailableModelsError(c, account, err)
+			return
+		}
+		if account.Platform == service.PlatformGrok {
+			respondUpstreamModelSyncError(c, "Grok", account, err)
+			return
+		}
+
 		var syncErr *service.UpstreamModelSyncError
 		if errors.As(err, &syncErr) {
 			switch syncErr.Kind {
@@ -2716,12 +2883,35 @@ func (h *AccountHandler) SyncUpstreamModelsPreview(c *gin.Context) {
 	}
 
 	if h.accountTestService == nil {
+		if req.Platform == service.PlatformDeepSeek {
+			respondDeepSeekAvailableModelsError(c, tempAccount, &service.UpstreamModelSyncError{
+				Kind:    service.UpstreamModelSyncErrorConfiguration,
+				Message: "DeepSeek 模型同步服务未配置，请联系管理员检查服务初始化",
+			})
+			return
+		}
+		if req.Platform == service.PlatformGrok {
+			respondUpstreamModelSyncError(c, "Grok", tempAccount, &service.UpstreamModelSyncError{
+				Kind:    service.UpstreamModelSyncErrorConfiguration,
+				Message: "Grok 模型同步服务未配置，请联系管理员检查服务初始化",
+			})
+			return
+		}
 		response.InternalError(c, "Account test service is not configured")
 		return
 	}
 
 	models, err := h.accountTestService.FetchUpstreamSupportedModels(c.Request.Context(), tempAccount)
 	if err != nil {
+		if req.Platform == service.PlatformDeepSeek {
+			respondDeepSeekAvailableModelsError(c, tempAccount, err)
+			return
+		}
+		if req.Platform == service.PlatformGrok {
+			respondUpstreamModelSyncError(c, "Grok", tempAccount, err)
+			return
+		}
+
 		var syncErr *service.UpstreamModelSyncError
 		if errors.As(err, &syncErr) {
 			switch syncErr.Kind {

@@ -69,7 +69,9 @@ const DataTableStub = {
     <div>
       <div v-for="row in data" :key="row.request_id">
         <slot name="cell-model" :row="row" :value="row.model" />
+        <slot name="cell-reasoning_effort" :row="row" />
         <slot name="cell-billing_mode" :row="row" />
+        <slot name="cell-request_size" :row="row" />
         <slot name="cell-tokens" :row="row" />
         <slot name="cell-cost" :row="row" />
       </div>
@@ -360,6 +362,98 @@ describe('admin UsageTable tooltip', () => {
     expect(text).toContain('Per-image price')
     expect(text).toContain('not recorded')
     expect(text).not.toContain('(2K)')
+  })
+})
+
+describe('admin UsageTable reasoning effort', () => {
+  it('shows the fast marker only for priority service tier', () => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [
+          { request_id: 'req-fast', reasoning_effort: 'high', service_tier: ' fast ' },
+          { request_id: 'req-standard', reasoning_effort: 'high', service_tier: 'standard' },
+          { request_id: 'req-missing', reasoning_effort: 'high', service_tier: null },
+        ],
+        loading: false,
+        columns: [{ key: 'reasoning_effort', label: 'Reasoning effort' }],
+      },
+      global: {
+        stubs: {
+          DataTable: DataTableStub,
+          EmptyState: true,
+          Icon: {
+            props: ['name', 'size'],
+            template: `<svg v-if="name === 'bolt'" data-testid="reasoning-fast-marker" :data-icon-name="name" aria-label="GPT 快速模式" />`,
+          },
+          Teleport: true,
+        },
+      },
+    })
+
+    const markers = wrapper.findAll('[data-testid="reasoning-fast-marker"]')
+    expect(markers).toHaveLength(1)
+    expect(markers[0].attributes('data-icon-name')).toBe('bolt')
+    expect(markers[0].attributes('aria-label')).toBe('GPT 快速模式')
+  })
+})
+
+describe('admin UsageTable request size', () => {
+  it('renders request and maximum body bytes as one MiB value', () => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [{
+          request_id: 'req-size-1',
+          request_body_bytes: 9591594,
+          max_request_body_bytes: 256 * 1024 * 1024,
+        }],
+        loading: false,
+        columns: [{ key: 'request_size', label: 'Request Size' }],
+      },
+      global: {
+        stubs: {
+          DataTable: DataTableStub,
+          EmptyState: true,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+
+    const requestSizeCell = wrapper.get('[data-testid="request-size-cell"]')
+    expect(requestSizeCell.text()).toBe('9.15/256MiB')
+    expect(wrapper.findAll('[data-testid="request-size-cell"]')).toHaveLength(1)
+    expect(requestSizeCell.text()).not.toContain('%')
+  })
+
+  it('renders a dash when either request size field is missing', () => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [
+          {
+            request_id: 'req-size-missing-request',
+            request_body_bytes: null,
+            max_request_body_bytes: 256 * 1024 * 1024,
+          },
+          {
+            request_id: 'req-size-missing-max',
+            request_body_bytes: 9591594,
+            max_request_body_bytes: null,
+          },
+        ],
+        loading: false,
+        columns: [{ key: 'request_size', label: 'Request Size' }],
+      },
+      global: {
+        stubs: {
+          DataTable: DataTableStub,
+          EmptyState: true,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+
+    expect(wrapper.findAll('[data-testid="request-size-cell"]').map((cell) => cell.text())).toEqual(['-', '-'])
   })
 })
 

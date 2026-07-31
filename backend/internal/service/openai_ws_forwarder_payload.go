@@ -636,7 +636,11 @@ func setOpenAIWSPayloadInputSequence(
 	if marshalErr != nil {
 		return nil, marshalErr
 	}
-	return sjson.SetRawBytes(payload, "input", inputRaw)
+	updatedPayload, err := sjson.SetRawBytes(payload, "input", inputRaw)
+	if err != nil {
+		return nil, err
+	}
+	return updatedPayload, nil
 }
 
 func shouldKeepIngressPreviousResponseID(

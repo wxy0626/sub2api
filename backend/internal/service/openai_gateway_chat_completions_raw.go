@@ -231,6 +231,15 @@ func (s *OpenAIGatewayService) rawChatCompletionsURL(account *Account) (string, 
 		}
 		return targetURL, nil
 	}
+	if account.IsDeepSeek() {
+		// DeepSeek 自定义 Base URL 同样必须经过统一安全校验，避免直转路径绕过 URL allowlist。
+		validatedBaseURL, err := s.validateUpstreamBaseURL(account.GetDeepSeekBaseURL())
+		if err != nil {
+			return "", fmt.Errorf("DeepSeek Base URL 无效，请检查 URL 和安全白名单配置：%w", err)
+		}
+		targetURL := buildOpenAIChatCompletionsURL(validatedBaseURL)
+		return targetURL, nil
+	}
 
 	return s.openAIChatCompletionsTargetURL(account)
 }

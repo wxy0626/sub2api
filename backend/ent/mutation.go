@@ -43162,6 +43162,10 @@ type UsageLogMutation struct {
 	long_context_billing_applied *bool
 	account_rate_multiplier      *float64
 	addaccount_rate_multiplier   *float64
+	request_body_bytes           *int64
+	addrequest_body_bytes        *int64
+	max_request_body_bytes       *int64
+	addmax_request_body_bytes    *int64
 	billing_type                 *int8
 	addbilling_type              *int8
 	stream                       *bool
@@ -44726,6 +44730,146 @@ func (m *UsageLogMutation) ResetAccountRateMultiplier() {
 	delete(m.clearedFields, usagelog.FieldAccountRateMultiplier)
 }
 
+// SetRequestBodyBytes sets the "request_body_bytes" field.
+func (m *UsageLogMutation) SetRequestBodyBytes(i int64) {
+	m.request_body_bytes = &i
+	m.addrequest_body_bytes = nil
+}
+
+// RequestBodyBytes returns the value of the "request_body_bytes" field in the mutation.
+func (m *UsageLogMutation) RequestBodyBytes() (r int64, exists bool) {
+	v := m.request_body_bytes
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRequestBodyBytes returns the old "request_body_bytes" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldRequestBodyBytes(ctx context.Context) (v *int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRequestBodyBytes is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRequestBodyBytes requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRequestBodyBytes: %w", err)
+	}
+	return oldValue.RequestBodyBytes, nil
+}
+
+// AddRequestBodyBytes adds i to the "request_body_bytes" field.
+func (m *UsageLogMutation) AddRequestBodyBytes(i int64) {
+	if m.addrequest_body_bytes != nil {
+		*m.addrequest_body_bytes += i
+	} else {
+		m.addrequest_body_bytes = &i
+	}
+}
+
+// AddedRequestBodyBytes returns the value that was added to the "request_body_bytes" field in this mutation.
+func (m *UsageLogMutation) AddedRequestBodyBytes() (r int64, exists bool) {
+	v := m.addrequest_body_bytes
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearRequestBodyBytes clears the value of the "request_body_bytes" field.
+func (m *UsageLogMutation) ClearRequestBodyBytes() {
+	m.request_body_bytes = nil
+	m.addrequest_body_bytes = nil
+	m.clearedFields[usagelog.FieldRequestBodyBytes] = struct{}{}
+}
+
+// RequestBodyBytesCleared returns if the "request_body_bytes" field was cleared in this mutation.
+func (m *UsageLogMutation) RequestBodyBytesCleared() bool {
+	_, ok := m.clearedFields[usagelog.FieldRequestBodyBytes]
+	return ok
+}
+
+// ResetRequestBodyBytes resets all changes to the "request_body_bytes" field.
+func (m *UsageLogMutation) ResetRequestBodyBytes() {
+	m.request_body_bytes = nil
+	m.addrequest_body_bytes = nil
+	delete(m.clearedFields, usagelog.FieldRequestBodyBytes)
+}
+
+// SetMaxRequestBodyBytes sets the "max_request_body_bytes" field.
+func (m *UsageLogMutation) SetMaxRequestBodyBytes(i int64) {
+	m.max_request_body_bytes = &i
+	m.addmax_request_body_bytes = nil
+}
+
+// MaxRequestBodyBytes returns the value of the "max_request_body_bytes" field in the mutation.
+func (m *UsageLogMutation) MaxRequestBodyBytes() (r int64, exists bool) {
+	v := m.max_request_body_bytes
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldMaxRequestBodyBytes returns the old "max_request_body_bytes" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldMaxRequestBodyBytes(ctx context.Context) (v *int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldMaxRequestBodyBytes is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldMaxRequestBodyBytes requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldMaxRequestBodyBytes: %w", err)
+	}
+	return oldValue.MaxRequestBodyBytes, nil
+}
+
+// AddMaxRequestBodyBytes adds i to the "max_request_body_bytes" field.
+func (m *UsageLogMutation) AddMaxRequestBodyBytes(i int64) {
+	if m.addmax_request_body_bytes != nil {
+		*m.addmax_request_body_bytes += i
+	} else {
+		m.addmax_request_body_bytes = &i
+	}
+}
+
+// AddedMaxRequestBodyBytes returns the value that was added to the "max_request_body_bytes" field in this mutation.
+func (m *UsageLogMutation) AddedMaxRequestBodyBytes() (r int64, exists bool) {
+	v := m.addmax_request_body_bytes
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearMaxRequestBodyBytes clears the value of the "max_request_body_bytes" field.
+func (m *UsageLogMutation) ClearMaxRequestBodyBytes() {
+	m.max_request_body_bytes = nil
+	m.addmax_request_body_bytes = nil
+	m.clearedFields[usagelog.FieldMaxRequestBodyBytes] = struct{}{}
+}
+
+// MaxRequestBodyBytesCleared returns if the "max_request_body_bytes" field was cleared in this mutation.
+func (m *UsageLogMutation) MaxRequestBodyBytesCleared() bool {
+	_, ok := m.clearedFields[usagelog.FieldMaxRequestBodyBytes]
+	return ok
+}
+
+// ResetMaxRequestBodyBytes resets all changes to the "max_request_body_bytes" field.
+func (m *UsageLogMutation) ResetMaxRequestBodyBytes() {
+	m.max_request_body_bytes = nil
+	m.addmax_request_body_bytes = nil
+	delete(m.clearedFields, usagelog.FieldMaxRequestBodyBytes)
+}
+
 // SetBillingType sets the "billing_type" field.
 func (m *UsageLogMutation) SetBillingType(i int8) {
 	m.billing_type = &i
@@ -45773,7 +45917,7 @@ func (m *UsageLogMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UsageLogMutation) Fields() []string {
-	fields := make([]string, 0, 45)
+	fields := make([]string, 0, 47)
 	if m.user != nil {
 		fields = append(fields, usagelog.FieldUserID)
 	}
@@ -45857,6 +46001,12 @@ func (m *UsageLogMutation) Fields() []string {
 	}
 	if m.account_rate_multiplier != nil {
 		fields = append(fields, usagelog.FieldAccountRateMultiplier)
+	}
+	if m.request_body_bytes != nil {
+		fields = append(fields, usagelog.FieldRequestBodyBytes)
+	}
+	if m.max_request_body_bytes != nil {
+		fields = append(fields, usagelog.FieldMaxRequestBodyBytes)
 	}
 	if m.billing_type != nil {
 		fields = append(fields, usagelog.FieldBillingType)
@@ -45973,6 +46123,10 @@ func (m *UsageLogMutation) Field(name string) (ent.Value, bool) {
 		return m.LongContextBillingApplied()
 	case usagelog.FieldAccountRateMultiplier:
 		return m.AccountRateMultiplier()
+	case usagelog.FieldRequestBodyBytes:
+		return m.RequestBodyBytes()
+	case usagelog.FieldMaxRequestBodyBytes:
+		return m.MaxRequestBodyBytes()
 	case usagelog.FieldBillingType:
 		return m.BillingType()
 	case usagelog.FieldStream:
@@ -46072,6 +46226,10 @@ func (m *UsageLogMutation) OldField(ctx context.Context, name string) (ent.Value
 		return m.OldLongContextBillingApplied(ctx)
 	case usagelog.FieldAccountRateMultiplier:
 		return m.OldAccountRateMultiplier(ctx)
+	case usagelog.FieldRequestBodyBytes:
+		return m.OldRequestBodyBytes(ctx)
+	case usagelog.FieldMaxRequestBodyBytes:
+		return m.OldMaxRequestBodyBytes(ctx)
 	case usagelog.FieldBillingType:
 		return m.OldBillingType(ctx)
 	case usagelog.FieldStream:
@@ -46311,6 +46469,20 @@ func (m *UsageLogMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetAccountRateMultiplier(v)
 		return nil
+	case usagelog.FieldRequestBodyBytes:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRequestBodyBytes(v)
+		return nil
+	case usagelog.FieldMaxRequestBodyBytes:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetMaxRequestBodyBytes(v)
+		return nil
 	case usagelog.FieldBillingType:
 		v, ok := value.(int8)
 		if !ok {
@@ -46483,6 +46655,12 @@ func (m *UsageLogMutation) AddedFields() []string {
 	if m.addaccount_rate_multiplier != nil {
 		fields = append(fields, usagelog.FieldAccountRateMultiplier)
 	}
+	if m.addrequest_body_bytes != nil {
+		fields = append(fields, usagelog.FieldRequestBodyBytes)
+	}
+	if m.addmax_request_body_bytes != nil {
+		fields = append(fields, usagelog.FieldMaxRequestBodyBytes)
+	}
 	if m.addbilling_type != nil {
 		fields = append(fields, usagelog.FieldBillingType)
 	}
@@ -46539,6 +46717,10 @@ func (m *UsageLogMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedRateMultiplier()
 	case usagelog.FieldAccountRateMultiplier:
 		return m.AddedAccountRateMultiplier()
+	case usagelog.FieldRequestBodyBytes:
+		return m.AddedRequestBodyBytes()
+	case usagelog.FieldMaxRequestBodyBytes:
+		return m.AddedMaxRequestBodyBytes()
 	case usagelog.FieldBillingType:
 		return m.AddedBillingType()
 	case usagelog.FieldDurationMs:
@@ -46665,6 +46847,20 @@ func (m *UsageLogMutation) AddField(name string, value ent.Value) error {
 		}
 		m.AddAccountRateMultiplier(v)
 		return nil
+	case usagelog.FieldRequestBodyBytes:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddRequestBodyBytes(v)
+		return nil
+	case usagelog.FieldMaxRequestBodyBytes:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddMaxRequestBodyBytes(v)
+		return nil
 	case usagelog.FieldBillingType:
 		v, ok := value.(int8)
 		if !ok {
@@ -46742,6 +46938,12 @@ func (m *UsageLogMutation) ClearedFields() []string {
 	if m.FieldCleared(usagelog.FieldAccountRateMultiplier) {
 		fields = append(fields, usagelog.FieldAccountRateMultiplier)
 	}
+	if m.FieldCleared(usagelog.FieldRequestBodyBytes) {
+		fields = append(fields, usagelog.FieldRequestBodyBytes)
+	}
+	if m.FieldCleared(usagelog.FieldMaxRequestBodyBytes) {
+		fields = append(fields, usagelog.FieldMaxRequestBodyBytes)
+	}
 	if m.FieldCleared(usagelog.FieldDurationMs) {
 		fields = append(fields, usagelog.FieldDurationMs)
 	}
@@ -46815,6 +47017,12 @@ func (m *UsageLogMutation) ClearField(name string) error {
 		return nil
 	case usagelog.FieldAccountRateMultiplier:
 		m.ClearAccountRateMultiplier()
+		return nil
+	case usagelog.FieldRequestBodyBytes:
+		m.ClearRequestBodyBytes()
+		return nil
+	case usagelog.FieldMaxRequestBodyBytes:
+		m.ClearMaxRequestBodyBytes()
 		return nil
 	case usagelog.FieldDurationMs:
 		m.ClearDurationMs()
@@ -46940,6 +47148,12 @@ func (m *UsageLogMutation) ResetField(name string) error {
 		return nil
 	case usagelog.FieldAccountRateMultiplier:
 		m.ResetAccountRateMultiplier()
+		return nil
+	case usagelog.FieldRequestBodyBytes:
+		m.ResetRequestBodyBytes()
+		return nil
+	case usagelog.FieldMaxRequestBodyBytes:
+		m.ResetMaxRequestBodyBytes()
 		return nil
 	case usagelog.FieldBillingType:
 		m.ResetBillingType()

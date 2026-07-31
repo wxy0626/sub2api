@@ -104,8 +104,11 @@ func ProvideGatewayHandler(
 	userMsgQueueService *service.UserMessageQueueService,
 	cfg *config.Config,
 	settingService *service.SettingService,
+	accountTestService *service.AccountTestService,
 	coordinator *securityaudit.Coordinator,
 ) *GatewayHandler {
+	// 复用账号测试服务的上游模型目录读取逻辑，供 DeepSeek /v1/models 按 API Key 获取实时结果。
+	gatewayService.SetUpstreamModelsFetcher(accountTestService)
 	h := NewGatewayHandler(gatewayService, openAIGatewayService, geminiCompatService, antigravityGatewayService,
 		userService, concurrencyService, billingCacheService, usageService, apiKeyService, usageRecordWorkerPool,
 		errorPassthroughService, contentModerationService, userMsgQueueService, cfg, settingService)

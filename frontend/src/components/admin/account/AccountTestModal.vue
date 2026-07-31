@@ -55,13 +55,13 @@
         />
       </div>
 
-      <div v-if="isOpenAIAccount" class="space-y-1.5">
+      <div v-if="supportsTestMode" class="space-y-1.5">
         <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
           {{ t('admin.accounts.openai.testMode') }}
         </label>
         <Select
           v-model="testMode"
-          :options="openAITestModeOptions"
+          :options="testModeOptions"
           :disabled="status === 'connecting'"
           @update:model-value="handleTestModeChange"
         />
@@ -254,7 +254,7 @@ import { buildApiUrl } from '@/api/client'
 import { ADMIN_UI_REQUEST_HEADER } from '@/api/adminUIRequest'
 import { adminAPI } from '@/api/admin'
 import { normalizeDisplayErrorMessage } from '@/utils/errorMessage'
-import { resolveAccountTestModelSelection } from '@/utils/accountTestModelSelection'
+import { resolveAccountTestModeForModel, resolveAccountTestModelSelection } from '@/utils/accountTestModelSelection'
 import type { AccountTestMode } from '@/api/admin/accounts'
 import type { Account, ClaudeModel } from '@/types'
 
@@ -294,7 +294,7 @@ const loadingModels = ref(false)
 let abortController: AbortController | null = null
 const generatedImages = ref<PreviewImage[]>([])
 const previewImageUrl = ref('')
-// testMode 为当前账号持久化的 OpenAI 模型测试模式。
+// testMode 为当前账号持久化的模型测试模式，OpenAI 和 DeepSeek 共用该字段。
 const testMode = ref<AccountTestMode>('default')
 // 已确认写入账号配置的模式，保存失败时用于回滚界面选择。
 let persistedTestMode: AccountTestMode = 'default'
@@ -303,16 +303,28 @@ let testModeRevision = 0
 let savedTestModeRevision = 0
 let testModeSaveTask: Promise<void> | null = null
 const isOpenAIAccount = computed(() => props.account?.platform === 'openai')
-const openAITestModeOptions = computed(() => [
-  { value: 'default', label: t('admin.accounts.openai.testModeDefault') },
-  { value: 'responses', label: t('admin.accounts.openai.testModeResponses') },
-  { value: 'compact', label: t('admin.accounts.openai.testModeCompact') },
-  { value: 'workspace', label: t('admin.accounts.openai.testModeWorkspace') }
-])
+const isDeepSeekAccount = computed(() => props.account?.platform === 'deepseek')
+const supportsTestMode = computed(() => isOpenAIAccount.value || isDeepSeekAccount.value)
+// DeepSeek 仅支持 Chat Completions 和 Responses；OpenAI 保留既有四种探测模式。
+const testModeOptions = computed(() => {
+  const options = [
+    { value: 'default', label: t('admin.accounts.openai.testModeDefault') },
+    { value: 'responses', label: t('admin.accounts.openai.testModeResponses') }
+  ]
+  if (isDeepSeekAccount.value) return options
+  return [
+    ...options,
+    { value: 'compact', label: t('admin.accounts.openai.testModeCompact') },
+    { value: 'workspace', label: t('admin.accounts.openai.testModeWorkspace') }
+  ]
+})
 
 // resolveAccountTestMode 仅接受后端允许保存的值，旧账号或异常值均按默认模式处理。
 const resolveAccountTestMode = (account: Account | null): AccountTestMode => {
   const mode = account?.extra?.account_test_mode
+  if (account?.platform === 'deepseek') {
+    return mode === 'responses' || mode === 'default' ? mode : 'default'
+  }
   return mode === 'responses' || mode === 'compact' || mode === 'workspace' || mode === 'default'
     ? mode
     : 'default'
@@ -320,9 +332,15 @@ const resolveAccountTestMode = (account: Account | null): AccountTestMode => {
 
 // handleTestModeChange 将用户选择立即加入保存队列，避免关闭并重开弹窗后回到默认值。
 const handleTestModeChange = (value: string | number | boolean | null) => {
-  if (value !== 'default' && value !== 'responses' && value !== 'compact' && value !== 'workspace') return
-  testMode.value = value
-  if (!props.show || !isOpenAIAccount.value || !props.account) return
+  const allowedModes = isDeepSeekAccount.value
+    ? (['default', 'responses'] as AccountTestMode[])
+    : (['default', 'responses', 'compact', 'workspace'] as AccountTestMode[])
+  if (typeof value !== 'string') return
+  // nextMode 是经过平台模式白名单校验后的强类型值。
+  const nextMode = value as AccountTestMode
+  if (!allowedModes.includes(nextMode)) return
+  testMode.value = nextMode
+  if (!props.show || !supportsTestMode.value || !props.account) return
 
   testModeRevision += 1
   if (!testModeSaveTask) {
@@ -390,6 +408,10 @@ watch(
 )
 
 watch(selectedModelId, () => {
+  // DeepSeek 的 Responses 仅适用于 V4 Flash，切换到普通模型时自动回到 Chat。
+  if (isDeepSeekAccount.value && testMode.value === 'responses' && selectedModelId.value.trim().toLowerCase() !== 'deepseek-v4-flash') {
+    testMode.value = 'default'
+  }
   if (supportsImageTest.value && !testPrompt.value.trim()) {
     testPrompt.value = t('admin.accounts.imagePromptDefault')
   }
@@ -407,6 +429,15 @@ const loadAvailableModels = async () => {
     const selection = resolveAccountTestModelSelection(props.account.platform, models)
     availableModels.value = selection.models
     selectedModelId.value = selection.modelId
+    // 未保存模式的 DeepSeek 账号让 V4 Flash 直接使用 Responses，其余模型使用 Chat。
+    if (isDeepSeekAccount.value && !props.account.extra?.account_test_mode) {
+      const defaultMode = resolveAccountTestModeForModel(props.account.platform, selection.modelId)
+      testMode.value = defaultMode
+      persistedTestMode = defaultMode
+    }
+    if (isDeepSeekAccount.value && testMode.value === 'responses' && selection.modelId.trim().toLowerCase() !== 'deepseek-v4-flash') {
+      testMode.value = 'default'
+    }
   } catch (error) {
     console.error('Failed to load available models:', error)
     // Fallback to empty list
@@ -474,7 +505,7 @@ const startTest = async () => {
       model_id: selectedModelId.value,
       prompt: supportsImageTest.value ? testPrompt.value.trim() : ''
     }
-    if (isOpenAIAccount.value) {
+    if (supportsTestMode.value) {
       requestBody.mode = testMode.value
       if (testMode.value === 'workspace') {
         addLine(t('admin.accounts.workspaceProbeStarted'), 'text-cyan-300')

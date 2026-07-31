@@ -622,7 +622,7 @@ import { buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
 import { formatDateTime, formatRelativeTime } from '@/utils/format'
 import { proxyExpiryBadgeClass, proxyExpiryLabelKey } from '@/utils/proxyExpiry'
 import { extractApiErrorMessage } from '@/utils/apiError'
-import { resolveAccountTestModelSelection } from '@/utils/accountTestModelSelection'
+import { resolveAccountTestModeForModel, resolveAccountTestModelSelection } from '@/utils/accountTestModelSelection'
 import type { AccountTestMode } from '@/api/admin/accounts'
 import { sanitizeUrl } from '@/utils/url'
 import { getFloatingPanelPosition } from '@/utils/floatingPanel'
@@ -1904,18 +1904,23 @@ const testAccountWithSelectedModel = async (account: Account | undefined, accoun
   if (!selection.modelId) {
     throw new Error('模型检测无法开始：账号未返回可用于测试的模型，请检查账号授权、模型映射或上游权限。技术详情：available_models is empty after test-model filtering')
   }
-  // OpenAI 即时/批量检测读取弹窗保存的模式；其他平台保持现有模型选择策略。
-  const savedMode = resolveSavedAccountTestMode(account)
+  // OpenAI 和 DeepSeek 即时/批量检测读取弹窗保存的模式；其他平台保持现有模型选择策略。
+  const savedMode = resolveSavedAccountTestMode(account, selection.modelId)
   return adminAPI.accounts.testAccount(accountID, {
     modelId: selection.modelId,
     ...(savedMode ? { mode: savedMode } : {})
   })
 }
 
-// resolveSavedAccountTestMode 统一读取账号保存的 OpenAI 测试模式，缺失或异常值才使用默认模式。
-const resolveSavedAccountTestMode = (account: Account): AccountTestMode | undefined => {
-  if (account.platform !== 'openai') return undefined
+// resolveSavedAccountTestMode 统一读取 OpenAI/DeepSeek 的测试模式，未保存时按模型协议选择默认值。
+const resolveSavedAccountTestMode = (account: Account, modelID: string): AccountTestMode | undefined => {
+  if (account.platform !== 'openai' && account.platform !== 'deepseek') return undefined
   const mode = account.extra?.account_test_mode
+  if (account.platform === 'deepseek') {
+    if (mode === 'default') return mode
+    if (mode === 'responses' && modelID.trim().toLowerCase() === 'deepseek-v4-flash') return mode
+    return resolveAccountTestModeForModel(account.platform, modelID)
+  }
   return mode === 'responses' || mode === 'compact' || mode === 'workspace' || mode === 'default'
     ? mode
     : 'default'

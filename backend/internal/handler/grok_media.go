@@ -473,6 +473,9 @@ func recordGrokMediaUsage(
 	inboundEndpoint := GetInboundEndpoint(c)
 	upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
 	quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
+	// media 请求的 body 可能为空（状态/下载入口），快照仍按实际进入 handler 的 body 计算。
+	requestBodyBytes := int64(len(body))
+	maxRequestBodyBytes := gatewayMaxBodySize(h.cfg)
 	// OriginalModel 记录客户端请求的模型：composite 分组下 body 已被改写为具体模型，
 	// 公开别名需从 context 取回，与其他端点的用量归因口径一致（计费不受影响：
 	// BillingModelSource 为空不会触发来源覆盖）。
@@ -482,20 +485,22 @@ func recordGrokMediaUsage(
 	}
 	h.submitOpenAIUsageRecordTask(c.Request.Context(), result, func(ctx context.Context) {
 		if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
-			Result:             result,
-			APIKey:             apiKey,
-			User:               apiKey.User,
-			Account:            account,
-			Subscription:       subscription,
-			InboundEndpoint:    inboundEndpoint,
-			UpstreamEndpoint:   upstreamEndpoint,
-			UserAgent:          userAgent,
-			IPAddress:          clientIP,
-			RequestPayloadHash: service.HashUsageRequestPayload(payloadForHash),
-			APIKeyService:      h.apiKeyService,
-			QuotaPlatform:      quotaPlatform,
-			SessionID:          sessionID,
-			ChannelUsageFields: channelUsageFields,
+			Result:              result,
+			APIKey:              apiKey,
+			User:                apiKey.User,
+			Account:             account,
+			Subscription:        subscription,
+			InboundEndpoint:     inboundEndpoint,
+			UpstreamEndpoint:    upstreamEndpoint,
+			UserAgent:           userAgent,
+			IPAddress:           clientIP,
+			RequestPayloadHash:  service.HashUsageRequestPayload(payloadForHash),
+			APIKeyService:       h.apiKeyService,
+			QuotaPlatform:       quotaPlatform,
+			SessionID:           sessionID,
+			RequestBodyBytes:    requestBodyBytes,
+			MaxRequestBodyBytes: maxRequestBodyBytes,
+			ChannelUsageFields:  channelUsageFields,
 		}); err != nil {
 			logger.L().With(
 				zap.String("component", "handler.openai_gateway.grok_media"),

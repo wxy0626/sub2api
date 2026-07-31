@@ -270,7 +270,7 @@ func (a *Account) IsGrokOAuth() bool {
 }
 
 func (a *Account) IsOpenAICompatible() bool {
-	return a != nil && (a.Platform == PlatformOpenAI || a.Platform == PlatformGrok)
+	return a != nil && (a.Platform == PlatformOpenAI || a.Platform == PlatformGrok || a.Platform == PlatformDeepSeek)
 }
 
 func (a *Account) GeminiOAuthType() string {
@@ -1231,6 +1231,11 @@ func (a *Account) IsOpenAI() bool {
 	return a.Platform == PlatformOpenAI
 }
 
+// IsDeepSeek 判断账号是否为独立的 DeepSeek 平台账号。
+func (a *Account) IsDeepSeek() bool {
+	return a != nil && a.Platform == PlatformDeepSeek
+}
+
 func (a *Account) IsOpenAILongContextBillingEnabled() bool {
 	if a == nil || !a.IsOpenAI() || a.Extra == nil {
 		return false
@@ -1272,6 +1277,9 @@ func (a *Account) IsOpenAIApiKey() bool {
 }
 
 func (a *Account) GetOpenAIBaseURL() string {
+	if a.IsDeepSeek() {
+		return a.GetDeepSeekBaseURL()
+	}
 	if !a.IsOpenAI() {
 		return ""
 	}
@@ -1282,6 +1290,18 @@ func (a *Account) GetOpenAIBaseURL() string {
 		}
 	}
 	return "https://api.openai.com"
+}
+
+// GetDeepSeekBaseURL 返回 DeepSeek API Key 账号使用的上游 Base URL。
+func (a *Account) GetDeepSeekBaseURL() string {
+	if a == nil || !a.IsDeepSeek() || a.Type != AccountTypeAPIKey {
+		return ""
+	}
+	baseURL := strings.TrimSpace(a.GetCredential("base_url"))
+	if baseURL == "" {
+		return "https://api.deepseek.com"
+	}
+	return strings.TrimRight(baseURL, "/")
 }
 
 func (a *Account) GetOpenAIAccessToken() string {
@@ -1366,7 +1386,7 @@ func (a *Account) GetOpenAIIDToken() string {
 }
 
 func (a *Account) GetOpenAIApiKey() string {
-	if !a.IsOpenAIApiKey() {
+	if !a.IsOpenAIApiKey() && !(a.IsDeepSeek() && a.Type == AccountTypeAPIKey) {
 		return ""
 	}
 	return a.GetCredential("api_key")
@@ -1438,6 +1458,16 @@ func (a *Account) SupportsOpenAIEndpointCapability(capability OpenAIEndpointCapa
 	if !a.IsOpenAICompatible() {
 		return false
 	}
+	if a.IsDeepSeek() {
+		switch capability {
+		case OpenAIEndpointCapabilityChatCompletions:
+			return a.Type == AccountTypeAPIKey
+		case OpenAIEndpointCapabilityResponses:
+			return false
+		default:
+			return false
+		}
+	}
 	if a.IsGrok() {
 		switch capability {
 		case OpenAIEndpointCapabilityChatCompletions:
@@ -1495,6 +1525,33 @@ func (a *Account) SupportsOpenAIEndpointCapability(capability OpenAIEndpointCapa
 		return true
 	}
 	return configured[string(capability)]
+}
+
+// SupportsOpenAIEndpointCapabilityForModel 按请求模型判断 OpenAI 兼容端点能力。
+// DeepSeek 只有 deepseek-v4-flash 允许原生 Responses，其他模型统一走 Chat Completions。
+func (a *Account) SupportsOpenAIEndpointCapabilityForModel(capability OpenAIEndpointCapability, requestedModel string) bool {
+	if a != nil && a.IsDeepSeek() && capability == OpenAIEndpointCapabilityResponses {
+		model := strings.TrimSpace(requestedModel)
+		if mappedModel := strings.TrimSpace(a.GetMappedModel(model)); mappedModel != "" {
+			model = mappedModel
+		}
+		return a.Type == AccountTypeAPIKey && strings.EqualFold(model, DeepSeekResponsesModel)
+	}
+	return a.SupportsOpenAIEndpointCapability(capability)
+}
+
+// ShouldUseOpenAIResponsesForModel 判断本次请求是否应直接使用上游 Responses API。
+func (a *Account) ShouldUseOpenAIResponsesForModel(requestedModel string) bool {
+	if a == nil {
+		return false
+	}
+	if a.IsDeepSeek() {
+		return a.SupportsOpenAIEndpointCapabilityForModel(OpenAIEndpointCapabilityResponses, requestedModel)
+	}
+	if a.Type != AccountTypeAPIKey {
+		return true
+	}
+	return openai_compat.ShouldUseResponsesAPI(a.Extra)
 }
 
 // GrokMediaGenerationEligibility reports whether a Grok account may receive

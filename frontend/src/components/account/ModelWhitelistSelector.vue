@@ -187,6 +187,8 @@ const customModel = ref('')
 const isComposing = ref(false)
 // isSyncingLatest 标识是否正在从服务端最新定价目录同步模型。
 const isSyncingLatest = ref(false)
+// syncedModels 保存当前账号本次实时同步得到的模型，允许动态模型继续出现在白名单选项中。
+const syncedModels = ref<string[]>([])
 const isSyncingUpstream = ref(false)
 const normalizedPlatforms = computed(() => {
   const rawPlatforms =
@@ -205,9 +207,11 @@ const normalizedPlatforms = computed(() => {
   )
 })
 
-const upstreamSyncPlatforms = new Set(['anthropic', 'openai', 'gemini', 'antigravity', 'grok'])
+// 可向后端请求上游模型列表同步的平台集合，DeepSeek 使用同一 OpenAI-compatible 接口。
+const upstreamSyncPlatforms = new Set(['anthropic', 'openai', 'gemini', 'antigravity', 'grok', 'deepseek'])
 // latestSyncPlatforms 是后端最新模型目录支持查询的平台集合。
-const latestSyncPlatforms = new Set(['anthropic', 'openai', 'gemini', 'antigravity', 'grok'])
+// 可从定价目录同步最新模型的平台集合，DeepSeek 与现有账号模型限制共用此入口。
+const latestSyncPlatforms = new Set(['anthropic', 'openai', 'gemini', 'antigravity', 'grok', 'deepseek'])
 // latestSyncPlatformNames 是当前表单中可请求最新目录的平台名称。
 const latestSyncPlatformNames = computed(() =>
   normalizedPlatforms.value.filter(platform => latestSyncPlatforms.has(platform.toLowerCase()))
@@ -235,9 +239,16 @@ const canSyncUpstream = computed(() => {
   return false
 })
 
+// syncPlatform 是当前上游同步请求对应的平台，避免把非 OpenAI 模型套用 GPT 白名单。
+const syncPlatform = computed(() =>
+  props.syncCredentials?.platform || props.platform || normalizedPlatforms.value[0] || 'openai'
+)
+
 const availableOptions = computed(() => {
+  // optionModelIDs 合并已保存白名单和实时同步结果，避免动态上游模型被静态列表过滤。
+  const optionModelIDs = new Set<string>([...props.modelValue, ...syncedModels.value])
   if (normalizedPlatforms.value.length === 0) {
-    return allModels
+    return Array.from(optionModelIDs, model => ({ value: model, label: model }))
   }
 
   const allowedModels = new Set<string>()
@@ -247,7 +258,12 @@ const availableOptions = computed(() => {
     }
   }
 
-  return allModels.filter(model => allowedModels.has(model.value))
+  return [
+    ...allModels.filter(model => allowedModels.has(model.value)),
+    ...Array.from(optionModelIDs)
+      .filter(model => !allModels.some(option => option.value === model))
+      .map(model => ({ value: model, label: model }))
+  ]
 })
 
 const filteredModels = computed(() => {
@@ -301,10 +317,15 @@ const syncLatestSupportedModels = async () => {
   isSyncingLatest.value = true
   try {
     const results = await Promise.all(
-      latestSyncPlatformNames.value.map(platform => syncPricingModels(platform))
+      latestSyncPlatformNames.value.map(async platform => ({
+        platform,
+        result: await syncPricingModels(platform)
+      }))
     )
-    // latestModels 仅保留 GPT-5.6 及以上与 GPT Image 2。
-    const latestModels = restrictSyncedModels(results.flatMap(result => result.models))
+    // latestModels 按平台过滤后合并，避免 DeepSeek 等平台误用 OpenAI GPT 白名单。
+    const latestModels = Array.from(
+      new Set(results.flatMap(({ platform, result }) => restrictSyncedModels(result.models, platform)))
+    )
     emit('update:modelValue', latestModels)
     appStore.showSuccess(t('admin.accounts.syncLatestModelsSuccess', { count: latestModels.length }))
   } catch (error) {
@@ -330,14 +351,15 @@ const syncUpstreamModels = async () => {
       return
     }
 
-    // upstreamModels 是上游当前实际支持的模型，必须作为白名单的唯一来源。
-    const upstreamModels = restrictSyncedModels(result.models)
+    // upstreamModels 是按当前平台清理后的上游模型，作为白名单的唯一来源。
+    const upstreamModels = restrictSyncedModels(result.models, syncPlatform.value)
     if (upstreamModels.length === 0) {
       appStore.showInfo(t('admin.accounts.syncUpstreamModelsEmpty'))
       return
     }
 
     // 以上游实时结果替换旧白名单，自动移除该账号已经不支持的模型。
+    syncedModels.value = upstreamModels
     emit('update:modelValue', upstreamModels)
     appStore.showSuccess(t('admin.accounts.syncUpstreamModelsSuccess', { count: upstreamModels.length, total: upstreamModels.length }))
   } catch (error) {

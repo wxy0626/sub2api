@@ -12,15 +12,44 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 )
+
+// normalizeOpenAIRemoteCompactionV2ForForward 是 Forward 层的最终压缩路由兜底。
+// 它只处理明确的 native 信号，不根据 body 大小猜测压缩，也不裁剪普通历史。
+func normalizeOpenAIRemoteCompactionV2ForForward(c *gin.Context, body []byte) ([]byte, error) {
+	if !IsOpenAIResponsesRemoteCompactionV2Request(c, body) {
+		return body, nil
+	}
+	if c == nil || c.Request == nil || c.Request.URL == nil {
+		return body, errors.New("无法归一化 Responses 压缩请求：请求路径不存在")
+	}
+
+	c.Request.URL.Path = strings.TrimRight(c.Request.URL.Path, "/") + "/compact"
+	if gjson.GetBytes(body, "stream").Bool() {
+		MarkOpenAICompactClientStream(c)
+	}
+	normalizedBody, _, err := normalizeOpenAICompactRequestBody(body)
+	if err != nil {
+		return body, fmt.Errorf("归一化 Responses 压缩请求体失败：%w", err)
+	}
+	return normalizedBody, nil
+}
 
 // Forward forwards request to OpenAI API
 func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
 	clearGrokResponsesClientToolMapping(c)
 	startTime := time.Now()
+	// handler 已先完成提升；这里再兜底一次，避免内部调用绕过 handler 后把
+	// native 压缩信号按普通 /responses 原样转发。
+	if account != nil && account.Platform == PlatformOpenAI {
+		normalizedBody, normalizeErr := normalizeOpenAIRemoteCompactionV2ForForward(c, body)
+		if normalizeErr != nil {
+			return nil, normalizeErr
+		}
+		body = normalizedBody
+	}
 	// 固定渠道映射后的请求级 canonical body；账号 normalize/strip 不得改写跨 failover hint。
 	canonicalImageIntentBody := body
 
@@ -92,9 +121,20 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		return s.forwardGrokResponses(ctx, c, account, body, originalModel, reqStream, startTime)
 	}
 
-	if account.Type == AccountTypeAPIKey && !openai_compat.ShouldUseResponsesAPI(account.Extra) {
+	// 压缩请求不能走 Responses -> Chat fallback：完整历史与图片会被重新展开，
+	// 既无法完成原生 compact 协议，也会再次触发上游 context_length_exceeded。
+	// handler 已按 Responses 能力筛选账号；这里作为最终边界拒绝漏网账号，
+	// 让上层返回明确中文错误，而不是静默改写请求语义。
+	if account.Type == AccountTypeAPIKey && !account.ShouldUseOpenAIResponsesForModel(reqModel) {
+		if account.Platform == PlatformOpenAI && IsOpenAICompactionRequest(c, body) {
+			message := "会话压缩请求必须使用上游 Responses API；当前账号仅支持 Chat Completions，请在账号能力探测完成后重试或改用支持 Responses 的账号"
+			writeOpenAIResponsesFallbackError(c, http.StatusServiceUnavailable, "responses_compaction_not_supported", message)
+			return nil, errors.New(message)
+		}
 		return s.forwardResponsesViaRawChatCompletions(ctx, c, account, body)
 	}
+	// OpenAI Responses 的 item ID 约束只在实际 Responses 路径收口，避免 API Key
+	// Chat Completions fallback 的输入转换和错误处理被这条规则改变。
 	if account.Platform == PlatformOpenAI && account.Type == AccountTypeAPIKey {
 		sanitizedBody, changed, sanitizeErr := sanitizeOpenAIResponsesInputItemIDs(body)
 		if sanitizeErr != nil {
@@ -994,6 +1034,18 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 }
 
 func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token string, isStream bool, promptCacheKey string, isCodexCLI bool) (*http.Request, error) {
+	// 请求体在前面的业务转换后可能被重新编码；这里是普通 HTTP OpenAI
+	// Responses 请求进入传输层前的最后一个统一清理边界。
+	if account != nil && account.Platform == PlatformOpenAI {
+		sanitizedBody, changed, sanitizeErr := sanitizeOpenAIResponsesInputItemIDs(body)
+		if sanitizeErr != nil {
+			return nil, fmt.Errorf("sanitize OpenAI Responses input item IDs before HTTP request: %w", sanitizeErr)
+		}
+		if changed {
+			body = sanitizedBody
+		}
+	}
+
 	// Determine target URL based on account type
 	var targetURL string
 	switch account.Type {

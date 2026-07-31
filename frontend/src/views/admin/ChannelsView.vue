@@ -760,7 +760,8 @@ const form = reactive({
 let abortController: AbortController | null = null
 
 // ── Platform config ──
-const platformOrder: GroupPlatform[] = ['anthropic', 'openai', 'gemini', 'antigravity', 'grok']
+// 渠道平台配置顺序，DeepSeek 作为独立 OpenAI-compatible 平台展示。
+const platformOrder: GroupPlatform[] = ['anthropic', 'openai', 'gemini', 'antigravity', 'grok', 'deepseek']
 
 // ── Helpers ──
 function formatDate(value: string): string {

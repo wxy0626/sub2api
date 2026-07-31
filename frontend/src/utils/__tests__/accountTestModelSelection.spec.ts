@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resolveAccountTestModelSelection } from '@/utils/accountTestModelSelection'
+import { resolveAccountTestModeForModel, resolveAccountTestModelSelection } from '@/utils/accountTestModelSelection'
 import type { ClaudeModel } from '@/types'
 
 // createModel 构造账号模型接口返回的最小完整模型数据，便于验证纯预填规则。
@@ -45,5 +45,28 @@ describe('accountTestModelSelection', () => {
 
     expect(selection.modelId).toBe('claude-sonnet-4')
     expect(selection.mode).toBeUndefined()
+  })
+
+  it('DeepSeek 优先使用最新模型，并保留其他上游模型', () => {
+    const selection = resolveAccountTestModelSelection('deepseek', [
+      createModel('deepseek-reasoner'),
+      createModel('deepseek-v4-flash'),
+      createModel('deepseek-v4-pro'),
+      createModel('deepseek-chat')
+    ])
+
+    expect(selection.models.map((model) => model.id)).toEqual([
+      'deepseek-v4-flash',
+      'deepseek-v4-pro',
+      'deepseek-reasoner',
+      'deepseek-chat'
+    ])
+    expect(selection.modelId).toBe('deepseek-v4-flash')
+  })
+
+  it('DeepSeek V4 Flash 使用 Responses，其余模型使用 Chat Completions', () => {
+    expect(resolveAccountTestModeForModel('deepseek', 'DeepSeek-V4-Flash')).toBe('responses')
+    expect(resolveAccountTestModeForModel('deepseek', 'deepseek-chat')).toBe('default')
+    expect(resolveAccountTestModeForModel('openai', 'deepseek-v4-flash')).toBe('default')
   })
 })

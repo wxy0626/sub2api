@@ -379,6 +379,34 @@ func (_c *UsageLogCreate) SetNillableAccountRateMultiplier(v *float64) *UsageLog
 	return _c
 }
 
+// SetRequestBodyBytes sets the "request_body_bytes" field.
+func (_c *UsageLogCreate) SetRequestBodyBytes(v int64) *UsageLogCreate {
+	_c.mutation.SetRequestBodyBytes(v)
+	return _c
+}
+
+// SetNillableRequestBodyBytes sets the "request_body_bytes" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableRequestBodyBytes(v *int64) *UsageLogCreate {
+	if v != nil {
+		_c.SetRequestBodyBytes(*v)
+	}
+	return _c
+}
+
+// SetMaxRequestBodyBytes sets the "max_request_body_bytes" field.
+func (_c *UsageLogCreate) SetMaxRequestBodyBytes(v int64) *UsageLogCreate {
+	_c.mutation.SetMaxRequestBodyBytes(v)
+	return _c
+}
+
+// SetNillableMaxRequestBodyBytes sets the "max_request_body_bytes" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableMaxRequestBodyBytes(v *int64) *UsageLogCreate {
+	if v != nil {
+		_c.SetMaxRequestBodyBytes(*v)
+	}
+	return _c
+}
+
 // SetBillingType sets the "billing_type" field.
 func (_c *UsageLogCreate) SetBillingType(v int8) *UsageLogCreate {
 	_c.mutation.SetBillingType(v)
@@ -1025,6 +1053,14 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.AccountRateMultiplier(); ok {
 		_spec.SetField(usagelog.FieldAccountRateMultiplier, field.TypeFloat64, value)
 		_node.AccountRateMultiplier = &value
+	}
+	if value, ok := _c.mutation.RequestBodyBytes(); ok {
+		_spec.SetField(usagelog.FieldRequestBodyBytes, field.TypeInt64, value)
+		_node.RequestBodyBytes = &value
+	}
+	if value, ok := _c.mutation.MaxRequestBodyBytes(); ok {
+		_spec.SetField(usagelog.FieldMaxRequestBodyBytes, field.TypeInt64, value)
+		_node.MaxRequestBodyBytes = &value
 	}
 	if value, ok := _c.mutation.BillingType(); ok {
 		_spec.SetField(usagelog.FieldBillingType, field.TypeInt8, value)
@@ -1708,6 +1744,54 @@ func (u *UsageLogUpsert) AddAccountRateMultiplier(v float64) *UsageLogUpsert {
 // ClearAccountRateMultiplier clears the value of the "account_rate_multiplier" field.
 func (u *UsageLogUpsert) ClearAccountRateMultiplier() *UsageLogUpsert {
 	u.SetNull(usagelog.FieldAccountRateMultiplier)
+	return u
+}
+
+// SetRequestBodyBytes sets the "request_body_bytes" field.
+func (u *UsageLogUpsert) SetRequestBodyBytes(v int64) *UsageLogUpsert {
+	u.Set(usagelog.FieldRequestBodyBytes, v)
+	return u
+}
+
+// UpdateRequestBodyBytes sets the "request_body_bytes" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateRequestBodyBytes() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldRequestBodyBytes)
+	return u
+}
+
+// AddRequestBodyBytes adds v to the "request_body_bytes" field.
+func (u *UsageLogUpsert) AddRequestBodyBytes(v int64) *UsageLogUpsert {
+	u.Add(usagelog.FieldRequestBodyBytes, v)
+	return u
+}
+
+// ClearRequestBodyBytes clears the value of the "request_body_bytes" field.
+func (u *UsageLogUpsert) ClearRequestBodyBytes() *UsageLogUpsert {
+	u.SetNull(usagelog.FieldRequestBodyBytes)
+	return u
+}
+
+// SetMaxRequestBodyBytes sets the "max_request_body_bytes" field.
+func (u *UsageLogUpsert) SetMaxRequestBodyBytes(v int64) *UsageLogUpsert {
+	u.Set(usagelog.FieldMaxRequestBodyBytes, v)
+	return u
+}
+
+// UpdateMaxRequestBodyBytes sets the "max_request_body_bytes" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateMaxRequestBodyBytes() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldMaxRequestBodyBytes)
+	return u
+}
+
+// AddMaxRequestBodyBytes adds v to the "max_request_body_bytes" field.
+func (u *UsageLogUpsert) AddMaxRequestBodyBytes(v int64) *UsageLogUpsert {
+	u.Add(usagelog.FieldMaxRequestBodyBytes, v)
+	return u
+}
+
+// ClearMaxRequestBodyBytes clears the value of the "max_request_body_bytes" field.
+func (u *UsageLogUpsert) ClearMaxRequestBodyBytes() *UsageLogUpsert {
+	u.SetNull(usagelog.FieldMaxRequestBodyBytes)
 	return u
 }
 
@@ -2607,6 +2691,62 @@ func (u *UsageLogUpsertOne) UpdateAccountRateMultiplier() *UsageLogUpsertOne {
 func (u *UsageLogUpsertOne) ClearAccountRateMultiplier() *UsageLogUpsertOne {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.ClearAccountRateMultiplier()
+	})
+}
+
+// SetRequestBodyBytes sets the "request_body_bytes" field.
+func (u *UsageLogUpsertOne) SetRequestBodyBytes(v int64) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetRequestBodyBytes(v)
+	})
+}
+
+// AddRequestBodyBytes adds v to the "request_body_bytes" field.
+func (u *UsageLogUpsertOne) AddRequestBodyBytes(v int64) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddRequestBodyBytes(v)
+	})
+}
+
+// UpdateRequestBodyBytes sets the "request_body_bytes" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateRequestBodyBytes() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateRequestBodyBytes()
+	})
+}
+
+// ClearRequestBodyBytes clears the value of the "request_body_bytes" field.
+func (u *UsageLogUpsertOne) ClearRequestBodyBytes() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearRequestBodyBytes()
+	})
+}
+
+// SetMaxRequestBodyBytes sets the "max_request_body_bytes" field.
+func (u *UsageLogUpsertOne) SetMaxRequestBodyBytes(v int64) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetMaxRequestBodyBytes(v)
+	})
+}
+
+// AddMaxRequestBodyBytes adds v to the "max_request_body_bytes" field.
+func (u *UsageLogUpsertOne) AddMaxRequestBodyBytes(v int64) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddMaxRequestBodyBytes(v)
+	})
+}
+
+// UpdateMaxRequestBodyBytes sets the "max_request_body_bytes" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateMaxRequestBodyBytes() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateMaxRequestBodyBytes()
+	})
+}
+
+// ClearMaxRequestBodyBytes clears the value of the "max_request_body_bytes" field.
+func (u *UsageLogUpsertOne) ClearMaxRequestBodyBytes() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearMaxRequestBodyBytes()
 	})
 }
 
@@ -3721,6 +3861,62 @@ func (u *UsageLogUpsertBulk) UpdateAccountRateMultiplier() *UsageLogUpsertBulk {
 func (u *UsageLogUpsertBulk) ClearAccountRateMultiplier() *UsageLogUpsertBulk {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.ClearAccountRateMultiplier()
+	})
+}
+
+// SetRequestBodyBytes sets the "request_body_bytes" field.
+func (u *UsageLogUpsertBulk) SetRequestBodyBytes(v int64) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetRequestBodyBytes(v)
+	})
+}
+
+// AddRequestBodyBytes adds v to the "request_body_bytes" field.
+func (u *UsageLogUpsertBulk) AddRequestBodyBytes(v int64) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddRequestBodyBytes(v)
+	})
+}
+
+// UpdateRequestBodyBytes sets the "request_body_bytes" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateRequestBodyBytes() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateRequestBodyBytes()
+	})
+}
+
+// ClearRequestBodyBytes clears the value of the "request_body_bytes" field.
+func (u *UsageLogUpsertBulk) ClearRequestBodyBytes() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearRequestBodyBytes()
+	})
+}
+
+// SetMaxRequestBodyBytes sets the "max_request_body_bytes" field.
+func (u *UsageLogUpsertBulk) SetMaxRequestBodyBytes(v int64) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetMaxRequestBodyBytes(v)
+	})
+}
+
+// AddMaxRequestBodyBytes adds v to the "max_request_body_bytes" field.
+func (u *UsageLogUpsertBulk) AddMaxRequestBodyBytes(v int64) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddMaxRequestBodyBytes(v)
+	})
+}
+
+// UpdateMaxRequestBodyBytes sets the "max_request_body_bytes" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateMaxRequestBodyBytes() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateMaxRequestBodyBytes()
+	})
+}
+
+// ClearMaxRequestBodyBytes clears the value of the "max_request_body_bytes" field.
+func (u *UsageLogUpsertBulk) ClearMaxRequestBodyBytes() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearMaxRequestBodyBytes()
 	})
 }
 

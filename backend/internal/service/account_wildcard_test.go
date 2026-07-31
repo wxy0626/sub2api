@@ -224,6 +224,71 @@ func TestAccountIsModelSupported(t *testing.T) {
 	}
 }
 
+// TestAccountDeepSeekGetModelMappingWithoutExplicitConfiguration 验证 DeepSeek 未配置显式映射时保持空映射。
+func TestAccountDeepSeekGetModelMappingWithoutExplicitConfiguration(t *testing.T) {
+	account := &Account{
+		Platform: PlatformDeepSeek,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key": "sk-deepseek-test",
+		},
+	}
+
+	mapping := account.GetModelMapping()
+	if len(mapping) != 0 {
+		t.Fatalf("expected empty DeepSeek model mapping without credentials.model_mapping, got: %v", mapping)
+	}
+}
+
+// TestAccountDeepSeekGetModelMappingWithExplicitConfiguration 验证 DeepSeek 显式映射仍按原规则保留和解析。
+func TestAccountDeepSeekGetModelMappingWithExplicitConfiguration(t *testing.T) {
+	account := &Account{
+		Platform: PlatformDeepSeek,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"model_mapping": map[string]any{
+				"deepseek-custom-model": "deepseek-v4-flash",
+			},
+		},
+	}
+
+	mapping := account.GetModelMapping()
+	if got := mapping["deepseek-custom-model"]; got != "deepseek-v4-flash" {
+		t.Fatalf("expected explicit DeepSeek mapping to be preserved, got: %q", got)
+	}
+	if got := account.GetMappedModel("deepseek-custom-model"); got != "deepseek-v4-flash" {
+		t.Fatalf("expected explicit DeepSeek mapping to resolve, got: %q", got)
+	}
+}
+
+// TestAccountDeepSeekIsModelSupportedForDynamicModels 验证无映射放行动态模型、显式映射仍执行白名单规则。
+func TestAccountDeepSeekIsModelSupportedForDynamicModels(t *testing.T) {
+	withoutMapping := &Account{
+		Platform:    PlatformDeepSeek,
+		Type:        AccountTypeAPIKey,
+		Credentials: map[string]any{"api_key": "sk-deepseek-test"},
+	}
+	if !withoutMapping.IsModelSupported("deepseek-dynamic-model-2026") {
+		t.Fatal("expected any dynamic DeepSeek model to be supported without an explicit mapping")
+	}
+
+	withMapping := &Account{
+		Platform: PlatformDeepSeek,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"model_mapping": map[string]any{
+				"deepseek-*": "deepseek-v4-flash",
+			},
+		},
+	}
+	if !withMapping.IsModelSupported("deepseek-dynamic-model-2026") {
+		t.Fatal("expected dynamic DeepSeek model to match the explicit wildcard mapping")
+	}
+	if withMapping.IsModelSupported("gpt-5.6") {
+		t.Fatal("expected a model outside the explicit DeepSeek whitelist to be rejected")
+	}
+}
+
 func TestAccountGetMappedModel(t *testing.T) {
 	tests := []struct {
 		name           string

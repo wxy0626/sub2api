@@ -353,6 +353,7 @@ type openAIWSPassthroughFirstOutputFrameConn struct {
 	inner             openaiwsv2.FrameConn
 	resolveDeadline   func(payload []byte) openAIWSPassthroughFirstOutputDeadline
 	activeReadTimeout time.Duration
+	sanitizeInputIDs  bool // 仅 OpenAI Responses 账号启用入站 item ID 清理。
 
 	mu              sync.Mutex
 	state           openAIWSPassthroughFirstOutputDeadlineState
@@ -451,6 +452,21 @@ func (c *openAIWSPassthroughFirstOutputFrameConn) ReadFrame(ctx context.Context)
 func (c *openAIWSPassthroughFirstOutputFrameConn) WriteFrame(ctx context.Context, msgType coderws.MessageType, payload []byte) error {
 	if c == nil || c.inner == nil {
 		return errOpenAIWSConnClosed
+	}
+	if c.sanitizeInputIDs && msgType == coderws.MessageText {
+		// 该包装器是 passthrough client→upstream 的最后写入边界；
+		// 覆盖首帧、后续 response.create 以及重建后的 input。
+		sanitizedPayload, changed, sanitizeErr := sanitizeOpenAIResponsesInputItemIDs(payload)
+		if sanitizeErr != nil {
+			return NewOpenAIWSClientCloseError(
+				coderws.StatusPolicyViolation,
+				"WebSocket 请求体无效：Responses 输入项 ID 清理失败；技术详情："+sanitizeErr.Error(),
+				sanitizeErr,
+			)
+		}
+		if changed {
+			payload = sanitizedPayload
+		}
 	}
 	generation := uint64(0)
 	if msgType == coderws.MessageText && strings.TrimSpace(gjson.GetBytes(payload, "type").String()) == "response.create" {
@@ -681,6 +697,20 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		}
 		firstClientMessage = liteFirstMessage
 	}
+	// passthrough 首帧会直接写入上游，不能依赖 HTTP 入口的清理逻辑。
+	if account.Platform == PlatformOpenAI {
+		sanitized, changed, sanitizeErr := sanitizeOpenAIResponsesInputItemIDs(firstClientMessage)
+		if sanitizeErr != nil {
+			return NewOpenAIWSClientCloseError(
+				coderws.StatusPolicyViolation,
+				"WebSocket 请求体无效：Responses 输入项 ID 清理失败；技术详情："+sanitizeErr.Error(),
+				sanitizeErr,
+			)
+		}
+		if changed {
+			firstClientMessage = sanitized
+		}
+	}
 	if hooks != nil && (hooks.MaxReasoningEffort != "" || len(hooks.ReasoningEffortMappings) > 0) {
 		if capped, changed := ApplyOpenAIReasoningEffortPolicy(firstClientMessage, hooks.MaxReasoningEffort, hooks.ReasoningEffortMappings); changed {
 			firstClientMessage = capped
@@ -875,6 +905,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	relayUpstreamFrameConn := &openAIWSPassthroughFirstOutputFrameConn{
 		inner:             upstreamFrameConn,
 		activeReadTimeout: s.openAIWSPassthroughIdleTimeout(),
+		sanitizeInputIDs:  account.Platform == PlatformOpenAI,
 		deadlineChanged:   make(chan struct{}, 1),
 		resolveDeadline: func(payload []byte) openAIWSPassthroughFirstOutputDeadline {
 			reasoningEffort := ""
@@ -926,6 +957,20 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		filter: func(msgType coderws.MessageType, payload []byte) (out []byte, blocked *OpenAIFastBlockedError, filterErr error) {
 			if msgType != coderws.MessageText {
 				return payload, nil, nil
+			}
+			// 后续 response.create 帧同样直接写入上游，必须逐帧清理。
+			if account.Platform == PlatformOpenAI {
+				sanitized, changed, sanitizeErr := sanitizeOpenAIResponsesInputItemIDs(payload)
+				if sanitizeErr != nil {
+					return payload, nil, NewOpenAIWSClientCloseError(
+						coderws.StatusPolicyViolation,
+						"WebSocket 请求体无效：Responses 输入项 ID 清理失败；技术详情："+sanitizeErr.Error(),
+						sanitizeErr,
+					)
+				}
+				if changed {
+					payload = sanitized
+				}
 			}
 			eventType := strings.TrimSpace(gjson.GetBytes(payload, "type").String())
 			isResponseCreate := eventType == "response.create"

@@ -161,6 +161,10 @@ type UsageLog struct {
 	AccountRateMultiplier *float64
 	// AccountStatsCost 账号统计定价预计算费用（nil = 使用默认公式 total_cost × account_rate_multiplier）
 	AccountStatsCost *float64
+	// RequestBodyBytes 请求体实际字节数；nil 表示历史数据或当前请求未采集。
+	RequestBodyBytes *int64
+	// MaxRequestBodyBytes 请求实际生效的 gateway.max_body_size；nil 表示未知。
+	MaxRequestBodyBytes *int64
 
 	BillingType  int8
 	RequestType  RequestType

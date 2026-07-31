@@ -702,6 +702,8 @@ type GatewayService struct {
 	userGroupRateSF       singleflight.Group
 	modelsListCache       *gocache.Cache
 	modelsListCacheTTL    time.Duration
+	// upstreamModelsFetcher 负责按账号凭据读取上游实时模型目录，当前主要供 DeepSeek 使用。
+	upstreamModelsFetcher UpstreamModelsFetcher
 	settingService        *SettingService
 	responseHeaderFilter  *responseheaders.CompiledHeaderFilter
 	debugModelRouting     atomic.Bool
@@ -713,6 +715,21 @@ type GatewayService struct {
 	tlsFPProfileService   *TLSFingerprintProfileService
 	balanceNotifyService  *BalanceNotifyService
 	userPlatformQuotaRepo UserPlatformQuotaRepository
+}
+
+// UpstreamModelsFetcher 按具体账号凭据读取上游支持的模型列表。
+// AccountTestService 实现该接口，网关复用同一套认证、URL 校验和响应解析逻辑。
+type UpstreamModelsFetcher interface {
+	FetchUpstreamSupportedModels(ctx context.Context, account *Account) ([]string, error)
+}
+
+// SetUpstreamModelsFetcher 注入上游模型目录读取器，并立即清除 DeepSeek 模型缓存。
+func (s *GatewayService) SetUpstreamModelsFetcher(fetcher UpstreamModelsFetcher) {
+	if s == nil {
+		return
+	}
+	s.upstreamModelsFetcher = fetcher
+	s.InvalidateAvailableModelsCache(nil, PlatformDeepSeek)
 }
 
 // NewGatewayService creates a new GatewayService
@@ -1217,6 +1234,25 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 			hasAnyMapping = true
 			for model := range mapping {
 				modelSet[model] = struct{}{}
+			}
+			continue
+		}
+
+		if acc.Platform == PlatformDeepSeek && s.upstreamModelsFetcher != nil {
+			// DeepSeek 空映射表示开放上游目录，按该账号 API Key 获取真实模型。
+			models, fetchErr := s.upstreamModelsFetcher.FetchUpstreamSupportedModels(ctx, &acc)
+			if fetchErr != nil {
+				// 一个账号目录失败不应遮挡同组其他账号的可用模型。
+				continue
+			}
+			for _, model := range models {
+				model = strings.TrimSpace(model)
+				if model != "" {
+					modelSet[model] = struct{}{}
+				}
+			}
+			if len(models) > 0 {
+				hasAnyMapping = true
 			}
 		}
 	}

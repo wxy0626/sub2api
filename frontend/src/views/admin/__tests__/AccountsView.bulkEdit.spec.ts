@@ -1019,6 +1019,118 @@ describe('admin AccountsView bulk edit scope', () => {
     expect(testAccount).toHaveBeenCalledWith(18, { modelId: 'gpt-5.6-luna', mode: 'responses' })
   })
 
+  it('DeepSeek 快速测试为 V4 Flash 发送 Responses 模式', async () => {
+    const account = {
+      id: 24,
+      name: 'deepseek-account',
+      platform: 'deepseek',
+      type: 'apikey',
+      status: 'active',
+      schedulable: true,
+      created_at: '2026-07-19T00:00:00Z',
+      updated_at: '2026-07-19T00:00:00Z'
+    }
+    listAccounts.mockResolvedValue({ items: [account], total: 1, page: 1, page_size: 20, pages: 1 })
+    getAccountById.mockResolvedValue(account)
+    getAvailableModels.mockResolvedValue([{ id: 'deepseek-v4-flash', display_name: 'deepseek-v4-flash' }])
+    testAccount.mockResolvedValueOnce({ success: true, message: '账号测试成功' })
+
+    const wrapper = mount(AccountsView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: { template: '<div><slot name="filters" /><slot name="table" /></div>' },
+          DataTable: DataTableStub,
+          Pagination: true,
+          ConfirmDialog: true,
+          AccountTableActions: true,
+          AccountTableFilters: true,
+          AccountBulkActionsBar: AccountBulkActionsBarStub,
+          AccountActionMenu: true,
+          ImportDataModal: true,
+          ReAuthAccountModal: true,
+          AccountStatsModal: true,
+          ScheduledTestsPanel: true,
+          SyncFromCrsModal: true,
+          TempUnschedStatusModal: true,
+          ErrorPassthroughRulesModal: true,
+          TLSFingerprintProfilesModal: true,
+          CreateAccountModal: true,
+          EditAccountModal: true,
+          BulkEditAccountModal: BulkEditAccountModalStub,
+          PlatformTypeBadge: true,
+          AccountCapacityCell: true,
+          AccountStatusIndicator: true,
+          AccountTodayStatsCell: true,
+          AccountGroupsCell: true,
+          AccountUsageCell: true,
+          Icon: true
+        }
+      }
+    })
+
+    await flushPromises()
+    await (wrapper.vm as any).handleQuickTest(account)
+
+    expect(testAccount).toHaveBeenCalledWith(24, { modelId: 'deepseek-v4-flash', mode: 'responses' })
+  })
+
+  it('普通 DeepSeek 快速测试发送 default Chat Completions 模式', async () => {
+    const account = {
+      id: 25,
+      name: 'deepseek-chat-account',
+      platform: 'deepseek',
+      type: 'apikey',
+      status: 'active',
+      schedulable: true,
+      created_at: '2026-07-19T00:00:00Z',
+      updated_at: '2026-07-19T00:00:00Z'
+    }
+    listAccounts.mockResolvedValue({ items: [account], total: 1, page: 1, page_size: 20, pages: 1 })
+    getAccountById.mockResolvedValue(account)
+    getAvailableModels.mockResolvedValue([{ id: 'deepseek-chat', display_name: 'deepseek-chat' }])
+    testAccount.mockResolvedValueOnce({ success: true, message: '账号测试成功' })
+
+    const wrapper = mount(AccountsView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: { template: '<div><slot name="filters" /><slot name="table" /></div>' },
+          DataTable: DataTableStub,
+          Pagination: true,
+          ConfirmDialog: true,
+          AccountTableActions: true,
+          AccountTableFilters: true,
+          AccountBulkActionsBar: AccountBulkActionsBarStub,
+          AccountActionMenu: true,
+          ImportDataModal: true,
+          ReAuthAccountModal: true,
+          AccountStatsModal: true,
+          ScheduledTestsPanel: true,
+          SyncFromCrsModal: true,
+          TempUnschedStatusModal: true,
+          ErrorPassthroughRulesModal: true,
+          TLSFingerprintProfilesModal: true,
+          CreateAccountModal: true,
+          EditAccountModal: true,
+          BulkEditAccountModal: BulkEditAccountModalStub,
+          PlatformTypeBadge: true,
+          AccountCapacityCell: true,
+          AccountStatusIndicator: true,
+          AccountTodayStatsCell: true,
+          AccountGroupsCell: true,
+          AccountUsageCell: true,
+          Icon: true
+        }
+      }
+    })
+
+    await flushPromises()
+    await (wrapper.vm as any).handleQuickTest(account)
+
+    expect(testAccount).toHaveBeenCalledWith(25, { modelId: 'deepseek-chat', mode: 'default' })
+  })
+
   it('状态栏模型检测只使用弹窗预填的单一模型，不因模型列表为空改用其他模型', async () => {
     const account = {
       id: 23,

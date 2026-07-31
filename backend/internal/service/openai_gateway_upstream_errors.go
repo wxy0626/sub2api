@@ -173,6 +173,9 @@ func isOpenAIContextWindowError(upstreamMsg string, upstreamBody []byte) bool {
 		if strings.Contains(lower, "context_too_large") || strings.Contains(lower, "context_length_exceeded") {
 			return true
 		}
+		if strings.Contains(lower, "prompt is too long") || strings.Contains(lower, "prompt too long") {
+			return true
+		}
 		if strings.Contains(lower, "maximum context length") || strings.Contains(lower, "max context length") {
 			return true
 		}
@@ -207,6 +210,37 @@ func isOpenAIContextWindowError(upstreamMsg string, upstreamBody []byte) bool {
 		}
 	}
 	return match(string(upstreamBody))
+}
+
+const (
+	// 上游明确报告上下文超限时，Responses 客户端应收到的标准错误类型。
+	openAIContextWindowClientErrorType = "invalid_request_error"
+	// 上游明确报告上下文超限时，Responses 客户端应收到的标准错误码。
+	openAIContextWindowClientErrorCode = "context_length_exceeded"
+)
+
+// openAIContextWindowClientMessage 将中文排查建议与上游原始英文技术详情合并，
+// 让客户端既能直接理解处理方式，也不会丢失上游用于定位问题的原文。
+func openAIContextWindowClientMessage(upstreamMsg string) string {
+	const clientExplanation = "请求内容超过模型的上下文窗口，请减少历史消息、图片或工具内容后重试。"
+	detail := strings.TrimSpace(upstreamMsg)
+	if detail == "" {
+		return clientExplanation + "上游未提供具体英文错误详情。"
+	}
+	return clientExplanation + "上游技术详情：" + detail
+}
+
+// writeOpenAIContextWindowErrorResponse 回写确定性上下文超限错误，避免被误包装为
+// 502 或进入账号切换；调用方必须只在已确认该错误类型的分支中使用。
+func writeOpenAIContextWindowErrorResponse(c *gin.Context, upstreamMsg string) {
+	MarkResponseCommitted(c)
+	c.JSON(http.StatusBadRequest, gin.H{
+		"error": gin.H{
+			"type":    openAIContextWindowClientErrorType,
+			"code":    openAIContextWindowClientErrorCode,
+			"message": openAIContextWindowClientMessage(upstreamMsg),
+		},
+	})
 }
 
 func (s *OpenAIGatewayService) shouldFailoverUpstreamError(statusCode int) bool {
@@ -371,6 +405,27 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 	}
 	setOpsUpstreamError(c, resp.StatusCode, upstreamMsg, upstreamDetail)
 	logOpenAIInstructionsRequiredDebug(ctx, c, account, resp.StatusCode, upstreamMsg, requestBody, body)
+
+	// 上游错误体明确报告上下文超限时，无论上游 HTTP 状态码为何，都属于确定性的
+	// 客户端请求问题：统一保留 400 和标准 Responses 错误字段，不进入错误透传规则、
+	// 账号状态处理或 failover。该分支保持在自定义透传规则之前，延续 HTTP 400 的既有优先级。
+	if isOpenAIContextWindowError(upstreamMsg, body) {
+		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+			Platform:           account.Platform,
+			AccountID:          account.ID,
+			AccountName:        account.Name,
+			UpstreamStatusCode: resp.StatusCode,
+			UpstreamRequestID:  resp.Header.Get("x-request-id"),
+			Kind:               "http_error",
+			Message:            upstreamMsg,
+			Detail:             upstreamDetail,
+		})
+		writeOpenAIContextWindowErrorResponse(c, upstreamMsg)
+		if upstreamMsg == "" {
+			return nil, fmt.Errorf("openai context window exceeded: upstream status %d", resp.StatusCode)
+		}
+		return nil, fmt.Errorf("openai context window exceeded: %s", upstreamMsg)
+	}
 
 	if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
 		logger.LegacyPrintf("service.openai_gateway",

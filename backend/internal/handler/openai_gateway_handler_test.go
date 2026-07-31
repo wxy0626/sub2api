@@ -172,6 +172,40 @@ func TestOpenAIResponsesRequiredCapability(t *testing.T) {
 	}
 }
 
+func TestOpenAIRequiredCapabilityForRequest_CompactionRequiresResponses(t *testing.T) {
+	tests := []struct {
+		name              string
+		imageIntent       bool
+		compactionRequest bool
+		platform          string
+		want              service.OpenAIEndpointCapability
+	}{
+		{
+			name:              "native compaction without image intent",
+			compactionRequest: true,
+			platform:          service.PlatformOpenAI,
+			want:              service.OpenAIEndpointCapabilityResponses,
+		},
+		{
+			name:     "ordinary request keeps chat capability",
+			platform: service.PlatformOpenAI,
+			want:     service.OpenAIEndpointCapabilityChatCompletions,
+		},
+		{
+			name:              "grok compaction keeps grok routing behavior",
+			compactionRequest: true,
+			platform:          service.PlatformGrok,
+			want:              service.OpenAIEndpointCapabilityChatCompletions,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, openAIRequiredCapabilityForRequest(tt.imageIntent, tt.compactionRequest, tt.platform))
+		})
+	}
+}
+
 func TestResolveOpenAIMessagesMetadataSession_DoesNotDerivePromptCacheKey(t *testing.T) {
 	body := []byte(`{"model":"claude-sonnet-4-5","metadata":{"user_id":"claude-code-session"},"messages":[{"role":"user","content":"hello"}]}`)
 

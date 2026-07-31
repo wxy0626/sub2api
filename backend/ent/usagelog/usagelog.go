@@ -70,6 +70,10 @@ const (
 	FieldLongContextBillingApplied = "long_context_billing_applied"
 	// FieldAccountRateMultiplier holds the string denoting the account_rate_multiplier field in the database.
 	FieldAccountRateMultiplier = "account_rate_multiplier"
+	// FieldRequestBodyBytes holds the string denoting the request_body_bytes field in the database.
+	FieldRequestBodyBytes = "request_body_bytes"
+	// FieldMaxRequestBodyBytes holds the string denoting the max_request_body_bytes field in the database.
+	FieldMaxRequestBodyBytes = "max_request_body_bytes"
 	// FieldBillingType holds the string denoting the billing_type field in the database.
 	FieldBillingType = "billing_type"
 	// FieldStream holds the string denoting the stream field in the database.
@@ -184,6 +188,8 @@ var Columns = []string{
 	FieldRateMultiplier,
 	FieldLongContextBillingApplied,
 	FieldAccountRateMultiplier,
+	FieldRequestBodyBytes,
+	FieldMaxRequestBodyBytes,
 	FieldBillingType,
 	FieldStream,
 	FieldDurationMs,
@@ -430,6 +436,16 @@ func ByLongContextBillingApplied(opts ...sql.OrderTermOption) OrderOption {
 // ByAccountRateMultiplier orders the results by the account_rate_multiplier field.
 func ByAccountRateMultiplier(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldAccountRateMultiplier, opts...).ToFunc()
+}
+
+// ByRequestBodyBytes orders the results by the request_body_bytes field.
+func ByRequestBodyBytes(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldRequestBodyBytes, opts...).ToFunc()
+}
+
+// ByMaxRequestBodyBytes orders the results by the max_request_body_bytes field.
+func ByMaxRequestBodyBytes(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldMaxRequestBodyBytes, opts...).ToFunc()
 }
 
 // ByBillingType orders the results by the billing_type field.

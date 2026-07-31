@@ -99,13 +99,10 @@ const qwenModels = [
   'qwq-32b', 'qwq-32b-preview'
 ]
 
-// DeepSeek
+// deepseekModels 是 DeepSeek 静态候选模型，仅保留最新的 Flash 和 Pro。
 const deepseekModels = [
-  'deepseek-chat', 'deepseek-coder', 'deepseek-reasoner',
-  'deepseek-v3', 'deepseek-v3-0324',
-  'deepseek-r1', 'deepseek-r1-0528',
-  'deepseek-r1-distill-qwen-32b', 'deepseek-r1-distill-qwen-14b', 'deepseek-r1-distill-qwen-7b',
-  'deepseek-r1-distill-llama-70b', 'deepseek-r1-distill-llama-8b'
+  'deepseek-v4-flash',
+  'deepseek-v4-pro'
 ]
 
 // Mistral
@@ -409,8 +406,10 @@ const syncedImageModelPrefix = 'gpt-image-2'
 // defaultOpenAIModelWhitelist 是无既有映射时默认开放的 GPT-5.6 与 GPT Image 2 模型。
 const defaultOpenAIModelWhitelist = ['gpt-5.6', 'gpt-image-2']
 
-// isAllowedSyncedModel 判断模型是否可由“同步最新支持模型”或“同步上游支持的模型”写入白名单。
-export function isAllowedSyncedModel(model: string): boolean {
+// isAllowedSyncedModel 按平台判断模型是否可写入“同步最新支持模型”或“同步上游支持的模型”白名单。
+export function isAllowedSyncedModel(model: string, platform = 'openai'): boolean {
+  if (platform.trim().toLowerCase() !== 'openai') return model.trim().length > 0
+
   const normalizedModel = model.trim().toLowerCase()
   if (normalizedModel === syncedImageModelPrefix || normalizedModel.startsWith(`${syncedImageModelPrefix}-`)) {
     return true
@@ -424,8 +423,8 @@ export function isAllowedSyncedModel(model: string): boolean {
   return majorVersion > 5 || (majorVersion === 5 && minorVersion >= 6)
 }
 
-// restrictSyncedModels 清理同步结果和已有白名单，去重后只保留允许的模型系列。
-export function restrictSyncedModels(models: string[]): string[] {
+// restrictSyncedModels 按平台清理同步结果，去重后返回可写入模型白名单的非空模型。
+export function restrictSyncedModels(models: string[], platform = 'openai'): string[] {
   // uniqueModels 用于按原始模型标识去重，保持首个有效条目的顺序。
   const uniqueModels = new Set<string>()
   // restrictedModels 是清理后可写入模型白名单的结果。
@@ -433,7 +432,7 @@ export function restrictSyncedModels(models: string[]): string[] {
 
   for (const rawModel of models) {
     const model = rawModel.trim()
-    if (!isAllowedSyncedModel(model) || uniqueModels.has(model)) continue
+    if (!isAllowedSyncedModel(model, platform) || uniqueModels.has(model)) continue
     uniqueModels.add(model)
     restrictedModels.push(model)
   }

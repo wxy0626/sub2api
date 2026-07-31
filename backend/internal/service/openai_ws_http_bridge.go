@@ -185,6 +185,17 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	if err != nil {
 		return nil, fmt.Errorf("prepare http bridge body: %w", err)
 	}
+	if account.Platform == PlatformOpenAI {
+		// HTTP bridge 会先删除 WS 字段并重新编码 body；清理必须放在这次
+		// 重建之后，保证后续 build request 拿到的就是最终安全输入。
+		sanitizedBody, changed, sanitizeErr := sanitizeOpenAIResponsesInputItemIDs(body)
+		if sanitizeErr != nil {
+			return nil, fmt.Errorf("sanitize OpenAI Responses input item IDs in HTTP bridge: %w", sanitizeErr)
+		}
+		if changed {
+			body = sanitizedBody
+		}
+	}
 
 	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 	var upstreamReq *http.Request

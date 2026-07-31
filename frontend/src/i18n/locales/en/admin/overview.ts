@@ -44,6 +44,7 @@ export default {
       noGroup: 'No Group',
       requests: 'Requests',
       tokens: 'Tokens',
+      requestSize: 'Request Size',
       cache: 'Cache',
       actual: 'Actual',
       standard: 'Standard',
@@ -944,6 +945,7 @@ export default {
         gemini: 'Gemini',
         antigravity: 'Antigravity',
         grok: 'Grok',
+        deepseek: 'DeepSeek',
         composite: 'Composite',
       },
       deleteConfirm:

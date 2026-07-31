@@ -110,6 +110,7 @@ export default {
         gemini: 'Gemini',
         antigravity: 'Antigravity',
         grok: 'Grok',
+        deepseek: 'DeepSeek',
       },
       types: {
         oauth: 'OAuth',
@@ -119,6 +120,7 @@ export default {
         codeAssist: 'Code Assist',
         antigravityOauth: 'Antigravity OAuth',
         grokOauth: 'Grok OAuth',
+        deepseekApiKey: 'DeepSeek API Key',
         antigravityApikey: 'Connect via Base URL + API Key',
         upstream: 'Upstream',
         upstreamDesc: 'Connect via Base URL + API Key'
@@ -597,6 +599,10 @@ export default {
       grok: {
         baseUrlHint: 'Grok OAuth accounts forward to the official xAI API base URL.',
         apiKeyHint: 'Grok subscription support uses OAuth refresh tokens; API keys are out of scope for this account type.'
+      },
+      deepseek: {
+        baseUrlHint: 'Leave empty to use the official DeepSeek API: https://api.deepseek.com.',
+        apiKeyHint: 'Your DeepSeek API Key. deepseek-v4-flash supports the Responses API; other models use the Chat Completions-compatible endpoint.'
       },
       anthropic: {
         apiKeyPassthrough: 'Auto passthrough (auth only)',

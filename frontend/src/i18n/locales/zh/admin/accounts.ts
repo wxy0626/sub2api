@@ -311,6 +311,7 @@ export default {
         gemini: 'Gemini',
         antigravity: 'Antigravity',
         grok: 'Grok',
+        deepseek: 'DeepSeek',
       },
       types: {
         oauth: 'OAuth',
@@ -320,6 +321,7 @@ export default {
         codeAssist: 'Code Assist',
         antigravityOauth: 'Antigravity OAuth',
         grokOauth: 'Grok OAuth',
+        deepseekApiKey: 'DeepSeek API Key',
         antigravityApikey: '通过 Base URL + API Key 连接',
         upstream: '对接上游',
         upstreamDesc: '通过 Base URL + API Key 连接上游'
@@ -659,6 +661,10 @@ export default {
       grok: {
         baseUrlHint: 'Grok OAuth 账号会转发到官方 xAI API Base URL。',
         apiKeyHint: 'Grok 订阅支持使用 OAuth refresh token；API Key 账号不在本次范围内。'
+      },
+      deepseek: {
+        baseUrlHint: '留空使用官方 DeepSeek API：https://api.deepseek.com。',
+        apiKeyHint: '您的 DeepSeek API Key。deepseek-v4-flash 支持 Responses API，其余模型按 Chat Completions 兼容接口处理。'
       },
       anthropic: {
         apiKeyPassthrough: '自动透传（仅替换认证）',

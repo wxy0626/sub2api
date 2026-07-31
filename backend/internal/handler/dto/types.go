@@ -532,6 +532,10 @@ type UsageLog struct {
 
 	// BillingMode 计费模式：token/image
 	BillingMode *string `json:"billing_mode,omitempty"`
+	// RequestBodyBytes 请求体实际字节数；历史数据或未采集时为 null。
+	RequestBodyBytes *int64 `json:"request_body_bytes"`
+	// MaxRequestBodyBytes 请求实际生效的 gateway.max_body_size；未知时为 null。
+	MaxRequestBodyBytes *int64 `json:"max_request_body_bytes"`
 
 	CreatedAt time.Time `json:"created_at"`
 

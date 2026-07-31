@@ -245,6 +245,8 @@ const defaultClientTab = computed(() => {
   switch (props.platform) {
     case 'openai':
       return 'codex'
+    case 'deepseek':
+      return 'codex'
     case 'grok':
       return 'grok'
     case 'gemini':
@@ -350,6 +352,10 @@ const clientTabs = computed((): TabConfig[] => {
       tabs.push({ id: 'opencode', label: t('keys.useKeyModal.cliTabs.opencode'), icon: TerminalIcon })
       return tabs
     }
+    case 'deepseek':
+      return [
+        { id: 'codex', label: t('keys.useKeyModal.cliTabs.codexCli'), icon: TerminalIcon }
+      ]
     case 'gemini':
       return [
         { id: 'gemini', label: t('keys.useKeyModal.cliTabs.geminiCli'), icon: SparkleIcon },
@@ -423,6 +429,8 @@ const platformDescription = computed(() => {
         return t('keys.useKeyModal.grok.codexDescription')
       }
       return t('keys.useKeyModal.grok.description')
+    case 'deepseek':
+      return t('keys.useKeyModal.deepseek.description')
     default:
       return t('keys.useKeyModal.description')
   }
@@ -455,6 +463,10 @@ const platformNote = computed(() => {
       return activeTab.value === 'windows'
         ? t('keys.useKeyModal.grok.noteWindows')
         : t('keys.useKeyModal.grok.note')
+    case 'deepseek':
+      return activeTab.value === 'windows'
+        ? t('keys.useKeyModal.deepseek.noteWindows')
+        : t('keys.useKeyModal.deepseek.note')
     default:
       return t('keys.useKeyModal.note')
   }
@@ -543,6 +555,8 @@ const currentFiles = computed((): FileConfig[] => {
         return generateGrokCodexFiles(apiBase, apiKey)
       }
       return generateGrokFiles(apiBase, apiKey)
+    case 'deepseek':
+      return generateDeepSeekCodexFiles(baseRoot, apiKey)
     default:
       return generateAnthropicFiles(baseUrl, apiKey)
   }
@@ -810,6 +824,103 @@ responses_websockets_v2 = true`
     {
       path: isWindows ? 'PowerShell' : 'Terminal',
       content: environmentContent
+    }
+  ]
+}
+
+// 生成 DeepSeek 的 Codex 配置，只登记最新模型并通过 Responses API 访问代理。
+function generateDeepSeekCodexFiles(baseRoot: string, apiKey: string): FileConfig[] {
+  // isWindows 用于决定配置文件展示路径。
+  const isWindows = activeTab.value === 'windows'
+  // configDir 是当前系统展示给用户的 Codex 配置目录。
+  const configDir = isWindows ? '%USERPROFILE%\\.codex' : '~/.codex'
+  // providerBaseUrl 是不带 /v1 的代理根地址，并统一补上末尾斜杠。
+  const providerBaseUrl = baseRoot.replace(/\/+$/, '') + '/'
+  // deepSeekModelMetadata 是 Responses 模型 Flash 使用的 Codex 能力描述。
+  const deepSeekModelMetadata = {
+    prefer_websockets: false,
+    support_verbosity: true,
+    default_verbosity: 'low',
+    apply_patch_tool_type: 'freeform',
+    web_search_tool_type: 'text',
+    input_modalities: ['text'],
+    supports_image_detail_original: false,
+    truncation_policy: { mode: 'tokens', limit: 10000 },
+    supports_parallel_tool_calls: true,
+    tool_mode: null,
+    multi_agent_version: 'v2',
+    use_responses_lite: false,
+    include_skills_usage_instructions: false,
+    auto_review_model_override: null,
+    context_window: 1048576,
+    max_context_window: 1048576,
+    effective_context_window_percent: 95,
+    auto_compact_token_limit: null,
+    comp_hash: '3000',
+    reasoning_summary_format: 'experimental',
+    default_reasoning_summary: 'none',
+    default_reasoning_level: 'high',
+    supported_reasoning_levels: [
+      { effort: 'low', description: 'Fast responses with lighter reasoning' },
+      { effort: 'high', description: 'Extra high reasoning depth for complex problems' },
+      { effort: 'max', description: 'Maximum reasoning depth for the hardest problems' }
+    ],
+    shell_type: 'shell_command',
+    visibility: 'list',
+    minimal_client_version: '0.144.0',
+    supported_in_api: true,
+    availability_nux: null,
+    upgrade: null,
+    model_messages: {
+      instructions_variables: {
+        personality_default: '',
+        personality_friendly: '',
+        personality_pragmatic: ''
+      },
+      approvals: null
+    },
+    experimental_supported_tools: [],
+    supports_search_tool: true,
+    default_service_tier: null,
+    supports_reasoning_summaries: true
+  }
+  // modelsContent 只登记支持 Responses 的 Flash，Pro 必须走 Chat Completions，不能标记为 Codex 模型。
+  const modelsContent = JSON.stringify({
+    models: [
+      {
+        ...deepSeekModelMetadata,
+        slug: 'deepseek-v4-flash',
+        display_name: 'DeepSeek-V4-Flash',
+        description: 'Latest frontier agentic coding model.',
+        priority: 1
+      }
+    ]
+  }, null, 2)
+  // configContent 使用 Sub2API API Key 作为 Codex 的 Bearer 凭据。
+  const configContent = [
+    'model = "deepseek-v4-flash"',
+    'model_provider = "deepseek"',
+    'preferred_auth_method = "apikey"',
+    'forced_login_method = "api"',
+    'model_reasoning_effort = "high"',
+    'model_catalog_json = "~/.codex/models.json"',
+    '',
+    '[model_providers.deepseek]',
+    'name = "deepseek"',
+    'base_url = "' + providerBaseUrl + '"',
+    'wire_api = "responses"',
+    'experimental_bearer_token = "' + apiKey + '"'
+  ].join('\n')
+
+  return [
+    {
+      path: configDir + '/config.toml',
+      content: configContent,
+      hint: t('keys.useKeyModal.deepseek.configTomlHint')
+    },
+    {
+      path: configDir + '/models.json',
+      content: modelsContent
     }
   ]
 }

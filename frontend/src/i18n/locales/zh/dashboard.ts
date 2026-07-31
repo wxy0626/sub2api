@@ -184,6 +184,12 @@ export default {
         codexNote: '将 config.toml 保存到 ~/.codex，并在启动 Codex 前设置 SUB2API_API_KEY。',
         codexNoteWindows: '将 config.toml 保存到 %USERPROFILE%\\.codex，并在 PowerShell 中设置 SUB2API_API_KEY 后启动 Codex。'
       },
+      deepseek: {
+        description: '配置 DeepSeek Codex CLI，让请求通过当前 Sub2API DeepSeek 分组发送。Responses 目录仅包含 deepseek-v4-flash，deepseek-v4-pro 使用 Chat Completions。',
+        configTomlHint: '请将 config.toml 和 models.json 保存到同一个 .codex 目录，并保留配置中的 ~/.codex/models.json 路径。',
+        note: '将 config.toml 和 models.json 保存到 ~/.codex，然后启动 Codex 使用 DeepSeek Responses API。',
+        noteWindows: '将 config.toml 和 models.json 保存到 %USERPROFILE%\\.codex，然后启动 Codex 使用 DeepSeek Responses API。'
+      },
       opencode: {
         title: 'OpenCode 配置示例',
         subtitle: 'opencode.json',
@@ -310,6 +316,7 @@ export default {
     inboundEndpoint: '入站端点',
     upstreamEndpoint: '上游端点',
     type: '类型',
+    requestSize: '请求大小',
     tokens: 'Token',
     cost: '费用',
     firstToken: '首 Token',
