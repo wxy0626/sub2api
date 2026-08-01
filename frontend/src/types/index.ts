@@ -2049,12 +2049,66 @@ export interface AccountUsageSummary {
   } | null
 }
 
+// 账号测试统计响应，明确区分日期历史、专用汇总和最近明细。
+export interface AccountTestUsageStats {
+  history: AccountTestUsageHistory[]
+  summary: AccountTestUsageSummary
+  records: AccountTestUsageRecord[]
+}
+
+// 账号测试按日期聚合的历史统计，不包含费用字段。
+export interface AccountTestUsageHistory {
+  date: string
+  label: string
+  requests: number
+  successful_requests: number
+  failed_requests: number
+  input_tokens: number
+  output_tokens: number
+  cache_tokens: number
+  tokens: number
+}
+
+// 账号测试期间的专用汇总统计，不混入正式 usage_logs 的费用字段。
+export interface AccountTestUsageSummary {
+  days: number
+  actual_days_used: number
+  total_requests: number
+  successful_requests: number
+  failed_requests: number
+  input_tokens: number
+  output_tokens: number
+  cache_tokens: number
+  total_tokens: number
+  avg_duration_ms: number
+  today: AccountTestUsageHistory | null
+}
+
+// 管理员账号测试明细，费用字段 intentionally 不存在，避免误解为用户账单。
+export interface AccountTestUsageRecord {
+  id: number
+  model: string
+  test_mode: string
+  endpoint: string
+  input_tokens: number
+  output_tokens: number
+  cache_creation_tokens: number
+  cache_read_tokens: number
+  duration_ms: number
+  success: boolean
+  status_code: number
+  error_message?: string
+  created_at: string
+}
+
 export interface AccountUsageStatsResponse {
   history: AccountUsageHistory[]
   summary: AccountUsageSummary
   models: ModelStat[]
   endpoints: EndpointStat[]
   upstream_endpoints: EndpointStat[]
+  // 管理员账号测试的独立统计，后端无数据时返回 null 或省略。
+  test_usage?: AccountTestUsageStats | null
 }
 
 // ==================== User Attribute Types ====================

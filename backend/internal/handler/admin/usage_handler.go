@@ -15,6 +15,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/Wei-Shaw/sub2api/internal/util/logredact"
 
 	"github.com/gin-gonic/gin"
 )
@@ -25,6 +26,8 @@ type UsageHandler struct {
 	apiKeyService  *service.APIKeyService
 	adminService   service.AdminService
 	cleanupService *service.UsageCleanupService
+	// accountTestUsageRepository 读取独立的管理员账号测试记录，不参与正式账单。
+	accountTestUsageRepository service.AccountTestUsageRepository
 }
 
 // NewUsageHandler creates a new admin usage handler
@@ -42,6 +45,19 @@ func NewUsageHandler(
 	}
 }
 
+// NewUsageHandlerWithAccountTestUsage 创建包含全局账号测试记录查询能力的管理员使用记录处理器。
+func NewUsageHandlerWithAccountTestUsage(
+	usageService *service.UsageService,
+	apiKeyService *service.APIKeyService,
+	adminService service.AdminService,
+	cleanupService *service.UsageCleanupService,
+	accountTestUsageRepository service.AccountTestUsageRepository,
+) *UsageHandler {
+	handler := NewUsageHandler(usageService, apiKeyService, adminService, cleanupService)
+	handler.accountTestUsageRepository = accountTestUsageRepository
+	return handler
+}
+
 // CreateUsageCleanupTaskRequest represents cleanup task creation request
 type CreateUsageCleanupTaskRequest struct {
 	StartDate   string  `json:"start_date"`
@@ -55,6 +71,118 @@ type CreateUsageCleanupTaskRequest struct {
 	Stream      *bool   `json:"stream"`
 	BillingType *int8   `json:"billing_type"`
 	Timezone    string  `json:"timezone"`
+}
+
+// parseAccountTestUsageFilters 解析全局账号测试列表和统计共用的筛选条件。
+func parseAccountTestUsageFilters(c *gin.Context) (usagestats.AccountTestUsageGlobalFilters, bool) {
+	filters := usagestats.AccountTestUsageGlobalFilters{
+		Platform: strings.TrimSpace(c.Query("platform")),
+		Model:    strings.TrimSpace(c.Query("model")),
+		TestMode: strings.TrimSpace(c.Query("test_mode")),
+	}
+	if value := strings.TrimSpace(c.Query("account_id")); value != "" {
+		id, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || id <= 0 {
+			response.BadRequest(c, "account_id 无效，必须是大于 0 的整数")
+			return filters, false
+		}
+		filters.AccountID = id
+	}
+	if value := strings.TrimSpace(c.Query("success")); value != "" {
+		success, err := strconv.ParseBool(value)
+		if err != nil {
+			response.BadRequest(c, "success 无效，只能填写 true 或 false")
+			return filters, false
+		}
+		filters.Success = &success
+	}
+	userTZ := c.Query("timezone")
+	if value := strings.TrimSpace(c.Query("start_date")); value != "" {
+		start, err := timezone.ParseInUserLocation("2006-01-02", value, userTZ)
+		if err != nil {
+			response.BadRequest(c, "start_date 日期格式无效，请使用 YYYY-MM-DD")
+			return filters, false
+		}
+		filters.StartTime = &start
+	}
+	if value := strings.TrimSpace(c.Query("end_date")); value != "" {
+		end, err := timezone.ParseInUserLocation("2006-01-02", value, userTZ)
+		if err != nil {
+			response.BadRequest(c, "end_date 日期格式无效，请使用 YYYY-MM-DD")
+			return filters, false
+		}
+		end = end.AddDate(0, 0, 1)
+		filters.EndTime = &end
+	}
+	if filters.StartTime != nil && filters.EndTime != nil && !filters.StartTime.Before(*filters.EndTime) {
+		response.BadRequest(c, "日期范围无效，start_date 必须早于或等于 end_date")
+		return filters, false
+	}
+	return filters, true
+}
+
+// respondAccountTestUsageQueryError 返回账号测试查询的中文原因和脱敏技术详情。
+func respondAccountTestUsageQueryError(c *gin.Context, operation string, err error) {
+	// detail 只作为管理员排查线索返回，敏感字段统一经过后端脱敏。
+	detail := "未提供底层错误详情"
+	if err != nil {
+		detail = logredact.RedactText(err.Error(), "authorization", "cookie", "api_key", "apikey", "token", "secret", "password")
+	}
+	response.ErrorWithDetails(
+		c,
+		http.StatusInternalServerError,
+		"查询管理员账号测试"+operation+"失败，请检查数据库连接和 account_test_usage_logs 表",
+		"ACCOUNT_TEST_USAGE_QUERY_FAILED",
+		map[string]string{"detail": detail},
+	)
+}
+
+// ListTestLogs 返回全局管理员账号测试记录；这些记录不计入用户账单。
+// GET /api/v1/admin/usage/test-logs
+func (h *UsageHandler) ListTestLogs(c *gin.Context) {
+	if h == nil || h.accountTestUsageRepository == nil {
+		response.Error(c, http.StatusServiceUnavailable, "账号测试记录服务不可用，请确认后端测试记录仓储已配置")
+		return
+	}
+	filters, ok := parseAccountTestUsageFilters(c)
+	if !ok {
+		return
+	}
+	page, pageSize := response.ParsePagination(c)
+	params := pagination.PaginationParams{Page: page, PageSize: pageSize, SortBy: "created_at", SortOrder: "desc"}
+	items, result, err := h.accountTestUsageRepository.ListGlobal(c.Request.Context(), params, filters)
+	if err != nil {
+		respondAccountTestUsageQueryError(c, "记录", err)
+		return
+	}
+	if result == nil {
+		response.Error(c, http.StatusInternalServerError, "查询管理员账号测试记录失败，仓储未返回分页结果，请检查后端实现")
+		return
+	}
+	response.Paginated(c, items, result.Total, page, pageSize)
+}
+
+// TestStats 返回全局管理员账号测试汇总和平台聚合，不返回费用字段。
+// GET /api/v1/admin/usage/test-stats
+func (h *UsageHandler) TestStats(c *gin.Context) {
+	if h == nil || h.accountTestUsageRepository == nil {
+		response.Error(c, http.StatusServiceUnavailable, "账号测试统计服务不可用，请确认后端测试记录仓储已配置")
+		return
+	}
+	filters, ok := parseAccountTestUsageFilters(c)
+	if !ok {
+		return
+	}
+	stats, err := h.accountTestUsageRepository.GetGlobalStats(c.Request.Context(), filters)
+	if err != nil {
+		respondAccountTestUsageQueryError(c, "统计", err)
+		return
+	}
+	if stats == nil {
+		respondAccountTestUsageQueryError(c, "统计", nil)
+		return
+	}
+	response.Success(c, stats)
 }
 
 // List handles listing all usage records with filters

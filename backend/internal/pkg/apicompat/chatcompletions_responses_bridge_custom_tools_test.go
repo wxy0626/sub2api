@@ -159,6 +159,65 @@ func TestResponsesInputToChatMessages_CustomToolCallHistory(t *testing.T) {
 	assert.JSONEq(t, `"main.go"`, string(messages[2].Content))
 }
 
+// 工具输出中的图片必须脱离 tool 文本消息，避免 data URI 被当作普通 token 展开。
+func TestResponsesInputToChatMessages_ToolOutputImagesStayOutOfToolText(t *testing.T) {
+	const imageDataURI = "data:image/png;base64,IMAGE_DATA_MUST_NOT_ENTER_TOOL_TEXT"
+
+	cases := []struct {
+		name       string
+		callType   string
+		outputType string
+	}{
+		{name: "function", callType: "function_call", outputType: "function_call_output"},
+		{name: "custom", callType: "custom_tool_call", outputType: "custom_tool_call_output"},
+		{name: "tool search", callType: "tool_search_call", outputType: "tool_search_output"},
+		{name: "mcp", callType: "mcp_tool_call", outputType: "mcp_tool_call_output"},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			input := []any{
+				map[string]any{
+					"type":      tt.callType,
+					"call_id":   "call_image_1",
+					"name":      "inspect",
+					"input":     "inspect image",
+					"arguments": map[string]any{"path": "image.png"},
+				},
+				map[string]any{
+					"type":    tt.outputType,
+					"call_id": "call_image_1",
+					"output": []any{
+						map[string]any{"type": "input_text", "text": "before image"},
+						map[string]any{"type": "input_image", "image_url": imageDataURI, "detail": "high"},
+						map[string]any{"type": "input_text", "text": "after image"},
+					},
+				},
+			}
+			rawInput, err := json.Marshal(input)
+			require.NoError(t, err)
+
+			messages, err := responsesInputToChatMessages("", rawInput)
+			require.NoError(t, err)
+			require.Len(t, messages, 3)
+			require.Equal(t, "assistant", messages[0].Role)
+			require.Equal(t, "tool", messages[1].Role)
+			require.Equal(t, "user", messages[2].Role)
+
+			assert.JSONEq(t, `"before image\n\nafter image"`, string(messages[1].Content))
+			assert.NotContains(t, string(messages[1].Content), imageDataURI)
+
+			var imageParts []ChatContentPart
+			require.NoError(t, json.Unmarshal(messages[2].Content, &imageParts))
+			require.Len(t, imageParts, 1)
+			assert.Equal(t, "image_url", imageParts[0].Type)
+			require.NotNil(t, imageParts[0].ImageURL)
+			assert.Equal(t, imageDataURI, imageParts[0].ImageURL.URL)
+			assert.Equal(t, "high", imageParts[0].ImageURL.Detail)
+		})
+	}
+}
+
 func TestChatCompletionsResponseToResponses_CustomToolCallOutputItem(t *testing.T) {
 	resp := &ChatCompletionsResponse{
 		ID: "cc-1",

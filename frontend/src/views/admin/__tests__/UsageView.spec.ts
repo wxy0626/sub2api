@@ -4,7 +4,7 @@ import { defineComponent, ref } from 'vue'
 
 import UsageView from '../UsageView.vue'
 
-const { list, getStats, getSnapshotV2, getById, getModelStats, listErrorLogs, routeQuery } = vi.hoisted(() => {
+const { list, getStats, listTestLogs, getTestStats, getSnapshotV2, getById, getModelStats, listErrorLogs, routeQuery } = vi.hoisted(() => {
   vi.stubGlobal('localStorage', {
     getItem: vi.fn(() => null),
     setItem: vi.fn(),
@@ -14,6 +14,8 @@ const { list, getStats, getSnapshotV2, getById, getModelStats, listErrorLogs, ro
   return {
     list: vi.fn(),
     getStats: vi.fn(),
+    listTestLogs: vi.fn(),
+    getTestStats: vi.fn(),
     getSnapshotV2: vi.fn(),
     getById: vi.fn(),
     getModelStats: vi.fn(),
@@ -55,6 +57,8 @@ vi.mock('@/api/admin', () => ({
 vi.mock('@/api/admin/usage', () => ({
   adminUsageAPI: {
     list: vi.fn(),
+    listTestLogs,
+    getTestStats,
   },
 }))
 
@@ -154,6 +158,8 @@ describe('admin UsageView route filters', () => {
     vi.useFakeTimers()
     Object.keys(routeQuery).forEach((key) => delete routeQuery[key])
     list.mockReset().mockResolvedValue({ items: [], total: 0, pages: 0 })
+    listTestLogs.mockReset().mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20, pages: 0 })
+    getTestStats.mockReset().mockResolvedValue({ total_requests: 0, successful_requests: 0, failed_requests: 0, input_tokens: 0, output_tokens: 0, cache_tokens: 0, total_tokens: 0, avg_duration_ms: 0, by_platform: [] })
     getStats.mockReset().mockResolvedValue({
       total_requests: 0,
       total_input_tokens: 0,
@@ -243,6 +249,32 @@ describe('admin UsageView route filters', () => {
 
     expect(list).toHaveBeenCalledWith(expect.objectContaining({ user_id: 42 }), expect.anything())
     expect(wrapper.find('[data-test="user-filter-label"]').text()).toBe('42')
+  })
+
+  it('loads account test records and stats only after switching to the account tests tab', async () => {
+    const wrapper = mountRouteFilteredUsageView()
+    await flushPromises()
+
+    expect(listTestLogs).not.toHaveBeenCalled()
+    expect(getTestStats).not.toHaveBeenCalled()
+
+    const tabs = wrapper.findAll('[data-testid="usage-detail-tab"]')
+    await tabs[3].trigger('click')
+    await flushPromises()
+
+    expect(listTestLogs).toHaveBeenCalledWith(expect.objectContaining({
+      page: 1,
+      start_date: expect.any(String),
+      end_date: expect.any(String),
+      timezone: expect.any(String),
+    }), expect.anything())
+    expect(getTestStats).toHaveBeenCalledWith(expect.objectContaining({
+      start_date: expect.any(String),
+      end_date: expect.any(String),
+      timezone: expect.any(String),
+    }), expect.anything())
+    expect(listTestLogs.mock.calls[0][0]).not.toHaveProperty('total_cost')
+    expect(listTestLogs.mock.calls[0][0]).not.toHaveProperty('billing_type')
   })
 })
 
@@ -524,7 +556,7 @@ describe('admin UsageView ranking tab', () => {
     expect(wrapper.find('[data-test="ranking"]').exists()).toBe(false)
 
     const tabs = wrapper.findAll('[data-testid="usage-detail-tab"]')
-    expect(tabs).toHaveLength(3)
+    expect(tabs).toHaveLength(4)
     await tabs[2].trigger('click')
     await flushPromises()
     expect(wrapper.find('[data-test="ranking"]').exists()).toBe(true)

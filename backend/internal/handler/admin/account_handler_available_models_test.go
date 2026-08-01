@@ -166,7 +166,7 @@ func TestAccountHandlerGetAvailableModels_GrokDefaultsToXAIModelsWithoutMapping(
 	require.Contains(t, ids, "grok-build-0.1")
 }
 
-// TestAccountHandlerGetAvailableModels_GrokAPIKeyFetchesUpstreamModels 验证 Grok API Key 无白名单时使用实时上游目录。
+// TestAccountHandlerGetAvailableModels_GrokAPIKeyFetchesCallableModels 验证模型测试下拉只返回上游 /v1/models 目录。
 func TestAccountHandlerGetAvailableModels_GrokAPIKeyFetchesUpstreamModels(t *testing.T) {
 	svc := &availableModelsAdminService{
 		stubAdminService: newStubAdminService(),

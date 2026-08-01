@@ -147,6 +147,7 @@ func ProvideOpenAIQuotaService(
 func ProvideAccountUsageService(
 	accountRepo AccountRepository,
 	usageLogRepo UsageLogRepository,
+	accountTestUsageRepo AccountTestUsageRepository,
 	usageFetcher ClaudeUsageFetcher,
 	geminiQuotaService *GeminiQuotaService,
 	antigravityQuotaFetcher *AntigravityQuotaFetcher,
@@ -161,6 +162,7 @@ func ProvideAccountUsageService(
 	service := NewAccountUsageService(
 		accountRepo,
 		usageLogRepo,
+		accountTestUsageRepo,
 		usageFetcher,
 		geminiQuotaService,
 		antigravityQuotaFetcher,
@@ -184,6 +186,7 @@ func ProvideAccountTestService(
 	httpUpstream HTTPUpstream,
 	cfg *config.Config,
 	tlsFPProfileService *TLSFingerprintProfileService,
+	accountTestUsageRepo AccountTestUsageRepository,
 	openAIGatewayService *OpenAIGatewayService,
 ) *AccountTestService {
 	service := NewAccountTestService(
@@ -196,6 +199,7 @@ func ProvideAccountTestService(
 		cfg,
 		tlsFPProfileService,
 	)
+	service.SetAccountTestUsageRepository(accountTestUsageRepo)
 	service.agentIdentityWS = openAIGatewayService
 	return service
 }

@@ -291,6 +291,7 @@ type ClaudeUsageFetcher interface {
 type AccountUsageService struct {
 	accountRepo             AccountRepository
 	usageLogRepo            UsageLogRepository
+	accountTestUsageRepo    AccountTestUsageRepository
 	usageFetcher            ClaudeUsageFetcher
 	geminiQuotaService      *GeminiQuotaService
 	antigravityQuotaFetcher *AntigravityQuotaFetcher
@@ -308,6 +309,7 @@ type AccountUsageService struct {
 func NewAccountUsageService(
 	accountRepo AccountRepository,
 	usageLogRepo UsageLogRepository,
+	accountTestUsageRepo AccountTestUsageRepository,
 	usageFetcher ClaudeUsageFetcher,
 	geminiQuotaService *GeminiQuotaService,
 	antigravityQuotaFetcher *AntigravityQuotaFetcher,
@@ -321,6 +323,7 @@ func NewAccountUsageService(
 	return &AccountUsageService{
 		accountRepo:             accountRepo,
 		usageLogRepo:            usageLogRepo,
+		accountTestUsageRepo:    accountTestUsageRepo,
 		usageFetcher:            usageFetcher,
 		geminiQuotaService:      geminiQuotaService,
 		antigravityQuotaFetcher: antigravityQuotaFetcher,
@@ -1435,6 +1438,21 @@ func (s *AccountUsageService) GetAccountUsageStats(ctx context.Context, accountI
 	if err != nil {
 		return nil, fmt.Errorf("get account usage stats failed: %w", err)
 	}
+	if s.accountTestUsageRepo == nil || s.accountRepo == nil {
+		return stats, nil
+	}
+	account, accountErr := s.accountRepo.GetByID(ctx, accountID)
+	if accountErr != nil {
+		return nil, fmt.Errorf("获取账号测试统计失败：读取账号信息失败，请检查账号是否存在和数据库连接。技术详情：%w", accountErr)
+	}
+	if account == nil {
+		return stats, nil
+	}
+	testUsage, testErr := s.accountTestUsageRepo.GetStats(ctx, accountID, startTime, endTime)
+	if testErr != nil {
+		return nil, fmt.Errorf("获取账号测试统计失败：测试记录表查询失败，请确认数据库迁移已执行。技术详情：%w", testErr)
+	}
+	stats.TestUsage = testUsage
 	return stats, nil
 }
 

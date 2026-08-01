@@ -392,6 +392,77 @@
           </div>
         </div>
 
+        <!-- 管理员账号测试独立统计，不与正式 usage_logs 混合。 -->
+        <section v-if="supportsTestUsage" class="card border-violet-200 bg-violet-50/40 p-4 dark:border-violet-800/40 dark:bg-violet-950/10">
+          <div class="mb-4 flex items-start justify-between gap-3">
+            <div>
+              <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
+                {{ t('admin.accounts.stats.testUsage') }}
+              </h3>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                {{ t('admin.accounts.stats.testUsageHint') }}
+              </p>
+            </div>
+            <Icon name="beaker" size="sm" class="text-violet-600 dark:text-violet-400" />
+          </div>
+          <template v-if="testUsage">
+            <div class="grid grid-cols-2 gap-3 lg:grid-cols-5">
+              <div class="rounded-lg bg-white/80 p-3 dark:bg-dark-700/70">
+                <div class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.stats.testRequests') }}</div>
+                <div class="mt-1 text-lg font-semibold text-gray-900 dark:text-white">{{ formatNumber(testUsage.summary.total_requests) }}</div>
+              </div>
+              <div class="rounded-lg bg-white/80 p-3 dark:bg-dark-700/70">
+                <div class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.stats.testSuccess') }}</div>
+                <div class="mt-1 text-lg font-semibold text-emerald-600 dark:text-emerald-400">{{ formatNumber(testUsage.summary.successful_requests) }}</div>
+              </div>
+              <div class="rounded-lg bg-white/80 p-3 dark:bg-dark-700/70">
+                <div class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.stats.testFailed') }}</div>
+                <div class="mt-1 text-lg font-semibold text-rose-600 dark:text-rose-400">{{ formatNumber(testUsage.summary.failed_requests) }}</div>
+              </div>
+              <div class="rounded-lg bg-white/80 p-3 dark:bg-dark-700/70">
+                <div class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.stats.testTokens') }}</div>
+                <div class="mt-1 text-lg font-semibold text-gray-900 dark:text-white">{{ formatTokens(testUsage.summary.total_tokens) }}</div>
+              </div>
+              <div class="rounded-lg bg-white/80 p-3 dark:bg-dark-700/70">
+                <div class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.stats.testAvgResponseTime') }}</div>
+                <div class="mt-1 text-lg font-semibold text-gray-900 dark:text-white">{{ formatDuration(testUsage.summary.avg_duration_ms) }}</div>
+              </div>
+            </div>
+            <div v-if="testUsage.records?.length" class="mt-4 overflow-x-auto">
+              <h4 class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ t('admin.accounts.stats.testRecords') }}</h4>
+              <table class="min-w-full text-left text-xs">
+                <thead class="border-b border-violet-200 text-gray-500 dark:border-violet-800/40 dark:text-gray-400">
+                  <tr>
+                    <th class="px-2 py-2 font-medium">{{ t('admin.accounts.stats.testTime') }}</th>
+                    <th class="px-2 py-2 font-medium">{{ t('admin.accounts.stats.testModel') }}</th>
+                    <th class="px-2 py-2 font-medium">{{ t('admin.accounts.stats.testEndpoint') }}</th>
+                    <th class="px-2 py-2 font-medium">{{ t('admin.accounts.stats.testStatus') }}</th>
+                    <th class="px-2 py-2 font-medium">{{ t('admin.accounts.stats.tokens') }}</th>
+                    <th class="px-2 py-2 font-medium">{{ t('admin.accounts.stats.avgResponseTime') }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="record in testUsage.records" :key="record.id" class="border-b border-violet-100/80 last:border-0 dark:border-violet-900/30">
+                    <td class="whitespace-nowrap px-2 py-2 text-gray-500 dark:text-gray-400">{{ formatTestTime(record.created_at) }}</td>
+                    <td class="max-w-48 truncate px-2 py-2 font-medium text-gray-900 dark:text-gray-100" :title="record.model">{{ record.model || '-' }}</td>
+                    <td class="px-2 py-2 text-gray-500 dark:text-gray-400">{{ record.endpoint || '-' }}</td>
+                    <td class="px-2 py-2">
+                      <span :class="record.success ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'">
+                        {{ record.success ? t('admin.accounts.stats.testSucceeded') : t('admin.accounts.stats.testFailedStatus') }}
+                      </span>
+                      <span v-if="record.status_code" class="ml-1 text-gray-400">({{ record.status_code }})</span>
+                      <span v-if="record.error_message" class="ml-2 text-gray-400" :title="record.error_message">{{ t('admin.accounts.stats.testError') }}</span>
+                    </td>
+                    <td class="whitespace-nowrap px-2 py-2 text-gray-700 dark:text-gray-300">{{ formatTokens(testRecordTokens(record)) }}</td>
+                    <td class="whitespace-nowrap px-2 py-2 text-gray-500 dark:text-gray-400">{{ formatDuration(record.duration_ms) }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </template>
+          <div v-else class="py-4 text-center text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.stats.noTestData') }}</div>
+        </section>
+
         <!-- Usage Trend Chart -->
         <div class="card p-4">
           <h3 class="mb-4 text-sm font-semibold text-gray-900 dark:text-white">
@@ -468,7 +539,7 @@ import ModelDistributionChart from '@/components/charts/ModelDistributionChart.v
 import EndpointDistributionChart from '@/components/charts/EndpointDistributionChart.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { adminAPI } from '@/api/admin'
-import type { Account, AccountUsageStatsResponse } from '@/types'
+import type { Account, AccountTestUsageRecord, AccountUsageStatsResponse } from '@/types'
 
 ChartJS.register(
   CategoryScale,
@@ -494,6 +565,10 @@ const emit = defineEmits<{
 
 const loading = ref(false)
 const stats = ref<AccountUsageStatsResponse | null>(null)
+
+// 以后台返回的测试统计为准，避免新增平台需要维护前端白名单。
+const testUsage = computed(() => stats.value?.test_usage ?? null)
+const supportsTestUsage = computed(() => testUsage.value !== null)
 
 // Dark mode detection
 const isDarkMode = computed(() => {
@@ -670,6 +745,20 @@ const loadStats = async () => {
 
 const handleClose = () => {
   emit('close')
+}
+
+// testRecordTokens 计算单次测试实际返回的 token 总数。
+const testRecordTokens = (record: AccountTestUsageRecord): number => {
+  return (record.input_tokens || 0) +
+    (record.output_tokens || 0) +
+    (record.cache_creation_tokens || 0) +
+    (record.cache_read_tokens || 0)
+}
+
+// formatTestTime 将后端时间转换成当前浏览器的本地时间显示。
+const formatTestTime = (value: string): string => {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
 }
 
 // Format helpers

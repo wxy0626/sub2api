@@ -548,6 +548,12 @@ export default {
       clickToViewBalance: 'Click to view balance history',
       failedToLoadUser: 'Failed to load user info',
       userDeletedBadge: 'Deleted',
+      accountTests: {
+        platform: 'Platform', platformPlaceholder: 'Enter platform name',
+        testMode: 'Test mode', testModePlaceholder: 'Enter test mode',
+        status: 'Test status', allStatuses: 'All statuses', success: 'Success', failed: 'Failed', modelPlaceholder: 'Enter model name'
+      },
+      accountTest: { badge: 'Admin test', noBilling: 'Not billed', totalRequests: 'Test requests', successfulRequests: 'Successful', failedRequests: 'Failed', totalTokens: 'Test tokens', averageDuration: 'Average duration', inputOutput: 'Input/output', cacheTokens: 'Cache tokens', requests: 'requests', tokens: 'tokens', platform: 'Platform', platformPlaceholder: 'Enter platform name', accountId: 'Account ID', accountIdPlaceholder: 'Enter account ID', modelPlaceholder: 'Enter model name', result: 'Result', allResults: 'All results', success: 'Success', failed: 'Failed', unknownAccount: 'Unknown account', empty: 'No account test records. Try adjusting the date range or filters.', inputShort: 'In', outputShort: 'Out', cacheShort: 'Cache create/read', totalShort: 'Total', columns: { time: 'Time', platform: 'Platform', account: 'Account', model: 'Model', endpoint: 'Endpoint', testMode: 'Test mode', tokens: 'Tokens', result: 'Result', status: 'Status', duration: 'Duration', error: 'Error' } },
       tokenRanking: {
         subtitle: 'Per-user token usage for the current filters and time range',
         rowHint: "Click to view this user's usage details",

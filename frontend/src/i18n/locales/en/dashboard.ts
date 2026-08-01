@@ -390,7 +390,28 @@ export default {
       detailAccuracy: 'Accuracy',
       detailCoordinates: 'Coordinates',
     },
-    tabs: { usage: 'Usage', errors: 'Error Requests', ranking: 'User Ranking' },
+    tabs: { usage: 'Usage', errors: 'Error Requests', ranking: 'User Ranking', accountTests: 'Account Tests' },
+    accountTests: {
+      adminOnly: 'Administrator account tests',
+      notBilled: 'Stored separately. These requests never affect user billing, balances, or formal usage statistics.',
+      loading: 'Loading account test records...',
+      empty: 'No account test records. Try adjusting the date range or filters.',
+      failedToLoad: 'Failed to load account test records. Check the backend endpoint and filters.',
+      unknownAccount: 'Unknown account',
+      success: 'Success',
+      failed: 'Failed',
+      totalRequests: 'Test requests',
+      successfulRequests: 'Successful',
+      failedRequests: 'Failed',
+      totalTokens: 'Test tokens',
+      averageDuration: 'Average duration',
+      platformSummary: '{requests} requests / {tokens} tokens',
+      columns: {
+        platform: 'Platform / Endpoint', account: 'Account', model: 'Model', testMode: 'Test mode',
+        inputTokens: 'Input tokens', outputTokens: 'Output tokens', cacheTokens: 'Cache create / read',
+        totalTokens: 'Total tokens', duration: 'Duration', status: 'Result / HTTP', error: 'Error details', time: 'Test time'
+      }
+    },
     errors: {
       time: 'Time', model: 'Model', endpoint: 'Endpoint', status: 'Status',
       category: 'Category', platform: 'Platform', message: 'Message',

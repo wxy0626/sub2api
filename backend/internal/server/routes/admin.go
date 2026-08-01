@@ -663,6 +663,11 @@ func registerUsageRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	{
 		usage.GET("", h.Admin.Usage.List)
 		usage.GET("/stats", h.Admin.Usage.Stats)
+		usage.GET("/test-logs", h.Admin.Usage.ListTestLogs)
+		usage.GET("/test-stats", h.Admin.Usage.TestStats)
+		// 兼容旧版前端缓存，避免旧 bundle 请求旧路径时丢失账号测试记录。
+		usage.GET("/account-tests", h.Admin.Usage.ListTestLogs)
+		usage.GET("/account-tests/stats", h.Admin.Usage.TestStats)
 		usage.GET("/search-users", h.Admin.Usage.SearchUsers)
 		usage.GET("/search-api-keys", h.Admin.Usage.SearchAPIKeys)
 		usage.GET("/cleanup-tasks", h.Admin.Usage.ListCleanupTasks)

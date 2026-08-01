@@ -276,6 +276,133 @@ func TestGatewayModels_Grok45AdvertisesReasoningEffortForGrokBuild(t *testing.T)
 	}, model.ReasoningEfforts)
 }
 
+// TestGatewayModels_GrokAPIKeyUsesFetchedUpstreamModels 验证 Grok API Key 只返回实时可调用模型。
+func TestGatewayModels_GrokAPIKeyUsesFetchedUpstreamModels(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	groupID := int64(4410)
+	h := newGatewayModelsHandlerForTest(&gatewayModelsAccountRepoStub{
+		byGroup: map[int64][]service.Account{
+			groupID: {{
+				ID:       1,
+				Platform: service.PlatformGrok,
+				Type:     service.AccountTypeAPIKey,
+				Credentials: map[string]any{
+					"api_key": "xai-test-only",
+				},
+			}},
+		},
+	})
+	fetcher := &gatewayModelsFetcherStub{models: []string{"grok-live-only", "grok-4.5"}}
+	h.gatewayService.SetUpstreamModelsFetcher(fetcher)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+		Group: &service.Group{ID: groupID, Platform: service.PlatformGrok},
+	})
+
+	h.Models(c)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got gatewayModelsResponseForTest
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.Equal(t, []string{"grok-4.5", "grok-live-only"}, modelIDsForTest(got.Data))
+	require.Equal(t, 1, fetcher.calls)
+}
+
+// TestGatewayModels_GrokAPIKeyUpstreamFailureDoesNotUseStaticFallback 验证 Grok API Key 探测失败时不伪造静态模型。
+func TestGatewayModels_GrokAPIKeyUpstreamFailureDoesNotUseStaticFallback(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	groupID := int64(4411)
+	h := newGatewayModelsHandlerForTest(&gatewayModelsAccountRepoStub{
+		byGroup: map[int64][]service.Account{
+			groupID: {{
+				ID:          1,
+				Platform:    service.PlatformGrok,
+				Type:        service.AccountTypeAPIKey,
+				Credentials: map[string]any{"api_key": "xai-test-only"},
+			}},
+		},
+	})
+	fetcher := &gatewayModelsFetcherStub{err: errors.New("HTTP 401 invalid api key")}
+	h.gatewayService.SetUpstreamModelsFetcher(fetcher)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+		Group: &service.Group{ID: groupID, Platform: service.PlatformGrok},
+	})
+
+	h.Models(c)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got gatewayModelsResponseForTest
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.Empty(t, got.Data)
+	require.Equal(t, 1, fetcher.calls)
+}
+
+// TestGatewayModels_GrokOAuthKeepsStaticDefaultsAndMappingSkipsFetcher 验证 OAuth 静态默认和显式映射兼容性。
+func TestGatewayModels_GrokOAuthKeepsStaticDefaultsAndMappingSkipsFetcher(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Run("oauth keeps static defaults", func(t *testing.T) {
+		groupID := int64(4412)
+		h := newGatewayModelsHandlerForTest(&gatewayModelsAccountRepoStub{
+			byGroup: map[int64][]service.Account{
+				groupID: []service.Account{{ID: 1, Platform: service.PlatformGrok, Type: service.AccountTypeOAuth}},
+			},
+		})
+		fetcher := &gatewayModelsFetcherStub{models: []string{"grok-fetcher-only"}}
+		h.gatewayService.SetUpstreamModelsFetcher(fetcher)
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+		c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{Group: &service.Group{ID: groupID, Platform: service.PlatformGrok}})
+		h.Models(c)
+
+		require.Equal(t, http.StatusOK, rec.Code)
+		var got gatewayModelsResponseForTest
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+		require.Contains(t, modelIDsForTest(got.Data), "grok-4.3")
+		require.Zero(t, fetcher.calls)
+	})
+
+	t.Run("explicit mapping skips fetcher", func(t *testing.T) {
+		groupID := int64(4413)
+		h := newGatewayModelsHandlerForTest(&gatewayModelsAccountRepoStub{
+			byGroup: map[int64][]service.Account{
+				groupID: []service.Account{{
+					ID:       1,
+					Platform: service.PlatformGrok,
+					Type:     service.AccountTypeAPIKey,
+					Credentials: map[string]any{
+						"api_key":       "xai-test-only",
+						"model_mapping": map[string]any{"grok-mapped-only": "grok-mapped-only"},
+					},
+				}},
+			},
+		})
+		fetcher := &gatewayModelsFetcherStub{models: []string{"grok-fetcher-only"}}
+		h.gatewayService.SetUpstreamModelsFetcher(fetcher)
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+		c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{Group: &service.Group{ID: groupID, Platform: service.PlatformGrok}})
+		h.Models(c)
+
+		require.Equal(t, http.StatusOK, rec.Code)
+		var got gatewayModelsResponseForTest
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+		require.Equal(t, []string{"grok-mapped-only"}, modelIDsForTest(got.Data))
+		require.Zero(t, fetcher.calls)
+	})
+}
+
 func TestGatewayModels_GeminiGroupFiltersMappedModelsByPlatform(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

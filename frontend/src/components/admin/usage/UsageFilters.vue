@@ -4,8 +4,8 @@
     <div class="flex flex-wrap items-end justify-between gap-4">
       <!-- Left: filters (allowed to wrap to multiple rows) -->
       <div class="flex flex-1 flex-wrap items-end gap-4">
-        <!-- User Search -->
-        <div ref="userSearchRef" class="usage-filter-dropdown relative w-full sm:w-auto sm:min-w-[240px]">
+        <!-- User Search (正式用量/错误请求/排行适用) -->
+        <div v-if="mode !== 'tests'" ref="userSearchRef" class="usage-filter-dropdown relative w-full sm:w-auto sm:min-w-[240px]">
           <label class="input-label">{{ t('admin.usage.userFilter') }}</label>
           <input
             v-model="userKeyword"
@@ -41,8 +41,8 @@
           </div>
         </div>
 
-        <!-- API Key Search -->
-        <div ref="apiKeySearchRef" class="usage-filter-dropdown relative w-full sm:w-auto sm:min-w-[240px]">
+        <!-- API Key Search (正式用量适用) -->
+        <div v-if="mode !== 'tests'" ref="apiKeySearchRef" class="usage-filter-dropdown relative w-full sm:w-auto sm:min-w-[240px]">
           <label class="input-label">{{ t('usage.apiKeyFilter') }}</label>
           <input
             v-model="apiKeyKeyword"
@@ -79,9 +79,19 @@
         </div>
 
         <!-- Model Filter -->
-        <div class="w-full sm:w-auto sm:min-w-[220px]">
+        <div v-if="mode !== 'tests'" class="w-full sm:w-auto sm:min-w-[220px]">
           <label class="input-label">{{ t('usage.model') }}</label>
           <Select v-model="filters.model" :options="modelOptions" searchable @change="emitChange" />
+        </div>
+        <div v-else class="w-full sm:w-auto sm:min-w-[220px]">
+          <label class="input-label">{{ t('usage.model') }}</label>
+          <input v-model="filters.model" type="text" class="input" :placeholder="t('admin.usage.accountTests.modelPlaceholder')" @change="emitChange" />
+        </div>
+
+        <!-- Platform Filter (账号测试允许直接输入未来新增的平台) -->
+        <div v-if="mode === 'tests'" class="w-full sm:w-auto sm:min-w-[180px]">
+          <label class="input-label">{{ t('admin.usage.accountTests.platform') }}</label>
+          <input v-model="filters.platform" type="text" class="input" :placeholder="t('admin.usage.accountTests.platformPlaceholder')" @change="emitChange" />
         </div>
 
         <!-- Account Filter -->
@@ -121,14 +131,26 @@
           </div>
         </div>
 
+        <!-- Test Mode Filter -->
+        <div v-if="mode === 'tests'" class="w-full sm:w-auto sm:min-w-[180px]">
+          <label class="input-label">{{ t('admin.usage.accountTests.testMode') }}</label>
+          <input v-model="filters.test_mode" type="text" class="input" :placeholder="t('admin.usage.accountTests.testModePlaceholder')" @change="emitChange" />
+        </div>
+
+        <!-- Test Status Filter -->
+        <div v-if="mode === 'tests'" class="w-full sm:w-auto sm:min-w-[160px]">
+          <label class="input-label">{{ t('admin.usage.accountTests.status') }}</label>
+          <Select v-model="filters.success" :options="testStatusOptions" @change="emitChange" />
+        </div>
+
         <!-- Request Type Filter (usage only) -->
-        <div v-if="mode !== 'errors'" class="w-full sm:w-auto sm:min-w-[180px]">
+        <div v-if="mode !== 'errors' && mode !== 'tests'" class="w-full sm:w-auto sm:min-w-[180px]">
           <label class="input-label">{{ t('usage.type') }}</label>
           <Select v-model="filters.request_type" :options="requestTypeOptions" @change="emitChange" />
         </div>
 
         <!-- Billing Type Filter (usage only) -->
-        <div v-if="mode !== 'errors'" class="w-full sm:w-auto sm:min-w-[200px]">
+        <div v-if="mode !== 'errors' && mode !== 'tests'" class="w-full sm:w-auto sm:min-w-[200px]">
           <label class="input-label">{{ t('admin.usage.billingType') }}</label>
           <Select v-model="filters.billing_type" :options="billingTypeOptions" @change="emitChange" />
         </div>
@@ -157,8 +179,8 @@
           <Select v-model="filters.status_code" :options="statusCodeOptions" @change="emitChange" />
         </div>
 
-        <!-- Group Filter -->
-        <div class="w-full sm:w-auto sm:min-w-[200px]">
+        <!-- Group Filter (正式用量/错误请求/排行适用) -->
+        <div v-if="mode !== 'tests'" class="w-full sm:w-auto sm:min-w-[200px]">
           <label class="input-label">{{ t('admin.usage.group') }}</label>
           <Select v-model="filters.group_id" :options="groupOptions" searchable @change="emitChange" />
         </div>
@@ -207,8 +229,9 @@ interface Props {
   /**
    * errors 模式:隐藏用量专属字段/按钮,显示错误类型+状态码(错误请求 tab 用)
    * ranking 模式:同 usage 但隐藏计费模式筛选与清理/导出按钮(用户排行 tab 用)
+   * tests 模式:仅保留平台、账号、模型、测试模式和成功状态筛选。
    */
-  mode?: 'usage' | 'errors' | 'ranking'
+  mode?: 'usage' | 'errors' | 'ranking' | 'tests'
   /** 嵌入统一卡片内使用：去掉自身卡片外观 */
   flat?: boolean
 }
@@ -305,6 +328,12 @@ const billingModeOptions = ref<SelectOption[]>([
   { value: 'per_request', label: t('admin.usage.billingModePerRequest') },
   { value: 'image', label: t('admin.usage.billingModeImage') },
   { value: 'video', label: t('admin.usage.billingModeVideo') }
+])
+
+const testStatusOptions = computed<SelectOption[]>(() => [
+  { value: null, label: t('admin.usage.accountTests.allStatuses') },
+  { value: true, label: t('admin.usage.accountTests.success') },
+  { value: false, label: t('admin.usage.accountTests.failed') },
 ])
 
 const emitChange = () => emit('change')

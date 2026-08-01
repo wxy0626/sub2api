@@ -395,7 +395,28 @@ export default {
       detailAccuracy: '定位精度',
       detailCoordinates: '坐标',
     },
-    tabs: { usage: '用量明细', errors: '错误请求', ranking: '用户排行' },
+    tabs: { usage: '用量明细', errors: '错误请求', ranking: '用户排行', accountTests: '账号测试' },
+    accountTests: {
+      adminOnly: '管理员账号测试',
+      notBilled: '独立记录，不计入用户账单、余额扣除或正式使用统计。',
+      loading: '正在加载账号测试记录...',
+      empty: '暂无账号测试记录，请调整日期或筛选条件。',
+      failedToLoad: '加载账号测试记录失败，请检查后端接口和筛选条件。',
+      unknownAccount: '未知账号',
+      success: '成功',
+      failed: '失败',
+      totalRequests: '测试请求',
+      successfulRequests: '成功请求',
+      failedRequests: '失败请求',
+      totalTokens: '测试总 Token',
+      averageDuration: '平均耗时',
+      platformSummary: '{requests} 次 / {tokens} Token',
+      columns: {
+        platform: '平台 / 端点', account: '账号', model: '模型', testMode: '测试模式',
+        inputTokens: '输入 Token', outputTokens: '输出 Token', cacheTokens: '缓存创建 / 读取',
+        totalTokens: '总 Token', duration: '耗时', status: '结果 / HTTP', error: '错误详情', time: '测试时间'
+      }
+    },
     errors: {
       time: '时间', model: '模型', endpoint: '端点', status: '状态码',
       category: '分类', platform: '平台', message: '错误信息',

@@ -375,9 +375,128 @@ type AccountUsageSummary struct {
 
 // AccountUsageStatsResponse represents the full usage statistics response for an account
 type AccountUsageStatsResponse struct {
-	History           []AccountUsageHistory `json:"history"`
-	Summary           AccountUsageSummary   `json:"summary"`
-	Models            []ModelStat           `json:"models"`
-	Endpoints         []EndpointStat        `json:"endpoints"`
-	UpstreamEndpoints []EndpointStat        `json:"upstream_endpoints"`
+	History           []AccountUsageHistory          `json:"history"`
+	Summary           AccountUsageSummary            `json:"summary"`
+	Models            []ModelStat                    `json:"models"`
+	Endpoints         []EndpointStat                 `json:"endpoints"`
+	UpstreamEndpoints []EndpointStat                 `json:"upstream_endpoints"`
+	TestUsage         *AccountTestUsageStatsResponse `json:"test_usage,omitempty"`
+}
+
+// AccountTestUsageRecord 是管理员账号测试的独立记录，不进入用户计费链路。
+type AccountTestUsageRecord struct {
+	AccountID           int64
+	Platform            string
+	Model               string
+	TestMode            string
+	Endpoint            string
+	InputTokens         int
+	OutputTokens        int
+	CacheCreationTokens int
+	CacheReadTokens     int
+	DurationMs          int64
+	Success             bool
+	StatusCode          int
+	ErrorMessage        string
+	CreatedAt           time.Time
+}
+
+// AccountTestUsageHistory 是账号测试按日期聚合的统计。
+type AccountTestUsageHistory struct {
+	Date               string `json:"date"`
+	Label              string `json:"label"`
+	Requests           int64  `json:"requests"`
+	SuccessfulRequests int64  `json:"successful_requests"`
+	FailedRequests     int64  `json:"failed_requests"`
+	InputTokens        int64  `json:"input_tokens"`
+	OutputTokens       int64  `json:"output_tokens"`
+	CacheTokens        int64  `json:"cache_tokens"`
+	Tokens             int64  `json:"tokens"`
+}
+
+// AccountTestUsageSummary 是账号测试期间的汇总统计。
+type AccountTestUsageSummary struct {
+	Days               int                      `json:"days"`
+	ActualDaysUsed     int                      `json:"actual_days_used"`
+	TotalRequests      int64                    `json:"total_requests"`
+	SuccessfulRequests int64                    `json:"successful_requests"`
+	FailedRequests     int64                    `json:"failed_requests"`
+	InputTokens        int64                    `json:"input_tokens"`
+	OutputTokens       int64                    `json:"output_tokens"`
+	CacheTokens        int64                    `json:"cache_tokens"`
+	TotalTokens        int64                    `json:"total_tokens"`
+	AvgDurationMs      float64                  `json:"avg_duration_ms"`
+	Today              *AccountTestUsageHistory `json:"today"`
+}
+
+// AccountTestUsageStatsResponse 是账号统计弹窗使用的独立测试统计响应。
+type AccountTestUsageStatsResponse struct {
+	History []AccountTestUsageHistory    `json:"history"`
+	Summary AccountTestUsageSummary      `json:"summary"`
+	Records []AccountTestUsageRecordView `json:"records"`
+}
+
+// AccountTestUsageRecordView 是管理员账号测试记录的脱敏展示结构。
+type AccountTestUsageRecordView struct {
+	ID                  int64     `json:"id"`
+	AccountID           int64     `json:"account_id"`
+	AccountName         string    `json:"account_name"`
+	Platform            string    `json:"platform"`
+	Model               string    `json:"model"`
+	TestMode            string    `json:"test_mode"`
+	Endpoint            string    `json:"endpoint"`
+	InputTokens         int64     `json:"input_tokens"`
+	OutputTokens        int64     `json:"output_tokens"`
+	CacheCreationTokens int64     `json:"cache_creation_tokens"`
+	CacheReadTokens     int64     `json:"cache_read_tokens"`
+	Tokens              int64     `json:"tokens"`
+	DurationMs          int64     `json:"duration_ms"`
+	Success             bool      `json:"success"`
+	StatusCode          int       `json:"status_code"`
+	ErrorMessage        string    `json:"error_message,omitempty"`
+	CreatedAt           time.Time `json:"created_at"`
+}
+
+// AccountTestUsageGlobalFilters 是全局账号测试列表和统计共用的筛选条件。
+type AccountTestUsageGlobalFilters struct {
+	StartTime *time.Time `json:"-"`
+	EndTime   *time.Time `json:"-"`
+	AccountID int64      `json:"account_id,omitempty"`
+	Platform  string     `json:"platform,omitempty"`
+	Model     string     `json:"model,omitempty"`
+	TestMode  string     `json:"test_mode,omitempty"`
+	Success   *bool      `json:"success,omitempty"`
+}
+
+// AccountTestUsagePlatformStats 是管理员账号测试的单个平台聚合结果。
+type AccountTestUsagePlatformStats struct {
+	Platform           string  `json:"platform"`
+	TotalRequests      int64   `json:"total_requests"`
+	SuccessfulRequests int64   `json:"successful_requests"`
+	FailedRequests     int64   `json:"failed_requests"`
+	InputTokens        int64   `json:"input_tokens"`
+	OutputTokens       int64   `json:"output_tokens"`
+	CacheTokens        int64   `json:"cache_tokens"`
+	TotalTokens        int64   `json:"total_tokens"`
+	AvgDurationMs      float64 `json:"avg_duration_ms"`
+}
+
+// AccountTestUsageModelStats 是管理员账号测试的单个模型聚合结果。
+type AccountTestUsageModelStats struct {
+	Model         string `json:"model"`
+	TotalRequests int64  `json:"total_requests"`
+}
+
+// AccountTestUsageGlobalStats 是独立于正式账单的全局账号测试统计。
+type AccountTestUsageGlobalStats struct {
+	TotalRequests      int64                           `json:"total_requests"`
+	SuccessfulRequests int64                           `json:"successful_requests"`
+	FailedRequests     int64                           `json:"failed_requests"`
+	InputTokens        int64                           `json:"input_tokens"`
+	OutputTokens       int64                           `json:"output_tokens"`
+	CacheTokens        int64                           `json:"cache_tokens"`
+	TotalTokens        int64                           `json:"total_tokens"`
+	AvgDurationMs      float64                         `json:"avg_duration_ms"`
+	ByPlatform         []AccountTestUsagePlatformStats `json:"by_platform"`
+	ByModel            []AccountTestUsageModelStats    `json:"by_model"`
 }

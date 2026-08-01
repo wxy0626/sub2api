@@ -212,7 +212,7 @@ func anthropicStreamEventIsTerminal(eventName, data string) bool {
 }
 
 func cloneStringSlice(src []string) []string {
-	if len(src) == 0 {
+	if src == nil {
 		return nil
 	}
 	dst := make([]string, len(src))
@@ -702,7 +702,7 @@ type GatewayService struct {
 	userGroupRateSF       singleflight.Group
 	modelsListCache       *gocache.Cache
 	modelsListCacheTTL    time.Duration
-	// upstreamModelsFetcher 负责按账号凭据读取上游实时模型目录，当前主要供 DeepSeek 使用。
+	// upstreamModelsFetcher 负责按账号凭据读取上游实时模型目录，供 DeepSeek 和 Grok API Key 使用。
 	upstreamModelsFetcher UpstreamModelsFetcher
 	settingService        *SettingService
 	responseHeaderFilter  *responseheaders.CompiledHeaderFilter
@@ -723,13 +723,14 @@ type UpstreamModelsFetcher interface {
 	FetchUpstreamSupportedModels(ctx context.Context, account *Account) ([]string, error)
 }
 
-// SetUpstreamModelsFetcher 注入上游模型目录读取器，并立即清除 DeepSeek 模型缓存。
+// SetUpstreamModelsFetcher 注入上游模型目录读取器，并立即清除动态模型缓存。
 func (s *GatewayService) SetUpstreamModelsFetcher(fetcher UpstreamModelsFetcher) {
 	if s == nil {
 		return
 	}
 	s.upstreamModelsFetcher = fetcher
 	s.InvalidateAvailableModelsCache(nil, PlatformDeepSeek)
+	s.InvalidateAvailableModelsCache(nil, PlatformGrok)
 }
 
 // NewGatewayService creates a new GatewayService
@@ -1226,9 +1227,41 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 
 	// Collect unique models from all accounts
 	modelSet := make(map[string]struct{})
+	// hasAnyMapping 同时表示结果是否已被账号映射或实时目录明确确认，避免动态目录为空时误用静态默认模型。
 	hasAnyMapping := false
 
 	for _, acc := range accounts {
+		isGrokAPIKey := acc.Platform == PlatformGrok && acc.Type == AccountTypeAPIKey
+		if isGrokAPIKey {
+			// Grok API Key 的空配置不能调用 GetModelMapping，因为该方法会注入静态默认映射。
+			mapping, hasExplicitMapping := gatewayExplicitModelMapping(&acc)
+			if hasExplicitMapping {
+				hasAnyMapping = true
+				for model := range mapping {
+					modelSet[model] = struct{}{}
+				}
+				continue
+			}
+			if s.upstreamModelsFetcher == nil {
+				// 未注入实时目录读取器时也必须保持空目录，不能用静态 Grok 模型冒充可调用模型。
+				hasAnyMapping = true
+				continue
+			}
+			models, fetchErr := s.upstreamModelsFetcher.FetchUpstreamSupportedModels(ctx, &acc)
+			if fetchErr == nil {
+				for _, model := range models {
+					model = strings.TrimSpace(model)
+					if model != "" {
+						modelSet[model] = struct{}{}
+					}
+				}
+			}
+			// 成功返回空结果或探测失败都视为已确认的空目录，禁止静态回退。
+			hasAnyMapping = true
+			continue
+		}
+
+		// Grok OAuth、Antigravity 及其他平台继续复用原有隐式默认映射语义。
 		mapping := acc.GetModelMapping()
 		if len(mapping) > 0 {
 			hasAnyMapping = true
@@ -1239,7 +1272,7 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 		}
 
 		if acc.Platform == PlatformDeepSeek && s.upstreamModelsFetcher != nil {
-			// DeepSeek 空映射表示开放上游目录，按该账号 API Key 获取真实模型。
+			// DeepSeek 空映射表示开放上游目录，按该账号凭据获取真实模型。
 			models, fetchErr := s.upstreamModelsFetcher.FetchUpstreamSupportedModels(ctx, &acc)
 			if fetchErr != nil {
 				// 一个账号目录失败不应遮挡同组其他账号的可用模型。
@@ -1278,6 +1311,28 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 		modelsListCacheStoreTotal.Add(1)
 	}
 	return cloneStringSlice(models)
+}
+
+// gatewayExplicitModelMapping 读取网关模型列表专用的显式 model_mapping。
+// 不调用 Account.GetModelMapping，避免 Grok 空配置被静态默认映射遮蔽。
+func gatewayExplicitModelMapping(account *Account) (map[string]string, bool) {
+	if account == nil || account.Credentials == nil {
+		return nil, false
+	}
+	switch raw := account.Credentials["model_mapping"].(type) {
+	case map[string]any:
+		if len(raw) == 0 {
+			return nil, false
+		}
+		return stringMappingFromRaw(raw), true
+	case map[string]string:
+		if len(raw) == 0 {
+			return nil, false
+		}
+		return stringMappingFromRaw(raw), true
+	default:
+		return nil, false
+	}
 }
 
 // GetSchedulablePlatforms returns the concrete platforms that currently have

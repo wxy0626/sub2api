@@ -34,6 +34,9 @@ import (
 // Some upstream APIs return non-standard "data:" without space (should be "data: ").
 var sseDataPrefix = regexp.MustCompile(`^data:\s*`)
 
+// accountTestCredentialTextPattern 覆盖非 JSON 错误文本中的明确凭据字段。
+var accountTestCredentialTextPattern = regexp.MustCompile(`(?i)(\b(?:authorization|authorization_header|cookie|api_key|apikey|access_token|accesstoken|refresh_token|refreshtoken|id_token|idtoken|client_secret|clientsecret|session_key|sessionkey|password|token)\b\s*[:=]\s*)[^,\s;}]+`)
+
 const (
 	testClaudeAPIURL   = "https://api.anthropic.com/v1/messages?beta=true"
 	chatgptCodexAPIURL = "https://chatgpt.com/backend-api/codex/responses"
@@ -69,6 +72,7 @@ func isOpenAIImageModel(model string) bool {
 // AccountTestService handles account testing operations
 type AccountTestService struct {
 	accountRepo               AccountRepository
+	accountTestUsageRepo      AccountTestUsageRepository
 	geminiTokenProvider       *GeminiTokenProvider
 	claudeTokenProvider       *ClaudeTokenProvider
 	grokTokenProvider         *GrokTokenProvider
@@ -189,6 +193,8 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Account not found")
 	}
+	finishTestUsage := s.startAccountTestUsage(c, account, modelID, mode)
+	defer func() { finishTestUsage(err) }()
 
 	// 统一同步测试结果与调度状态，保证每个账号结束后立即反映在列表和调度器。
 	defer func() {
@@ -196,7 +202,7 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 			return
 		}
 		if err != nil {
-			if setErrorErr := s.accountRepo.SetError(ctx, account.ID, err.Error()); setErrorErr != nil {
+			if setErrorErr := s.accountRepo.SetError(ctx, account.ID, accountTestErrorDetail(account, err.Error())); setErrorErr != nil {
 				log.Printf("failed to mark tested account as error: account_id=%d error=%v", account.ID, setErrorErr)
 			}
 			return
@@ -321,7 +327,6 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 	} else {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Unsupported account type: %s", account.Type))
 	}
-
 	// Set SSE headers
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
@@ -370,12 +375,13 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
-
+	recordAccountTestUsageRequest(c, req)
 	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
 	}
 	defer func() { _ = resp.Body.Close() }()
+	recordAccountTestUsageStatus(c, resp.StatusCode)
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -442,12 +448,14 @@ func (s *AccountTestService) testClaudeVertexServiceAccountConnection(c *gin.Con
 	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
+	recordAccountTestUsageRequest(c, req)
 
 	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
 	}
 	defer func() { _ = resp.Body.Close() }()
+	recordAccountTestUsageStatus(c, resp.StatusCode)
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -528,12 +536,14 @@ func (s *AccountTestService) testBedrockAccountConnection(c *gin.Context, ctx co
 	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
+	recordAccountTestUsageRequest(c, req)
 
 	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, nil)
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
 	}
 	defer func() { _ = resp.Body.Close() }()
+	recordAccountTestUsageStatus(c, resp.StatusCode)
 
 	body, _ := io.ReadAll(resp.Body)
 
@@ -541,7 +551,13 @@ func (s *AccountTestService) testBedrockAccountConnection(c *gin.Context, ctx co
 		return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
 	}
 
-	// Bedrock non-streaming response is standard Claude JSON, extract the text
+	// Bedrock 非流式响应是标准 Claude JSON，同时提取 usage 和文本。
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to parse response: %s", err.Error()))
+	}
+	recordAccountTestUsageJSON(c, payload)
+
 	var result struct {
 		Content []struct {
 			Text string `json:"text"`
@@ -664,6 +680,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	} else {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Unsupported account type: %s", account.Type))
 	}
+	addAccountTestUsageRedaction(c, authToken)
 
 	// Set SSE headers
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
@@ -759,6 +776,8 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
+	// 先记录实际 Responses 目标，再发起上游请求，覆盖 DeepSeek Responses 测试。
+	beginAccountTestUsageRequest(c, testModelID, "/v1/responses")
 
 	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 	if err != nil && isOAuth && isRetryableOpenAIAccountTestTransportError(err) {
@@ -782,6 +801,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		return s.sendErrorAndEnd(c, openAIAccountTestTransportErrorMessage(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
+	recordAccountTestUsageStatus(c, resp.StatusCode)
 
 	if isOAuth && s.accountRepo != nil {
 		if updates, err := extractOpenAICodexProbeUpdates(resp); err == nil && len(updates) > 0 {
@@ -793,6 +813,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	if resp.StatusCode != http.StatusOK && (!isAPIKeyResponsesDiagnostic || resp.StatusCode >= http.StatusBadRequest) {
 		body, _ := io.ReadAll(resp.Body)
 		body = redactAgentIdentitySensitiveBodyForAccount(ctx, s.accountRepo, credentialAccount, body)
+		errorDetail := accountTestErrorDetail(credentialAccount, string(body), authToken)
 		if !agentIdentityTaskRecoveryWasTried(ctx) && credentialAccount.IsOpenAIAgentIdentity() && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, body) {
 			expectedTaskID := credentialAccount.GetCredential("task_id")
 			if err := ensureAgentIdentityTaskForAccount(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityTaskMu, credentialAccount, expectedTaskID); err != nil {
@@ -809,19 +830,19 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		}
 		// 401 Unauthorized: 标记账号为永久错误
 		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil {
-			errMsg := fmt.Sprintf("Authentication failed (401): %s", string(body))
+			errMsg := fmt.Sprintf("Authentication failed (401): %s", errorDetail)
 			_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
 		}
 		if mode == AccountTestModeResponses {
 			if credentialAccount.IsDeepSeek() {
-				return s.sendErrorAndEnd(c, fmt.Sprintf("通过 /v1/responses 测试 DeepSeek 连接失败：上游返回 HTTP %d，请检查 API Key、模型权限和 Responses 接口兼容性。原始技术详情：%s", resp.StatusCode, deepSeekAccountTestErrorDetail(credentialAccount, string(body))))
+				return s.sendErrorAndEnd(c, fmt.Sprintf("通过 /v1/responses 测试 DeepSeek 连接失败：上游返回 HTTP %d，请检查 API Key、模型权限和 Responses 接口兼容性。原始技术详情：%s", resp.StatusCode, errorDetail))
 			}
-			return s.sendErrorAndEnd(c, fmt.Sprintf("通过 /v1/responses 测试连接失败：上游返回 HTTP %d，请检查接口兼容性、模型权限和 API Key。原始技术详情：%s", resp.StatusCode, string(body)))
+			return s.sendErrorAndEnd(c, fmt.Sprintf("通过 /v1/responses 测试连接失败：上游返回 HTTP %d，请检查接口兼容性、模型权限和 API Key。原始技术详情：%s", resp.StatusCode, errorDetail))
 		}
 		if credentialAccount.IsDeepSeek() {
-			return s.sendErrorAndEnd(c, fmt.Sprintf("通过 /v1/responses 测试 DeepSeek 连接失败：上游返回 HTTP %d，请检查 API Key、模型权限和接口兼容性。原始技术详情：%s", resp.StatusCode, deepSeekAccountTestErrorDetail(credentialAccount, string(body))))
+			return s.sendErrorAndEnd(c, fmt.Sprintf("通过 /v1/responses 测试 DeepSeek 连接失败：上游返回 HTTP %d，请检查 API Key、模型权限和接口兼容性。原始技术详情：%s", resp.StatusCode, errorDetail))
 		}
-		return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
+		return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, errorDetail))
 	}
 
 	if isAPIKeyResponsesDiagnostic {
@@ -880,6 +901,7 @@ func (s *AccountTestService) testGrokAccountConnection(c *gin.Context, account *
 	default:
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Unsupported Grok account type: %s", account.Type))
 	}
+	addAccountTestUsageRedaction(c, authToken)
 
 	apiURL, err := buildGrokResponsesURL(account, s.cfg)
 	if err != nil {
@@ -918,12 +940,14 @@ func (s *AccountTestService) testGrokAccountConnection(c *gin.Context, account *
 	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
-
+	// 先记录请求目标，再发起上游请求，保证连接失败也能留下可查询的测试记录。
+	beginAccountTestUsageRequest(c, testModelID, "/v1/responses")
 	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
 	if err != nil {
-		return s.sendErrorAndEnd(c, fmt.Sprintf("Grok Responses API request failed: %s", err.Error()))
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Grok Responses API request failed: %s", accountTestErrorDetail(account, err.Error(), authToken)))
 	}
 	defer func() { _ = resp.Body.Close() }()
+	recordAccountTestUsageStatus(c, resp.StatusCode)
 
 	now := time.Now()
 	snapshot := parseGrokQuotaSnapshot(resp.Header, resp.StatusCode, now)
@@ -946,6 +970,7 @@ func (s *AccountTestService) testGrokAccountConnection(c *gin.Context, account *
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		errorDetail := accountTestErrorDetail(account, string(body), authToken)
 		if resp.StatusCode == http.StatusPaymentRequired && s.accountRepo != nil {
 			stateCtx, cancel := openAIAccountStateContext(ctx)
 			defer cancel()
@@ -956,7 +981,7 @@ func (s *AccountTestService) testGrokAccountConnection(c *gin.Context, account *
 				"grok payment required",
 			)
 		}
-		return s.sendErrorAndEnd(c, fmt.Sprintf("Grok Responses API returned %d: %s", resp.StatusCode, string(body)))
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Grok Responses API returned %d: %s", resp.StatusCode, errorDetail))
 	}
 
 	return s.processOpenAIStream(c, resp.Body, false, account)
@@ -982,6 +1007,10 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 	c.Writer.Flush()
 
 	payload := createOpenAIChatCompletionsTestPayload(testModelID, prompt)
+	if account.IsDeepSeek() {
+		// DeepSeek 只有在显式开启 include_usage 后才会在流末尾返回 token 统计。
+		payload["stream_options"] = map[string]any{"include_usage": true}
+	}
 	payloadBytes, _ := json.Marshal(payload)
 
 	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
@@ -1003,7 +1032,8 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
-
+	// 先记录 Chat Completions 目标，再发起请求，连接失败时仍保留 endpoint。
+	beginAccountTestUsageRequest(c, testModelID, "/v1/chat/completions")
 	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 	if err != nil {
 		if account.IsDeepSeek() {
@@ -1012,24 +1042,26 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Chat Completions API (/v1/chat/completions) request failed: %s", err.Error()))
 	}
 	defer func() { _ = resp.Body.Close() }()
+	recordAccountTestUsageStatus(c, resp.StatusCode)
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		errorDetail := accountTestErrorDetail(account, string(body), authToken)
 		if resp.StatusCode == http.StatusTooManyRequests {
 			s.reconcileOpenAI429State(ctx, account, resp.Header, body)
 		}
 		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil {
-			errMsg := fmt.Sprintf("Chat Completions authentication failed (401): %s", string(body))
+			errMsg := fmt.Sprintf("Chat Completions authentication failed (401): %s", errorDetail)
 			_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
 		}
 		if account.IsDeepSeek() {
-			return s.sendErrorAndEnd(c, fmt.Sprintf("通过 /v1/chat/completions 测试 DeepSeek 连接失败：上游返回 HTTP %d，请检查 API Key、模型权限和 Chat Completions 接口兼容性。原始技术详情：%s", resp.StatusCode, deepSeekAccountTestErrorDetail(account, string(body))))
+			return s.sendErrorAndEnd(c, fmt.Sprintf("通过 /v1/chat/completions 测试 DeepSeek 连接失败：上游返回 HTTP %d，请检查 API Key、模型权限和 Chat Completions 接口兼容性。原始技术详情：%s", resp.StatusCode, errorDetail))
 		}
-		return s.sendErrorAndEnd(c, fmt.Sprintf("Chat Completions API (/v1/chat/completions) returned %d: %s", resp.StatusCode, string(body)))
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Chat Completions API (/v1/chat/completions) returned %d: %s", resp.StatusCode, errorDetail))
 	}
 
 	// Chat Completions 连通性测试同样以首个有效文本作为成功条件。
-	return s.processOpenAIChatCompletionsStream(c, resp.Body, true, account)
+	return s.processOpenAIChatCompletionsStream(c, resp.Body, !account.IsDeepSeek(), account)
 }
 
 // testOpenAICompactConnection probes /responses/compact and persists the
@@ -1126,6 +1158,7 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
+	recordAccountTestUsageRequest(c, req)
 
 	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 	if err != nil {
@@ -1137,6 +1170,7 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
 	}
 	defer func() { _ = resp.Body.Close() }()
+	recordAccountTestUsageStatus(c, resp.StatusCode)
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	body = redactAgentIdentitySensitiveBodyForAccount(ctx, s.accountRepo, credentialAccount, body)
@@ -1272,12 +1306,14 @@ func (s *AccountTestService) testGeminiAccountConnection(c *gin.Context, account
 	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
+	recordAccountTestUsageRequest(c, req)
 
 	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
 	}
 	defer func() { _ = resp.Body.Close() }()
+	recordAccountTestUsageStatus(c, resp.StatusCode)
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -1317,6 +1353,7 @@ func (s *AccountTestService) testAntigravityAccountConnection(c *gin.Context, ac
 	if s.antigravityGatewayService == nil {
 		return s.sendErrorAndEnd(c, "Antigravity gateway service not configured")
 	}
+	beginAccountTestUsageRequest(c, testModelID, "/v1internal:streamGenerateContent")
 
 	// Set SSE headers
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
@@ -1333,6 +1370,7 @@ func (s *AccountTestService) testAntigravityAccountConnection(c *gin.Context, ac
 	if err != nil {
 		return s.sendErrorAndEnd(c, err.Error())
 	}
+	recordAccountTestUsageStatus(c, http.StatusOK)
 
 	// 发送响应内容
 	if result.Text != "" {
@@ -1548,6 +1586,8 @@ func (s *AccountTestService) processGeminiStream(c *gin.Context, body io.Reader)
 			continue
 		}
 
+		recordAccountTestUsageJSON(c, data)
+
 		// Support two Gemini response formats:
 		// - AI Studio: {"candidates": [...]}
 		// - Gemini CLI: {"response": {"candidates": [...]}}
@@ -1691,6 +1731,7 @@ func (s *AccountTestService) processClaudeStream(c *gin.Context, body io.Reader)
 			continue
 		}
 
+		recordAccountTestUsageJSON(c, data)
 		eventType, _ := data["type"].(string)
 
 		switch eventType {
@@ -1770,6 +1811,7 @@ func (s *AccountTestService) processOpenAIChatCompletionsStream(c *gin.Context, 
 			return s.sendErrorAndEnd(c, "Invalid Chat Completions response from /v1/chat/completions: expected JSON data")
 		}
 		seenJSON = true
+		recordAccountTestUsageJSON(c, data)
 
 		if errData, ok := data["error"].(map[string]any); ok {
 			if deepSeekAccount != nil {
@@ -1865,6 +1907,7 @@ func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader,
 			}
 			continue
 		}
+		recordAccountTestUsageJSON(c, data)
 
 		eventType, _ := data["type"].(string)
 
@@ -2182,6 +2225,7 @@ func (s *AccountTestService) processDeepSeekResponsesBody(c *gin.Context, body i
 	if err := json.Unmarshal(responseBody, &responsePayload); err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("DeepSeek Responses 响应解析失败：上游返回的内容不是有效 JSON。原始技术详情：%s；上游响应：%s", deepSeekAccountTestErrorDetail(account, err.Error()), deepSeekAccountTestErrorDetail(account, string(responseBody))))
 	}
+	recordAccountTestUsageJSON(c, responsePayload)
 
 	preview := strings.TrimSpace(string(responseBody))
 	if len(preview) > 320 {
@@ -2203,9 +2247,87 @@ func (s *AccountTestService) sendEvent(c *gin.Context, event TestEvent) {
 
 // sendErrorAndEnd sends an error event and ends the stream
 func (s *AccountTestService) sendErrorAndEnd(c *gin.Context, errorMsg string) error {
+	errorMsg = redactAccountTestErrorForContext(c, errorMsg)
 	log.Printf("Account test error: %s", errorMsg)
 	s.sendEvent(c, TestEvent{Type: "error", Error: errorMsg})
 	return fmt.Errorf("%s", errorMsg)
+}
+
+// accountTestErrorDetail 脱敏账号凭据和动态认证值后保留上游技术详情。
+func accountTestErrorDetail(account *Account, detail string, extraSecrets ...string) string {
+	detail = strings.TrimSpace(detail)
+	secrets := append([]string{}, extraSecrets...)
+	if account != nil {
+		for _, key := range []string{"api_key", "access_token", "refresh_token", "id_token", "client_secret", "session_key"} {
+			if value := strings.TrimSpace(account.GetCredential(key)); value != "" {
+				secrets = append(secrets, value)
+			}
+		}
+	}
+	for _, secret := range secrets {
+		secret = strings.TrimSpace(secret)
+		if secret != "" {
+			detail = strings.ReplaceAll(detail, secret, "[REDACTED_CREDENTIAL]")
+		}
+	}
+	detail = redactAccountTestCredentialFields(detail)
+	if detail == "" {
+		return "（上游未返回技术详情）"
+	}
+	return detail
+}
+
+// redactAccountTestCredentialFields 只清理明确的凭据字段，保留业务错误码和模型等技术详情。
+func redactAccountTestCredentialFields(detail string) string {
+	if strings.TrimSpace(detail) == "" {
+		return detail
+	}
+	var payload any
+	if json.Unmarshal([]byte(detail), &payload) == nil {
+		redacted := redactAccountTestCredentialValue(payload)
+		if encoded, err := json.Marshal(redacted); err == nil {
+			return string(encoded)
+		}
+	}
+	return accountTestCredentialTextPattern.ReplaceAllString(detail, "$1[REDACTED_CREDENTIAL]")
+}
+
+// redactAccountTestCredentialValue 递归清理上游 JSON 中的凭据值，不处理普通 code 字段。
+func redactAccountTestCredentialValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		redacted := make(map[string]any, len(typed))
+		for key, child := range typed {
+			if isAccountTestCredentialField(key) {
+				redacted[key] = "[REDACTED_CREDENTIAL]"
+				continue
+			}
+			redacted[key] = redactAccountTestCredentialValue(child)
+		}
+		return redacted
+	case []any:
+		redacted := make([]any, len(typed))
+		for index, child := range typed {
+			redacted[index] = redactAccountTestCredentialValue(child)
+		}
+		return redacted
+	default:
+		return value
+	}
+}
+
+// isAccountTestCredentialField 判断 JSON 字段是否明确表示认证凭据。
+func isAccountTestCredentialField(key string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	normalized = strings.ReplaceAll(normalized, "-", "_")
+	switch normalized {
+	case "authorization", "authorization_header", "cookie", "api_key", "apikey",
+		"access_token", "accesstoken", "refresh_token", "refreshtoken", "id_token", "idtoken",
+		"client_secret", "clientsecret", "session_key", "sessionkey", "password", "token":
+		return true
+	default:
+		return false
+	}
 }
 
 // isRetryableOpenAIAccountTestTransportError 判断账号测试的请求前连接中断是否可安全重试。

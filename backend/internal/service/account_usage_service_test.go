@@ -5,7 +5,63 @@ import (
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
+	"github.com/stretchr/testify/require"
 )
+
+// accountUsageStatsLogRepoStub 仅为账号统计服务回归测试提供基础用量统计。
+type accountUsageStatsLogRepoStub struct {
+	UsageLogRepository
+	stats *usagestats.AccountUsageStatsResponse
+}
+
+// GetAccountUsageStats 返回预置的正式用量统计。
+func (r *accountUsageStatsLogRepoStub) GetAccountUsageStats(context.Context, int64, time.Time, time.Time) (*usagestats.AccountUsageStatsResponse, error) {
+	return r.stats, nil
+}
+
+// accountUsageStatsAccountRepoStub 返回待查询账号，避免回归测试依赖真实数据库。
+type accountUsageStatsAccountRepoStub struct {
+	AccountRepository
+	account *Account
+}
+
+// GetByID 返回预置账号。
+func (r *accountUsageStatsAccountRepoStub) GetByID(context.Context, int64) (*Account, error) {
+	return r.account, nil
+}
+
+// accountUsageStatsTestUsageRepoStub 返回预置的管理员测试统计。
+type accountUsageStatsTestUsageRepoStub struct {
+	AccountTestUsageRepository
+	stats *usagestats.AccountTestUsageStatsResponse
+}
+
+// GetStats 返回预置的账号测试统计。
+func (r *accountUsageStatsTestUsageRepoStub) GetStats(context.Context, int64, time.Time, time.Time) (*usagestats.AccountTestUsageStatsResponse, error) {
+	return r.stats, nil
+}
+
+// TestAccountUsageStats_AttachesTestUsageForAnyPlatform 验证非白名单平台也自动挂载 test_usage。
+func TestAccountUsageStats_AttachesTestUsageForAnyPlatform(t *testing.T) {
+	formalStats := &usagestats.AccountUsageStatsResponse{
+		Summary: usagestats.AccountUsageSummary{TotalRequests: 3},
+	}
+	testStats := &usagestats.AccountTestUsageStatsResponse{
+		Summary: usagestats.AccountTestUsageSummary{TotalRequests: 2},
+	}
+	service := &AccountUsageService{
+		accountRepo:          &accountUsageStatsAccountRepoStub{account: &Account{ID: 42, Platform: PlatformAnthropic}},
+		usageLogRepo:         &accountUsageStatsLogRepoStub{stats: formalStats},
+		accountTestUsageRepo: &accountUsageStatsTestUsageRepoStub{stats: testStats},
+	}
+
+	result, err := service.GetAccountUsageStats(context.Background(), 42, time.Unix(0, 0), time.Unix(86400, 0))
+	require.NoError(t, err)
+	require.Same(t, formalStats, result)
+	require.Same(t, testStats, result.TestUsage)
+}
 
 type accountUsageCodexProbeRepo struct {
 	stubOpenAIAccountRepo

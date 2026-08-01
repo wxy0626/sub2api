@@ -1398,7 +1398,23 @@ export default {
         todayTokens: '今日 Token',
         todayCost: '今日费用',
         usageTrend: '30天费用与请求趋势',
-        noData: '该账号暂无使用数据'
+        noData: '该账号暂无使用数据',
+        testUsage: '账号测试统计',
+        testUsageHint: '管理员连接测试独立记录，不计入用户账单和正式使用记录',
+        testRequests: '测试次数',
+        testSuccess: '成功',
+        testFailed: '失败',
+        testTokens: '测试 Token',
+        testAvgResponseTime: '平均测试耗时',
+        testRecords: '最近测试记录',
+        testModel: '模型',
+        testEndpoint: '接口',
+        testStatus: '结果',
+        testTime: '时间',
+        testError: '错误详情',
+        testSucceeded: '成功',
+        testFailedStatus: '失败',
+        noTestData: '近30天暂无账号测试记录'
       }
     },
 

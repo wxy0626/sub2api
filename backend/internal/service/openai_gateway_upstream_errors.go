@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -484,6 +485,21 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		return nil, fmt.Errorf("upstream error: %d (passthrough rule matched) message=%s", resp.StatusCode, upstreamMsg)
 	}
 
+	// Grok 的 422 是明确的请求拒绝，保留真实状态和脱敏技术详情，便于调用方直接排查。
+	if account != nil && account.Platform == PlatformGrok && resp.StatusCode == http.StatusUnprocessableEntity {
+		errorCode, safeDetail := formatGrokUnprocessableEntity(body, account)
+		clientMsg := fmt.Sprintf("Grok 上游拒绝了本次请求（HTTP 422 %s）：上游认为本次请求的费用估算或参数组合不安全，请缩短输入、降低输出上限或减少高成本工具后重试。原始技术详情：%s", errorCode, safeDetail)
+		MarkResponseCommitted(c)
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"error": gin.H{
+				"type":    "upstream_error",
+				"code":    errorCode,
+				"message": clientMsg,
+			},
+		})
+		return nil, fmt.Errorf("grok upstream error: 422 code=%s", errorCode)
+	}
+
 	// Check custom error codes
 	if !account.ShouldHandleErrorCode(resp.StatusCode) {
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
@@ -584,6 +600,76 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		return nil, fmt.Errorf("upstream error: %d", resp.StatusCode)
 	}
 	return nil, fmt.Errorf("upstream error: %d message=%s", resp.StatusCode, upstreamMsg)
+}
+
+// grok敏感错误字段定义仅清理凭据，不误删 code、type、message 等业务字段。
+var grokSensitiveErrorFields = map[string]struct{}{
+	"authorization": {}, "cookie": {}, "api_key": {}, "apikey": {},
+	"access_token": {}, "refresh_token": {}, "id_token": {},
+	"client_secret": {}, "session_key": {}, "password": {}, "token": {},
+}
+
+// grok敏感文本模式用于清理非 JSON 错误中的常见请求头和键值凭据。
+var grokSensitiveTextPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)(authorization\s*:\s*)([^\r\n,;]+)`),
+	regexp.MustCompile(`(?i)(cookie\s*:\s*)([^\r\n]+)`),
+	regexp.MustCompile(`(?i)((?:api[_-]?key|access_token|refresh_token|id_token|client_secret|session_key|password|token)\s*[=:]\s*)([^\s,;\"']+)`),
+}
+
+// formatGrokUnprocessableEntity 提取 Grok 错误码，并生成可安全返回客户端的原始详情。
+func formatGrokUnprocessableEntity(body []byte, account *Account) (string, string) {
+	errorCode := strings.TrimSpace(gjson.GetBytes(body, "error.code").String())
+	if errorCode == "" {
+		errorCode = strings.TrimSpace(gjson.GetBytes(body, "code").String())
+	}
+	if errorCode == "" {
+		errorCode = "unprocessable_entity"
+	}
+
+	var decoded any
+	safeDetail := strings.TrimSpace(string(body))
+	if json.Unmarshal(body, &decoded) == nil {
+		redactGrokErrorJSON(decoded)
+		if encoded, err := json.Marshal(decoded); err == nil {
+			safeDetail = string(encoded)
+		}
+	}
+	for _, pattern := range grokSensitiveTextPatterns {
+		safeDetail = pattern.ReplaceAllString(safeDetail, `${1}[REDACTED]`)
+	}
+	if account != nil {
+		for key, value := range account.Credentials {
+			if _, sensitive := grokSensitiveErrorFields[strings.ToLower(strings.TrimSpace(key))]; !sensitive {
+				continue
+			}
+			credential := strings.TrimSpace(fmt.Sprint(value))
+			if credential != "" {
+				safeDetail = strings.ReplaceAll(safeDetail, credential, "[REDACTED]")
+			}
+		}
+	}
+	if safeDetail == "" {
+		safeDetail = "上游未返回错误正文"
+	}
+	return errorCode, safeDetail
+}
+
+// redactGrokErrorJSON 递归清理 Grok JSON 错误体中的凭据字段。
+func redactGrokErrorJSON(value any) {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			if _, sensitive := grokSensitiveErrorFields[strings.ToLower(strings.TrimSpace(key))]; sensitive {
+				typed[key] = "[REDACTED]"
+				continue
+			}
+			redactGrokErrorJSON(child)
+		}
+	case []any:
+		for _, child := range typed {
+			redactGrokErrorJSON(child)
+		}
+	}
 }
 
 // compatErrorWriter is the signature for format-specific error writers used by

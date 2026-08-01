@@ -1061,13 +1061,22 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 	availableModels := h.gatewayService.GetAvailableModels(c.Request.Context(), groupID, platform)
 	if apiKey != nil && apiKey.Group != nil && apiKey.Group.CustomModelsListEnabled() {
 		fallbackModels := defaultModelIDsForPlatform(platform)
+		if availableModels != nil {
+			// 非 nil 表示服务层已确认账号模型目录，即使为空也不能补回静态模型。
+			fallbackModels = nil
+		}
 		availableModels = filterModelsByCustomList(customModelsListSource(platform, availableModels, fallbackModels), fallbackModels, apiKey.Group.ModelsListConfig.Models)
 		writeCustomModelsList(c, platform, availableModels)
 		return
 	}
 
-	if len(availableModels) > 0 {
-		writeModelsList(c, platform, availableModels)
+	if availableModels != nil {
+		if len(availableModels) > 0 {
+			writeModelsList(c, platform, availableModels)
+			return
+		}
+		// 动态上游目录返回空结果时保持空目录，避免静态模型冒充可调用模型。
+		writeModelsList(c, platform, nil)
 		return
 	}
 
@@ -1112,7 +1121,7 @@ func (h *GatewayHandler) compositeAvailableModels(ctx context.Context, groupID *
 	schedulablePlatforms := h.gatewayService.GetSchedulablePlatforms(ctx, groupID)
 	for _, platform := range []string{service.PlatformAnthropic, service.PlatformGemini, service.PlatformOpenAI, service.PlatformAntigravity, service.PlatformGrok, service.PlatformDeepSeek} {
 		platformModels := h.gatewayService.GetAvailableModels(ctx, groupID, platform)
-		if len(platformModels) == 0 && platform != service.PlatformDeepSeek {
+		if platformModels == nil && platform != service.PlatformDeepSeek {
 			if _, ok := schedulablePlatforms[platform]; ok {
 				platformModels = defaultModelIDsForPlatform(platform)
 			}

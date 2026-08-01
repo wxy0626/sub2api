@@ -3166,3 +3166,85 @@ func TestIsGrokImageGenerationModel(t *testing.T) {
 		})
 	}
 }
+
+// TestOpenAIGatewayHandleErrorResponse_Grok422 验证 Grok 422 错误保留业务详情并完成凭据脱敏。
+func TestOpenAIGatewayHandleErrorResponse_Grok422(t *testing.T) {
+	t.Parallel()
+
+	const (
+		apiKeySecret       = "grok-api-key-secret"
+		accessTokenSecret  = "grok-access-token-secret"
+		refreshTokenSecret = "grok-refresh-token-secret"
+		cookieSecret       = "grok-cookie-secret"
+	)
+
+	tests := []struct {
+		name            string
+		upstreamBody    string
+		wantDetails     []string
+		forbiddenValues []string
+	}{
+		{
+			name:         "JSON错误保留错误码和原始详情",
+			upstreamBody: "{\"error\":{\"type\":\"invalid_request_error\",\"code\":\"unsafe_cost_estimate\",\"message\":\"This request has no safe maximum price.\"}}",
+			wantDetails:  []string{"unsafe_cost_estimate", "This request has no safe maximum price.", "invalid_request_error"},
+		},
+		{
+			name:         "纯文本错误保留原始详情",
+			upstreamBody: "unsafe_cost_estimate: Ask the pool owner to set a per-request maximum price.",
+			wantDetails:  []string{"unsafe_cost_estimate", "Ask the pool owner to set a per-request maximum price."},
+		},
+		{
+			name:         "敏感信息脱敏且保留业务详情",
+			upstreamBody: "{\"error\":{\"code\":\"unsafe_cost_estimate\",\"message\":\"Authorization: Bearer grok-access-token-secret Cookie: session=grok-cookie-secret api_key=grok-api-key-secret token=grok-refresh-token-secret\",\"authorization\":\"Bearer grok-access-token-secret\",\"cookie\":\"session=grok-cookie-secret\",\"api_key\":\"grok-api-key-secret\",\"access_token\":\"grok-access-token-secret\",\"refresh_token\":\"grok-refresh-token-secret\"}}",
+			wantDetails:  []string{"unsafe_cost_estimate"},
+			forbiddenValues: []string{
+				apiKeySecret, accessTokenSecret, refreshTokenSecret, cookieSecret,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			gin.SetMode(gin.TestMode)
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+			account := &Account{
+				ID:       63,
+				Name:     "grok-422-test",
+				Platform: PlatformGrok,
+				Type:     AccountTypeAPIKey,
+				Credentials: map[string]any{
+					"api_key":       apiKeySecret,
+					"access_token":  accessTokenSecret,
+					"refresh_token": refreshTokenSecret,
+				},
+			}
+			resp := &http.Response{
+				StatusCode: http.StatusUnprocessableEntity,
+				Body:       io.NopCloser(strings.NewReader(tt.upstreamBody)),
+				Header:     http.Header{},
+			}
+
+			_, err := (&OpenAIGatewayService{}).handleErrorResponse(context.Background(), resp, c, account, nil)
+			require.Error(t, err)
+			require.Equal(t, http.StatusUnprocessableEntity, recorder.Code)
+
+			responseBody := recorder.Body.String()
+			require.Contains(t, responseBody, "Grok 上游拒绝了本次请求")
+			require.Contains(t, responseBody, "原始技术详情")
+			require.NotContains(t, responseBody, "Upstream request failed")
+			for _, detail := range tt.wantDetails {
+				require.Contains(t, responseBody, detail)
+			}
+			for _, secret := range tt.forbiddenValues {
+				require.NotContains(t, responseBody, secret)
+				require.NotContains(t, err.Error(), secret)
+			}
+		})
+	}
+}

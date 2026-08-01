@@ -1,7 +1,7 @@
 <template>
   <AppLayout>
     <div class="space-y-6">
-      <UsageStatsCards :stats="usageStats" />
+      <UsageStatsCards v-if="activeTab !== 'tests'" :stats="usageStats" />
       <!-- Charts Section -->
       <div class="space-y-4">
         <div class="card p-4">
@@ -14,7 +14,7 @@
                 @change="onDateRangeChange"
               />
             </div>
-            <div class="ml-auto flex items-center gap-2">
+            <div v-if="activeTab !== 'tests'" class="ml-auto flex items-center gap-2">
               <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.dashboard.granularity') }}:</span>
               <div class="w-28">
                 <Select v-model="granularity" :options="granularityOptions" @change="loadChartData" />
@@ -22,7 +22,7 @@
             </div>
           </div>
         </div>
-        <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div v-if="activeTab !== 'tests'" class="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <ModelDistributionChart
             v-model:source="modelDistributionSource"
             v-model:metric="modelDistributionMetric"
@@ -46,7 +46,7 @@
             :filters="breakdownFilters"
           />
         </div>
-        <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div v-if="activeTab !== 'tests'" class="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <EndpointDistributionChart
             v-model:source="endpointDistributionSource"
             v-model:metric="endpointDistributionMetric"
@@ -83,7 +83,7 @@
           </button>
         </div>
 
-        <UsageFilters v-model="filters" ref="usageFiltersRef" flat :mode="activeTab" class="border-b border-gray-100 dark:border-dark-700/50" :start-date="startDate" :end-date="endDate" :exporting="exporting" :model-options="modelNameOptions" @change="applyFilters" @refresh="refreshData" @reset="resetFilters" @cleanup="openCleanupDialog" @export="exportToExcel">
+        <UsageFilters v-if="activeTab !== 'tests'" v-model="filters" ref="usageFiltersRef" flat :mode="activeTab" class="border-b border-gray-100 dark:border-dark-700/50" :start-date="startDate" :end-date="endDate" :exporting="exporting" :model-options="modelNameOptions" @change="applyFilters" @refresh="refreshData" @reset="resetFilters" @cleanup="openCleanupDialog" @export="exportToExcel">
           <template #after-reset>
             <div v-if="activeTab !== 'ranking'" class="relative" ref="columnDropdownRef">
               <button
@@ -119,6 +119,14 @@
             </div>
           </template>
         </UsageFilters>
+        <AccountTestUsageFilters
+          v-else
+          v-model="testFilters"
+          :model-options="accountTestModelOptions"
+          @change="applyTestFilters"
+          @refresh="refreshData"
+          @reset="resetTestFilters"
+        />
 
         <div v-show="activeTab === 'usage'" class="overflow-hidden rounded-b-2xl">
           <UsageTable
@@ -160,6 +168,11 @@
             @select-user="handleRankingSelectUser"
           />
         </div>
+        <div v-show="activeTab === 'tests'" class="overflow-hidden rounded-b-2xl">
+          <AccountTestUsageStatsCards :stats="accountTestStats" class="border-b border-gray-100 p-4 dark:border-dark-700" />
+          <AccountTestUsageTable :records="accountTestLogs" :loading="accountTestLoading" />
+          <Pagination v-if="accountTestPagination.total > 0" :page="accountTestPagination.page" :total="accountTestPagination.total" :page-size="accountTestPagination.page_size" @update:page="handleAccountTestPageChange" @update:pageSize="handleAccountTestPageSizeChange" />
+        </div>
       </div>
       <OpsErrorDetailModal v-model:show="showErrorModal" :error-id="selectedErrorId" :error-type="'request'" />
     </div>
@@ -192,7 +205,7 @@ import { formatReasoningEffort } from '@/utils/format'
 import { resolveUsageRequestType, requestTypeToLegacyStream } from '@/utils/usageRequestType'
 import AppLayout from '@/components/layout/AppLayout.vue'; import Pagination from '@/components/common/Pagination.vue'; import Select from '@/components/common/Select.vue'; import DateRangePicker from '@/components/common/DateRangePicker.vue'
 import UsageStatsCards from '@/components/admin/usage/UsageStatsCards.vue'; import UsageFilters from '@/components/admin/usage/UsageFilters.vue'
-import UsageTable from '@/components/admin/usage/UsageTable.vue'; import UsageExportProgress from '@/components/admin/usage/UsageExportProgress.vue'
+import UsageTable from '@/components/admin/usage/UsageTable.vue'; import UsageExportProgress from '@/components/admin/usage/UsageExportProgress.vue'; import AccountTestUsageFilters from '@/components/admin/usage/AccountTestUsageFilters.vue'; import AccountTestUsageStatsCards from '@/components/admin/usage/AccountTestUsageStatsCards.vue'; import AccountTestUsageTable from '@/components/admin/usage/AccountTestUsageTable.vue'
 import UserTokenRanking from '@/components/admin/usage/UserTokenRanking.vue'
 import UsageCleanupDialog from '@/components/admin/usage/UsageCleanupDialog.vue'
 import UserBalanceHistoryModal from '@/components/admin/user/UserBalanceHistoryModal.vue'
@@ -203,7 +216,7 @@ import type { OpsErrorLog } from '@/api/admin/ops'
 import ModelDistributionChart from '@/components/charts/ModelDistributionChart.vue'; import GroupDistributionChart from '@/components/charts/GroupDistributionChart.vue'; import TokenUsageTrend from '@/components/charts/TokenUsageTrend.vue'
 import EndpointDistributionChart from '@/components/charts/EndpointDistributionChart.vue'
 import Icon from '@/components/icons/Icon.vue'
-import type { AdminUsageLog, TrendDataPoint, ModelStat, GroupStat, EndpointStat, AdminUser } from '@/types'; import type { AdminUsageStatsResponse, AdminUsageQueryParams } from '@/api/admin/usage'
+import type { AdminUsageLog, TrendDataPoint, ModelStat, GroupStat, EndpointStat, AdminUser } from '@/types'; import type { AdminUsageStatsResponse, AdminUsageQueryParams, AccountTestUsageQueryParams, AccountTestUsageRecord, AccountTestUsageStatsResponse } from '@/api/admin/usage'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -233,6 +246,14 @@ let statsReqSeq = 0
 let modelStatsReqSeq = 0
 const exportProgress = reactive({ show: false, progress: 0, current: 0, total: 0, estimatedTime: '' })
 const cleanupDialogVisible = ref(false)
+// 账号测试拥有独立的列表、统计和分页状态，避免进入正式账单统计链路。
+const accountTestLogs = ref<AccountTestUsageRecord[]>([])
+const accountTestStats = ref<AccountTestUsageStatsResponse | null>(null)
+const accountTestLoading = ref(false)
+const accountTestLoaded = ref(false)
+const accountTestPagination = reactive({ page: 1, page_size: getPersistedPageSize(), total: 0 })
+let accountTestAbortController: AbortController | null = null
+let accountTestStatsAbortController: AbortController | null = null
 // Balance history modal state
 const showBalanceHistoryModal = ref(false)
 const balanceHistoryUser = ref<AdminUser | null>(null)
@@ -251,7 +272,10 @@ const breakdownFilters = computed(() => {
 const modelNameOptions = computed(() =>
   Array.from(new Set(requestedModelStats.value.map((m) => m.model).filter(Boolean))).sort()
 )
-
+// 账号测试模型来自完整统计聚合，不受列表分页影响。
+const accountTestModelOptions = computed(() =>
+  Array.from(new Set((accountTestStats.value?.by_model || []).map((item) => item.model).filter(Boolean))).sort()
+)
 const handleUserClick = async (userId: number) => {
   try {
     const user = await adminAPI.users.getById(userId, true)
@@ -296,6 +320,11 @@ const getGranularityForRange = (start: string, end: string): 'day' | 'hour' => {
 const defaultRange = getLast24HoursRangeDates()
 const startDate = ref(defaultRange.start); const endDate = ref(defaultRange.end)
 const filters = ref<AdminUsageQueryParams>({ user_id: undefined, model: undefined, group_id: undefined, request_type: undefined, billing_type: null, start_date: startDate.value, end_date: endDate.value })
+// 账号测试只保留后端约定的独立筛选字段，绝不复用正式账单 filters。
+const testFilters = ref<AccountTestUsageQueryParams>({
+  start_date: startDate.value,
+  end_date: endDate.value,
+})
 const pagination = reactive({ page: 1, page_size: getPersistedPageSize(), total: 0 })
 const sortState = reactive({
   sort_by: 'created_at',
@@ -332,6 +361,11 @@ const applyRouteQueryFilters = () => {
     start_date: startDate.value,
     end_date: endDate.value
   }
+  testFilters.value = {
+    ...testFilters.value,
+    start_date: startDate.value,
+    end_date: endDate.value,
+  }
   granularity.value = getGranularityForRange(startDate.value, endDate.value)
 }
 
@@ -362,6 +396,11 @@ const onDateRangeChange = (range: { startDate: string; endDate: string; preset: 
     ...filters.value,
     start_date: range.startDate,
     end_date: range.endDate
+  }
+  testFilters.value = {
+    ...testFilters.value,
+    start_date: range.startDate,
+    end_date: range.endDate,
   }
   granularity.value = getGranularityForRange(range.startDate, range.endDate)
   applyFilters()
@@ -510,8 +549,79 @@ const loadChartData = async () => {
     groupStats.value = snapshot.groups || []
   } catch (error) { console.error('Failed to load chart data:', error) } finally { if (seq === chartReqSeq) chartsLoading.value = false }
 }
+const getBrowserTimezone = (): string => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+  } catch {
+    return 'UTC'
+  }
+}
+
+// 构造账号测试接口参数，明确阻断正式账单筛选字段和费用字段。
+const buildAccountTestParams = (withPagination: boolean): AccountTestUsageQueryParams => {
+  const params: AccountTestUsageQueryParams = {
+    start_date: testFilters.value.start_date || startDate.value,
+    end_date: testFilters.value.end_date || endDate.value,
+    platform: testFilters.value.platform?.trim() || undefined,
+    account_id: testFilters.value.account_id,
+    model: testFilters.value.model?.trim() || undefined,
+    success: testFilters.value.success,
+    timezone: getBrowserTimezone(),
+  }
+  if (withPagination) {
+    params.page = accountTestPagination.page
+    params.page_size = accountTestPagination.page_size
+  }
+  return params
+}
+
+const loadAccountTests = async () => {
+  accountTestAbortController?.abort()
+  const controller = new AbortController()
+  accountTestAbortController = controller
+  accountTestLoading.value = true
+  try {
+    const response = await adminUsageAPI.listTestLogs(buildAccountTestParams(true), { signal: controller.signal })
+    if (controller.signal.aborted) return
+    accountTestLogs.value = response.items
+    accountTestPagination.total = response.total
+    accountTestLoaded.value = true
+  } catch (error: any) {
+    if (error?.name !== 'AbortError' && !controller.signal.aborted) {
+      console.error('Failed to load account test usage:', error)
+      appStore.showError(t('usage.accountTests.failedToLoad'))
+    }
+  } finally {
+    if (accountTestAbortController === controller) accountTestLoading.value = false
+  }
+}
+
+const loadAccountTestStats = async () => {
+  accountTestStatsAbortController?.abort()
+  const controller = new AbortController()
+  accountTestStatsAbortController = controller
+  try {
+    const stats = await adminUsageAPI.getTestStats(buildAccountTestParams(false), { signal: controller.signal })
+    if (!controller.signal.aborted) accountTestStats.value = stats
+  } catch (error: any) {
+    if (error?.name === 'AbortError' || controller.signal.aborted) return
+    console.error('Failed to load account test usage stats:', error)
+    accountTestStats.value = null
+  } finally {
+    if (accountTestStatsAbortController === controller) accountTestStatsAbortController = null
+  }
+}
+
+const loadAccountTestData = async () => {
+  await Promise.all([loadAccountTests(), loadAccountTestStats()])
+}
+
 const applyFilters = () => {
   pagination.page = 1
+  if (activeTab.value === 'tests') {
+    void loadAccountTestData()
+    return
+  }
   invalidateModelStatsCache()
   loadLogs()
   loadStats()
@@ -524,7 +634,16 @@ const applyFilters = () => {
     errRows.value = []
   }
 }
+const applyTestFilters = () => {
+  accountTestPagination.page = 1
+  accountTestLoaded.value = false
+  void loadAccountTestData()
+}
 const refreshData = () => {
+  if (activeTab.value === 'tests') {
+    void loadAccountTestData()
+    return
+  }
   invalidateModelStatsCache()
   loadLogs()
   loadStats(true)
@@ -541,8 +660,19 @@ const resetFilters = () => {
   granularity.value = getGranularityForRange(startDate.value, endDate.value)
   applyFilters()
 }
+const resetTestFilters = () => {
+  testFilters.value = {
+    start_date: startDate.value,
+    end_date: endDate.value,
+  }
+  accountTestPagination.page = 1
+  accountTestLoaded.value = false
+  void loadAccountTestData()
+}
 const handlePageChange = (p: number) => { pagination.page = p; loadLogs() }
 const handlePageSizeChange = (s: number) => { pagination.page_size = s; pagination.page = 1; loadLogs() }
+const handleAccountTestPageChange = (page: number) => { accountTestPagination.page = page; void loadAccountTests() }
+const handleAccountTestPageSizeChange = (pageSize: number) => { accountTestPagination.page_size = pageSize; accountTestPagination.page = 1; void loadAccountTests() }
 const handleSort = (key: string, order: 'asc' | 'desc') => {
   sortState.sort_by = key
   sortState.sort_order = order
@@ -760,12 +890,13 @@ const loadSavedColumns = () => {
 }
 
 // Detail tabs
-type DetailTab = 'usage' | 'errors' | 'ranking'
+type DetailTab = 'usage' | 'errors' | 'ranking' | 'tests'
 const activeTab = ref<DetailTab>('usage')
 const detailTabs = computed(() => [
   { key: 'usage' as const, label: t('usage.tabs.usage'), icon: 'document' as const },
   { key: 'errors' as const, label: t('usage.tabs.errors'), icon: 'exclamationTriangle' as const },
   { key: 'ranking' as const, label: t('usage.tabs.ranking'), icon: 'chart' as const },
+  { key: 'tests' as const, label: t('usage.tabs.accountTests'), icon: 'beaker' as const },
 ])
 const usageFiltersRef = ref<InstanceType<typeof UsageFilters> | null>(null)
 const rankingMounted = ref(false)
@@ -775,6 +906,7 @@ const switchTab = (tab: DetailTab) => {
   activeTab.value = tab
   if (tab === 'errors' && errRows.value.length === 0) loadAdminErrors()
   if (tab === 'ranking') rankingMounted.value = true
+  if (tab === 'tests' && !accountTestLoaded.value) void loadAccountTestData()
 }
 
 // Error tab state
@@ -854,7 +986,7 @@ onMounted(() => {
   loadSavedErrColumns()
   document.addEventListener('click', handleColumnClickOutside)
 })
-onUnmounted(() => { abortController?.abort(); exportAbortController?.abort(); document.removeEventListener('click', handleColumnClickOutside) })
+onUnmounted(() => { abortController?.abort(); accountTestAbortController?.abort(); accountTestStatsAbortController?.abort(); exportAbortController?.abort(); document.removeEventListener('click', handleColumnClickOutside) })
 
 watch(modelDistributionSource, (source) => {
   void loadModelStats(source)

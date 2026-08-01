@@ -90,6 +90,70 @@ export interface AdminUsageQueryParams extends UsageQueryParams {
   error_phase?: string | null
   error_category?: string | null
   status_code?: number | null
+  // 账号测试 Tab 的独立筛选字段，不会传入正式账单接口。
+  platform?: string
+  success?: boolean
+}
+
+// 管理员账号测试明细独立于正式 usage_logs，不包含任何计费字段。
+export interface AccountTestUsageRecord {
+  id: number
+  account_id: number
+  account_name?: string | null
+  account?: { id: number; name: string } | null
+  platform: string
+  model: string
+  test_mode: string
+  endpoint: string
+  input_tokens: number
+  output_tokens: number
+  cache_creation_tokens: number
+  cache_read_tokens: number
+  tokens?: number | null
+  duration_ms: number
+  success: boolean
+  status_code: number
+  error_message?: string | null
+  created_at: string
+}
+
+// 全局账号测试统计只描述请求、Token 和耗时，不产生费用。
+export interface AccountTestUsageStatsResponse {
+  total_requests: number
+  successful_requests: number
+  failed_requests: number
+  input_tokens: number
+  output_tokens: number
+  cache_tokens: number
+  total_tokens: number
+  avg_duration_ms: number
+  by_platform: Array<{
+    platform: string
+    total_requests: number
+    successful_requests: number
+    failed_requests: number
+    input_tokens: number
+    output_tokens: number
+    cache_tokens: number
+    total_tokens: number
+    avg_duration_ms: number
+  }>
+  by_model: Array<{
+    model: string
+    total_requests: number
+  }>
+}
+
+export interface AccountTestUsageQueryParams {
+  start_date?: string
+  end_date?: string
+  platform?: string
+  account_id?: number
+  model?: string
+  success?: boolean
+  page?: number
+  page_size?: number
+  timezone?: string
 }
 
 // ==================== API Functions ====================
@@ -134,6 +198,38 @@ export async function getStats(params: {
   })
   return data
 }
+
+/**
+ * 查询管理员账号测试记录；该接口不读取正式用户计费记录。
+ */
+export async function listTestLogs(
+  params: AccountTestUsageQueryParams,
+  options?: { signal?: AbortSignal }
+): Promise<PaginatedResponse<AccountTestUsageRecord>> {
+  const { data } = await apiClient.get<PaginatedResponse<AccountTestUsageRecord>>('/admin/usage/test-logs', {
+    params,
+    signal: options?.signal
+  })
+  return data
+}
+
+/**
+ * 查询管理员账号测试汇总；统计不包含费用，也不会改变正式用量统计。
+ */
+export async function getTestStats(
+  params: Omit<AccountTestUsageQueryParams, 'page' | 'page_size'>,
+  options?: { signal?: AbortSignal }
+): Promise<AccountTestUsageStatsResponse> {
+  const { data } = await apiClient.get<AccountTestUsageStatsResponse>('/admin/usage/test-stats', {
+    params,
+    signal: options?.signal
+  })
+  return data
+}
+
+// 保留旧命名别名，兼容已有前端分支或外部调用方；别名仍指向新接口。
+export const listAccountTests = listTestLogs
+export const getAccountTestStats = getTestStats
 
 /**
  * Search users by email keyword (admin only)
@@ -207,6 +303,10 @@ export async function cancelCleanupTask(taskId: number): Promise<{ id: number; s
 export const adminUsageAPI = {
   list,
   getStats,
+  listTestLogs,
+  getTestStats,
+  listAccountTests,
+  getAccountTestStats,
   searchUsers,
   searchApiKeys,
   listCleanupTasks,

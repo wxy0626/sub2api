@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -20,6 +21,66 @@ type grokAccountTestRateLimitRepo struct {
 	*mockAccountRepoForGemini
 	rateLimitedCalls int
 	resetAt          time.Time
+}
+
+// grokModelProbeResponse 保存单模型探测的假上游结果。
+type grokModelProbeResponse struct {
+	status int
+	body   string
+}
+
+// grokModelProbeUpstream 按请求体中的 model 返回独立响应，并记录每次鉴权和请求体。
+type grokModelProbeUpstream struct {
+	responses map[string]grokModelProbeResponse
+	requests  []*http.Request
+	bodies    [][]byte
+}
+
+func (u *grokModelProbeUpstream) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		return nil, err
+	}
+	_ = req.Body.Close()
+	req.Body = io.NopCloser(strings.NewReader(string(body)))
+	u.requests = append(u.requests, req)
+	u.bodies = append(u.bodies, append([]byte(nil), body...))
+
+	model := gjson.GetBytes(body, "model").String()
+	configured, ok := u.responses[model]
+	if !ok {
+		return &http.Response{
+			StatusCode: http.StatusNotFound,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"model not configured in test upstream"}}`)),
+		}, nil
+	}
+	return &http.Response{
+		StatusCode: configured.status,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(configured.body)),
+	}, nil
+}
+
+func (u *grokModelProbeUpstream) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
+	return u.Do(req, proxyURL, accountID, accountConcurrency)
+}
+
+// probeGrokModelsForTest 复用生产单模型测试入口，汇总测试上游实际返回成功的模型。
+// 该辅助函数只用于证明筛选判定，不代表生产代码已有批量筛选接口。
+func probeGrokModelsForTest(t *testing.T, svc *AccountTestService, account *Account, candidates []string) []string {
+	t.Helper()
+	allowed := make([]string, 0, len(candidates))
+	for _, model := range candidates {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/1/test", nil)
+		err := svc.testGrokAccountConnection(c, account, model)
+		if err == nil {
+			allowed = append(allowed, model)
+		}
+	}
+	return allowed
 }
 
 func (r *grokAccountTestRateLimitRepo) SetRateLimited(_ context.Context, _ int64, resetAt time.Time) error {
@@ -126,6 +187,83 @@ func TestAccountTestService_TestAccountConnection_GrokDefaultsEmptyModelTo45(t *
 	require.NoError(t, err)
 	require.Equal(t, grokDefaultResponsesModel, gjson.GetBytes(upstream.lastBody, "model").String())
 	require.Contains(t, recorder.Body.String(), `"model":"grok-4.5"`)
+}
+
+// TestAccountTestService_GrokModelProbePartiallyFiltersCandidates 验证目录候选中只有 Responses 成功的模型可进入结果。
+func TestAccountTestService_GrokModelProbePartiallyFiltersCandidates(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	upstream := &grokModelProbeUpstream{
+		responses: map[string]grokModelProbeResponse{
+			"grok-allowed": {
+				status: http.StatusOK,
+				body:   "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\ndata: {\"type\":\"response.completed\"}\n\n",
+			},
+			"grok-denied": {
+				status: http.StatusForbidden,
+				body:   `{"error":{"message":"model access denied"}}`,
+			},
+		},
+	}
+	account := &Account{
+		ID:          92,
+		Platform:    PlatformGrok,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "grok-probe-key",
+			"base_url": "https://api.x.ai",
+		},
+	}
+	svc := &AccountTestService{httpUpstream: upstream}
+	candidates := []string{"grok-allowed", "grok-denied"}
+
+	allowed := probeGrokModelsForTest(t, svc, account, candidates)
+
+	require.Equal(t, []string{"grok-allowed"}, allowed)
+	require.Len(t, upstream.requests, 2)
+	for index, req := range upstream.requests {
+		require.Equal(t, http.MethodPost, req.Method)
+		require.Equal(t, "https://api.x.ai/v1/responses", req.URL.String())
+		require.Equal(t, "Bearer grok-probe-key", req.Header.Get("Authorization"))
+		require.Equal(t, "application/json, text/event-stream", req.Header.Get("Accept"))
+		require.Equal(t, candidates[index], gjson.GetBytes(upstream.bodies[index], "model").String())
+		require.Equal(t, grokQuotaProbeInput, gjson.GetBytes(upstream.bodies[index], "input").String())
+		require.True(t, gjson.GetBytes(upstream.bodies[index], "stream").Bool())
+	}
+}
+
+// TestAccountTestService_GrokModelProbeAllCandidatesFail 验证所有候选的 Responses 探测失败时结果为空，并且每个模型仍单独携带鉴权。
+func TestAccountTestService_GrokModelProbeAllCandidatesFail(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	upstream := &grokModelProbeUpstream{
+		responses: map[string]grokModelProbeResponse{
+			"grok-denied-a": {status: http.StatusForbidden, body: `{"error":{"message":"not entitled"}}`},
+			"grok-denied-b": {status: http.StatusUnauthorized, body: `{"error":{"message":"invalid api key"}}`},
+		},
+	}
+	account := &Account{
+		ID:          93,
+		Platform:    PlatformGrok,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "grok-probe-key",
+			"base_url": "https://api.x.ai",
+		},
+	}
+	svc := &AccountTestService{httpUpstream: upstream}
+	candidates := []string{"grok-denied-a", "grok-denied-b"}
+
+	require.Empty(t, probeGrokModelsForTest(t, svc, account, candidates))
+	require.Len(t, upstream.requests, len(candidates))
+	for index, req := range upstream.requests {
+		require.Equal(t, "Bearer grok-probe-key", req.Header.Get("Authorization"))
+		require.Equal(t, candidates[index], gjson.GetBytes(upstream.bodies[index], "model").String())
+	}
 }
 
 func TestAccountTestService_Grok429PersistsRateLimitReset(t *testing.T) {

@@ -588,6 +588,59 @@ func TestGetAvailableModels_ErrorAndGlobalListBranches(t *testing.T) {
 	require.Equal(t, int64(1), okRepo.listAllCalls.Load())
 }
 
+// TestGetAvailableModels_GrokAPIKeyEmptyMappingUsesUpstreamFetcher 锁定 Grok 空 mapping 不被静态默认映射遮蔽。
+func TestGetAvailableModels_GrokAPIKeyEmptyMappingUsesUpstreamFetcher(t *testing.T) {
+	groupID := int64(4414)
+	repo := &modelsListAccountRepoStub{
+		byGroup: map[int64][]Account{
+			groupID: {{
+				ID:          1,
+				Platform:    PlatformGrok,
+				Type:        AccountTypeAPIKey,
+				Credentials: map[string]any{"api_key": "xai-test-only"},
+			}},
+		},
+	}
+	fetcher := &gatewayModelsFetcherForHotpathTest{models: []string{"grok-live-only"}}
+	svc := &GatewayService{
+		accountRepo:           repo,
+		upstreamModelsFetcher: fetcher,
+	}
+
+	models := svc.GetAvailableModels(context.Background(), &groupID, PlatformGrok)
+
+	require.Equal(t, []string{"grok-live-only"}, models)
+	require.Equal(t, int64(1), fetcher.calls.Load())
+}
+
+// TestGetAvailableModels_AntigravityKeepsImplicitDefaultMapping 锁定 Antigravity 无显式 mapping 时仍使用默认映射。
+func TestGetAvailableModels_AntigravityKeepsImplicitDefaultMapping(t *testing.T) {
+	groupID := int64(4415)
+	svc := &GatewayService{
+		accountRepo: &modelsListAccountRepoStub{
+			byGroup: map[int64][]Account{
+				groupID: {{ID: 1, Platform: PlatformAntigravity}},
+			},
+		},
+	}
+
+	models := svc.GetAvailableModels(context.Background(), &groupID, PlatformAntigravity)
+
+	require.Contains(t, models, "gemini-3-flash")
+}
+
+// gatewayModelsFetcherForHotpathTest 是服务层模型目录读取测试桩。
+type gatewayModelsFetcherForHotpathTest struct {
+	models []string
+	calls  atomic.Int64
+}
+
+// FetchUpstreamSupportedModels 返回测试模型并记录调用次数。
+func (s *gatewayModelsFetcherForHotpathTest) FetchUpstreamSupportedModels(_ context.Context, _ *Account) ([]string, error) {
+	s.calls.Add(1)
+	return append([]string(nil), s.models...), nil
+}
+
 func TestGatewayHotpathHelpers_CacheTTLAndStickyContext(t *testing.T) {
 	t.Run("resolve_user_group_rate_cache_ttl", func(t *testing.T) {
 		require.Equal(t, defaultUserGroupRateCacheTTL, resolveUserGroupRateCacheTTL(nil))

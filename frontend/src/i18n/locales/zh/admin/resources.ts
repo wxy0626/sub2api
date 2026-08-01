@@ -545,6 +545,12 @@ export default {
       clickToViewBalance: '点击查看充值记录',
       failedToLoadUser: '加载用户信息失败',
       userDeletedBadge: '已删除',
+      accountTests: {
+        platform: '平台', platformPlaceholder: '输入平台名称',
+        testMode: '测试模式', testModePlaceholder: '输入测试模式',
+        status: '测试状态', allStatuses: '全部状态', success: '成功', failed: '失败', modelPlaceholder: '输入模型名称'
+      },
+      accountTest: { badge: '管理员测试', noBilling: '不计费', totalRequests: '测试请求', successfulRequests: '成功请求', failedRequests: '失败请求', totalTokens: '测试总 Token', averageDuration: '平均耗时', inputOutput: '输入/输出', cacheTokens: '缓存 Token', requests: '请求', tokens: 'Token', platform: '平台', platformPlaceholder: '输入平台名称', accountId: '账号 ID', accountIdPlaceholder: '输入账号 ID', modelPlaceholder: '输入模型名称', result: '结果', allResults: '全部结果', success: '成功', failed: '失败', unknownAccount: '未知账号', empty: '暂无账号测试记录，请调整日期或筛选条件。', inputShort: '输入', outputShort: '输出', cacheShort: '缓存创建/读取', totalShort: '总计', columns: { time: '时间', platform: '平台', account: '账号', model: '模型', endpoint: '接口', testMode: '测试模式', tokens: 'Token', result: '结果', status: '状态', duration: '耗时', error: '错误' } },
       tokenRanking: {
         subtitle: '按当前筛选与时间范围统计每个用户的 Token 用量',
         rowHint: '点击查看该用户的用量明细',
