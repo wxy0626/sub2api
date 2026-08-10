@@ -268,6 +268,7 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 				User:                apiKey.User,
 				Account:             account,
 				Subscription:        subscription,
+				PricingAt:           pricingAt,
 				InboundEndpoint:     inboundEndpoint,
 				UpstreamEndpoint:    upstreamEndpoint,
 				UserAgent:           userAgent,
