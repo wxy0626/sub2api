@@ -115,6 +115,15 @@ func (s *OpenAIGatewayService) ResolveUserGroupRateMultiplier(ctx context.Contex
 	return resolver.Resolve(ctx, userID, groupID, groupDefaultMultiplier)
 }
 
+// openAIUsagePricingAt 返回本次用量记录使用的定价时刻：优先请求级 PricingAt
+// （与利润门 D 同源同刻），未装配时回退记录时刻（既有行为）。
+func openAIUsagePricingAt(input *OpenAIRecordUsageInput) time.Time {
+	if input != nil && !input.PricingAt.IsZero() {
+		return input.PricingAt
+	}
+	return timezone.Now()
+}
+
 // RecordUsage records usage and deducts balance
 func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRecordUsageInput) error {
 	if input == nil {
@@ -161,10 +170,12 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	if apiKey.GroupID != nil && apiKey.Group != nil {
 		multiplier = s.ResolveUserGroupRateMultiplier(ctx, user.ID, *apiKey.GroupID, apiKey.Group.RateMultiplier)
 	}
-	// token 倍率叠加高峰因子（token 计费含图片 token，图片按次倍率不受影响）。高峰因子按请求时刻现算，
-	// 不并入上面的 Resolve，以免污染 user:group 倍率缓存。
+	// token 倍率叠加高峰因子（token 计费含图片 token，图片按次倍率不受影响）。
+	// 高峰因子按请求级 PricingAt 现算（与利润门 D 同源同刻，跨峰谷请求不中途
+	// 变价）；未装配 PricingAt 的路径回退记录时刻，保持既有行为。不并入上面的
+	// Resolve，以免污染 user:group 倍率缓存。
 	baseMultiplier := multiplier
-	multiplier, imageMultiplier := computePeakAwareMultipliers(apiKey, baseMultiplier, timezone.Now())
+	multiplier, imageMultiplier := computePeakAwareMultipliers(apiKey, baseMultiplier, openAIUsagePricingAt(input))
 	videoMultiplier := resolveVideoRateMultiplier(apiKey, baseMultiplier)
 
 	var cost *CostBreakdown
@@ -244,11 +255,33 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 			requestID = upstreamRequestID
 		}
 	}
+	// Async Grok video: always use the stable task id for dedup (status + content polls
+	// share one bill). Context-local client/local IDs would otherwise create a new row
+	// per poll if Redis claim is lost.
+	if result.VideoCount > 0 {
+		if stable := StableGrokVideoBillingRequestID(firstNonEmpty(
+			strings.TrimPrefix(strings.TrimSpace(result.RequestID), "grok-video:"),
+			strings.TrimSpace(result.ResponseID),
+			strings.TrimPrefix(strings.TrimSpace(requestID), "grok-video:"),
+		)); stable != "" {
+			requestID = stable
+		}
+	}
 
 	// 确定 RequestedModel（渠道映射前的原始模型）
 	requestedModel := result.Model
 	if input.OriginalModel != "" {
 		requestedModel = input.OriginalModel
+	}
+	sentModel := upstreamSentModel(result.Model, result.UpstreamModel)
+	if result.UpstreamResponseModelConflict {
+		logger.L().Warn("upstream_response_model_conflict",
+			zap.String("platform", account.Platform),
+			zap.Int64("account_id", account.ID),
+			zap.String("request_id", requestID),
+			zap.String("sent_model", sentModel),
+			zap.String("selected_response_model", strings.TrimSpace(result.UpstreamResponseModel)),
+		)
 	}
 
 	usageLog := &UsageLog{
@@ -389,6 +422,8 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	}()
 
 	if billingErr != nil {
+		usageLog.ActualCost = 0
+		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
 		return billingErr
 	}
 	writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
@@ -422,39 +457,83 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 			return s.calculateOpenAIVideoCost(ctx, billingModel, apiKey, result, videoMultiplier), nil
 		}
 	}
+	if result != nil && result.AudioUsage != nil {
+		cfg := groupAudioPriceConfigFromAPIKey(apiKey)
+		return s.billingService.CalculateAudioCost(result.AudioUsage.Mode, result.AudioUsage.DurationOrUnits, cfg, webSearchMultiplier), nil
+	}
+
 	if result != nil && result.ImageCount > 0 {
 		// 渠道定价为 token 计费时走 token 路径，否则走图片计费
 		if resolved := s.resolveOpenAIChannelPricing(ctx, billingModel, apiKey); resolved == nil || resolved.Mode != BillingModeToken {
 			return s.calculateOpenAIImageCost(ctx, billingModel, apiKey, result, imageMultiplier), nil
 		}
 	}
-	if len(billingModels) == 0 || billingModel == "" {
-		return nil, errors.New("openai usage billing model is empty")
-	}
+
+	// Token path (optional search surcharge is additive — never replaces token cost).
+	var tokenCost *CostBreakdown
 	var lastErr error
-	for _, candidate := range billingModels {
-		candidate = strings.TrimSpace(candidate)
-		if candidate == "" {
-			continue
+	if len(billingModels) > 0 && billingModel != "" {
+		for _, candidate := range billingModels {
+			candidate = strings.TrimSpace(candidate)
+			if candidate == "" {
+				continue
+			}
+			cost, err := s.calculateOpenAIRecordUsageTokenCost(
+				ctx,
+				apiKey,
+				candidate,
+				multiplier,
+				tokens,
+				serviceTier,
+				longContextBillingEnabled,
+			)
+			if err == nil {
+				tokenCost = cost
+				break
+			}
+			lastErr = err
 		}
-		cost, err := s.calculateOpenAIRecordUsageTokenCost(
-			ctx,
-			apiKey,
-			candidate,
-			multiplier,
-			tokens,
-			serviceTier,
-			longContextBillingEnabled,
-		)
-		if err == nil {
-			return cost, nil
+	}
+	// Search surcharge is additive. Never let a zero/default search cost mask a
+	// real token-pricing failure for requests that attempted token billing.
+	searchCost := (*CostBreakdown)(nil)
+	if result != nil && result.SearchCount > 0 {
+		price := groupSearchPricePer1kFromAPIKey(apiKey)
+		if price != nil && *price == 0 {
+			logger.L().Info("openai_usage.search_price_per_1k_explicit_free",
+				zap.Int("search_count", result.SearchCount),
+				zap.String("model", billingModel),
+				zap.Int64("api_key_id", apiKey.ID),
+				zap.Any("group_id", apiKey.GroupID),
+			)
 		}
-		lastErr = err
+		searchCost = s.billingService.CalculateSearchCost(result.SearchCount, price, webSearchMultiplier)
 	}
-	if lastErr == nil {
-		lastErr = errors.New("no non-empty billing model candidates")
+
+	tokenBillingAttempted := len(billingModels) > 0 && billingModel != ""
+	if tokenCost == nil {
+		if tokenBillingAttempted {
+			if lastErr == nil {
+				lastErr = errors.New("no non-empty billing model candidates")
+			}
+			return nil, fmt.Errorf("calculate OpenAI usage cost failed for billing models %s: %w", strings.Join(billingModels, ","), lastErr)
+		}
+		// Search-only (no model / pure tool path): allow search billing alone.
+		if searchCost != nil {
+			return searchCost, nil
+		}
+		if lastErr == nil {
+			lastErr = errors.New("openai usage billing model is empty")
+		}
+		return nil, fmt.Errorf("calculate OpenAI usage cost failed for billing models %s: %w", strings.Join(billingModels, ","), lastErr)
 	}
-	return nil, fmt.Errorf("calculate OpenAI usage cost failed for billing models %s: %w", strings.Join(billingModels, ","), lastErr)
+	if searchCost == nil || (searchCost.TotalCost == 0 && searchCost.ActualCost == 0) {
+		return tokenCost, nil
+	}
+	// Additive: tokens + search surcharge.
+	tokenCost.TotalCost += searchCost.TotalCost
+	tokenCost.ActualCost += searchCost.ActualCost
+	return tokenCost, nil
 }
 
 func isGrokVideoBillingModel(model string) bool {
@@ -465,6 +544,8 @@ func isGrokVideoUsageResult(result *OpenAIForwardResult, billingModels []string)
 	if result == nil || result.VideoCount <= 0 {
 		return false
 	}
+	// VideoCount alone is authoritative for async video completion billing.
+	// Prefer model-family match when present; never drop video mode on rename/mapping.
 	candidates := append([]string{}, billingModels...)
 	candidates = append(candidates, result.BillingModel, result.Model, result.UpstreamModel)
 	for _, candidate := range candidates {
@@ -472,7 +553,7 @@ func isGrokVideoUsageResult(result *OpenAIForwardResult, billingModels []string)
 			return true
 		}
 	}
-	return false
+	return true
 }
 
 func isUsagePricingUnavailableError(err error) bool {
@@ -573,13 +654,13 @@ func (s *OpenAIGatewayService) calculateOpenAIVideoCost(
 	resolution := NormalizeVideoBillingResolutionOrDefault(result.VideoResolution)
 	durationSeconds := NormalizeVideoBillingDurationSecondsOrDefault(result.VideoDurationSeconds)
 	groupConfig := videoPriceConfigFromAPIKey(apiKey)
-	if apiKeyHasConfiguredVideoPrice(apiKey, resolution) {
+	if apiKeyHasConfiguredVideoPrice(apiKey, billingModel, resolution) {
 		return s.billingService.CalculateVideoCost(billingModel, resolution, videoCount, durationSeconds, groupConfig, multiplier)
 	}
 	if refreshed := s.apiKeyWithFreshGroupMediaPricing(ctx, apiKey); refreshed != apiKey {
 		apiKey = refreshed
 		groupConfig = videoPriceConfigFromAPIKey(apiKey)
-		if apiKeyHasConfiguredVideoPrice(apiKey, resolution) {
+		if apiKeyHasConfiguredVideoPrice(apiKey, billingModel, resolution) {
 			return s.billingService.CalculateVideoCost(billingModel, resolution, videoCount, durationSeconds, groupConfig, multiplier)
 		}
 	}
@@ -626,10 +707,14 @@ func (s *OpenAIGatewayService) apiKeyWithFreshGroupMediaPricing(ctx context.Cont
 	return &clone
 }
 
-// groupMediaPricingLooksIncomplete 判断分组对象是否可能缺失媒体计费字段（例如由不含
-// 这些字段的旧快照或手工构造的上下文对象生成）。image/video 独立倍率在数据库中的
-// 默认值均为 1.0，正常加载的分组不可能两个倍率同时为 0 且未开启独立倍率、全部媒体
-// 价为 nil——只有这种情况才回源查库，避免对未配置覆盖价的分组每条媒体用量都多打一次 DB 查询。
+// groupMediaPricingLooksIncomplete 判断分组对象是否可能缺失媒体/搜索/语音计费字段
+// （例如由不含这些字段的旧快照或手工构造的上下文对象生成）。image/video 独立倍率在
+// 数据库中的默认值均为 1.0；正常加载的分组不可能两个倍率同时为 0 且未开启独立倍率、
+// 全部媒体/搜索/语音价为 nil——只有这种情况才回源查库，避免对未配置覆盖价的分组每条
+// 用量都多打一次 DB 查询。
+//
+// 注意：apiKeyAuthSnapshotVersion 升级会强制刷新存量快照；本函数是热路径上的二次兜底，
+// 不能仅凭 legacy video_price_* 判定完整而跳过 VideoModelPrices/search/audio 的回源。
 func groupMediaPricingLooksIncomplete(group *Group) bool {
 	if group == nil {
 		return true
@@ -638,6 +723,17 @@ func groupMediaPricingLooksIncomplete(group *Group) bool {
 		return false
 	}
 	if group.ImageRateMultiplier != 0 || group.VideoRateMultiplier != 0 {
+		return false
+	}
+	// Any first-class pricing field present means the projection is not a blank shell.
+	if len(group.VideoModelPrices) > 0 {
+		return false
+	}
+	if group.SearchPricePer1k != nil ||
+		group.AudioRealtimePricePerMin != nil ||
+		group.AudioTTSPricePerMillionChars != nil ||
+		group.AudioSTTPricePerHour != nil ||
+		group.WebSearchPricePerCall != nil {
 		return false
 	}
 	return group.ImagePrice1K == nil && group.ImagePrice2K == nil && group.ImagePrice4K == nil &&

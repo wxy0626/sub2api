@@ -19,6 +19,80 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+type openAIWSLeaseLossAfterReadConn struct {
+	*openAIWSCaptureConn
+	cancel context.CancelCauseFunc
+	once   sync.Once
+}
+
+func (c *openAIWSLeaseLossAfterReadConn) ReadMessage(ctx context.Context) ([]byte, error) {
+	message, err := c.openAIWSCaptureConn.ReadMessage(ctx)
+	if err == nil {
+		c.once.Do(func() {
+			c.cancel(ErrOpenAIWSIngressLeaseLost)
+		})
+	}
+	return message, err
+}
+
+type openAIWSSingleConnDialer struct {
+	conn openAIWSClientConn
+}
+
+func (d *openAIWSSingleConnDialer) Dial(
+	ctx context.Context,
+	wsURL string,
+	headers http.Header,
+	proxyURL string,
+) (openAIWSClientConn, int, http.Header, error) {
+	return d.conn, 0, nil, nil
+}
+
+func TestOpenAIWSDownstreamWriteContext_CancellationOwnership(t *testing.T) {
+	t.Run("pre-canceled ordinary context is canceled before return", func(t *testing.T) {
+		controlCtx, cancelControl := context.WithCancelCause(context.Background())
+		cancelControl(context.Canceled)
+
+		writeCtx, cancelWrite := newOpenAIWSDownstreamWriteContext(controlCtx, nil, time.Second)
+		defer cancelWrite()
+		require.ErrorIs(t, writeCtx.Err(), context.Canceled)
+	})
+
+	t.Run("lease loss keeps current write alive", func(t *testing.T) {
+		lifecycleCtx, cancelLifecycle := context.WithCancelCause(context.Background())
+		controlCtx, cancelControl := context.WithCancelCause(lifecycleCtx)
+		hooks := &OpenAIWSIngressHooks{ClientLifecycleContext: lifecycleCtx}
+		writeCtx, cancelWrite := newOpenAIWSDownstreamWriteContext(controlCtx, hooks, time.Second)
+		defer cancelWrite()
+
+		cancelControl(ErrOpenAIWSIngressLeaseLost)
+		select {
+		case <-writeCtx.Done():
+			t.Fatalf("lease loss unexpectedly canceled downstream write: %v", writeCtx.Err())
+		case <-time.After(20 * time.Millisecond):
+		}
+
+		clientDisconnected := errors.New("client disconnected")
+		cancelLifecycle(clientDisconnected)
+		<-writeCtx.Done()
+		require.ErrorIs(t, context.Cause(writeCtx), clientDisconnected)
+	})
+
+	t.Run("ordinary cancellation is direct and preserves cause", func(t *testing.T) {
+		lifecycleCtx, cancelLifecycle := context.WithCancelCause(context.Background())
+		controlCtx, cancelControl := context.WithCancelCause(lifecycleCtx)
+		defer cancelControl(context.Canceled)
+		hooks := &OpenAIWSIngressHooks{ClientLifecycleContext: lifecycleCtx}
+		writeCtx, cancelWrite := newOpenAIWSDownstreamWriteContext(controlCtx, hooks, time.Second)
+		defer cancelWrite()
+
+		serverShutdown := errors.New("server shutdown")
+		cancelLifecycle(serverShutdown)
+		require.ErrorIs(t, writeCtx.Err(), context.Canceled)
+		require.ErrorIs(t, context.Cause(writeCtx), serverShutdown)
+	})
+}
+
 func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_KeepLeaseAcrossTurns(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
