@@ -934,6 +934,25 @@ const startTest = async () => {
         requestBody.audio_data_url = uploadAudioDataURL.value
       }
     }
+    if (isGrokAccount.value) {
+      // Always send explicit Grok mode. search/tts/stt/realtime are standalone
+      // endpoints (no free-form model select). text/image/video use optional model.
+      requestBody.mode = grokTestMode.value
+      if (
+        grokTestMode.value === 'search' ||
+        grokTestMode.value === 'tts' ||
+        grokTestMode.value === 'stt' ||
+        grokTestMode.value === 'realtime'
+      ) {
+        requestBody.model_id = ''
+      }
+      if (uploadImageDataURL.value && (grokTestMode.value === 'image' || grokTestMode.value === 'video')) {
+        requestBody.image_data_url = uploadImageDataURL.value
+      }
+      if (uploadAudioDataURL.value && grokTestMode.value === 'stt') {
+        requestBody.audio_data_url = uploadAudioDataURL.value
+      }
+    }
 
     // Use the configured API base; EventSource does not support POST.
     const url = buildApiUrl(`/admin/accounts/${props.account.id}/test`)
