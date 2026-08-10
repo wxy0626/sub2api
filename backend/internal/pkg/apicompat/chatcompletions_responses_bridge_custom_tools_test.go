@@ -204,16 +204,24 @@ func TestResponsesInputToChatMessages_ToolOutputImagesStayOutOfToolText(t *testi
 			require.Equal(t, "tool", messages[1].Role)
 			require.Equal(t, "user", messages[2].Role)
 
-			assert.JSONEq(t, `"before image\n\nafter image"`, string(messages[1].Content))
-			assert.NotContains(t, string(messages[1].Content), imageDataURI)
+			var toolText string
+			require.NoError(t, json.Unmarshal(messages[1].Content, &toolText))
+			assert.JSONEq(t, `[
+				{"type":"input_text","text":"before image"},
+				{"type":"input_text","text":"[Tool output media moved to the following user message]"},
+				{"type":"input_text","text":"after image"}
+			]`, toolText)
+			assert.NotContains(t, toolText, imageDataURI)
 
 			var imageParts []ChatContentPart
 			require.NoError(t, json.Unmarshal(messages[2].Content, &imageParts))
-			require.Len(t, imageParts, 1)
-			assert.Equal(t, "image_url", imageParts[0].Type)
-			require.NotNil(t, imageParts[0].ImageURL)
-			assert.Equal(t, imageDataURI, imageParts[0].ImageURL.URL)
-			assert.Equal(t, "high", imageParts[0].ImageURL.Detail)
+			require.Len(t, imageParts, 2)
+			assert.Equal(t, "text", imageParts[0].Type)
+			assert.Equal(t, "[Tool output media for call call_image_1]", imageParts[0].Text)
+			assert.Equal(t, "image_url", imageParts[1].Type)
+			require.NotNil(t, imageParts[1].ImageURL)
+			assert.Equal(t, imageDataURI, imageParts[1].ImageURL.URL)
+			assert.Equal(t, "high", imageParts[1].ImageURL.Detail)
 		})
 	}
 }

@@ -106,14 +106,6 @@ var AllowedSchedulingThresholdPlatforms = []string{
 	PlatformGrok,
 }
 
-// AllowedSchedulingThresholdPlatforms 是允许设置账号自动停调阈值的平台列表。
-// 仅 openai / anthropic / grok 有原生用量窗口可供评估；其他平台写入阈值无效果。
-var AllowedSchedulingThresholdPlatforms = []string{
-	PlatformOpenAI,
-	PlatformAnthropic,
-	PlatformGrok,
-}
-
 // IsAllowedQuotaPlatform 报告 s 是否为合法的 quota platform 标识。
 func IsAllowedQuotaPlatform(s string) bool {
 	for _, p := range AllowedQuotaPlatforms {

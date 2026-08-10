@@ -335,6 +335,12 @@ const billingModeOptions = ref<SelectOption[]>([
   { value: 'video', label: t('admin.usage.billingModeVideo') }
 ])
 
+const upstreamModelMismatchOptions = ref<SelectOption[]>([
+  { value: null, label: t('admin.usage.allUpstreamModelAudit') },
+  { value: true, label: t('admin.usage.upstreamModelMismatchOnly') },
+  { value: false, label: t('admin.usage.upstreamModelMatchedOnly') }
+])
+
 const testStatusOptions = computed<SelectOption[]>(() => [
   { value: null, label: t('admin.usage.accountTests.allStatuses') },
   { value: true, label: t('admin.usage.accountTests.success') },

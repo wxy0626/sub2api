@@ -339,13 +339,6 @@ const overloadCountdown = computed(() => {
   return formatCountdownWithSuffix(props.account.overload_until)
 })
 
-const tempUnschedRecoveryText = computed(() => {
-  if (!isTempUnschedulable.value || !props.account.temp_unschedulable_until) return ''
-  return t('admin.accounts.status.tempUnschedulableUntil', {
-    time: formatDateTime(props.account.temp_unschedulable_until)
-  })
-})
-
 // Computed: status badge class
 const statusClass = computed(() => {
   if (hasError.value) {

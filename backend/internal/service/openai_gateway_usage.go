@@ -35,6 +35,8 @@ type OpenAIRecordUsageInput struct {
 	RequestPayloadHash  string
 	APIKeyService       APIKeyQuotaUpdater
 	QuotaPlatform       string // user×platform quota platform resolved by the handler before async billing.
+	// PricingAt 是请求级定价时刻，与利润门使用同一时刻；零值回退记录时刻。
+	PricingAt time.Time
 	// CyberBlocked 为 true 时把该用量行标记为 cyber（request_type=cyber），计费逻辑不变。
 	CyberBlocked bool
 	ChannelUsageFields

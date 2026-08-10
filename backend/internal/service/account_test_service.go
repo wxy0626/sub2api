@@ -266,7 +266,7 @@ func createTestPayload(modelID string) (map[string]any, error) {
 // modelID is optional - if empty, defaults to claude.DefaultTestModel
 // mode is optional - "responses" forces API Key accounts through /v1/responses once,
 // while "compact" routes OpenAI accounts to the /responses/compact probe path.
-func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int64, modelID string, prompt string, mode string) (err error) {
+func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int64, modelID string, prompt string, mode string, opts ...AccountTestOptions) (err error) {
 	ctx := c.Request.Context()
 	testOpts := firstAccountTestOptions(opts)
 
@@ -961,8 +961,9 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 //   - realtime → WS /v1/realtime dial + optional first server event
 //
 // When mode is default, image/video can still be inferred from model_id for backward compat.
-func (s *AccountTestService) testGrokAccountConnection(c *gin.Context, account *Account, modelID, prompt, mode string, opts AccountTestOptions) error {
+func (s *AccountTestService) testGrokAccountConnection(c *gin.Context, account *Account, modelID, prompt, mode string, opts ...AccountTestOptions) error {
 	ctx := c.Request.Context()
+	testOpts := firstAccountTestOptions(opts)
 
 	// Realtime is WebSocket-only and does not need HTTP upstream.
 	mode = normalizeGrokAccountTestMode(mode)
@@ -982,13 +983,13 @@ func (s *AccountTestService) testGrokAccountConnection(c *gin.Context, account *
 	case AccountTestModeGrokTTS:
 		return s.testGrokTTS(c, ctx, account, authToken, prompt)
 	case AccountTestModeGrokSTT:
-		return s.testGrokSTT(c, ctx, account, authToken, opts.AudioDataURL)
+		return s.testGrokSTT(c, ctx, account, authToken, testOpts.AudioDataURL)
 	case AccountTestModeGrokRealtime:
 		return s.testGrokRealtime(c, ctx, account, authToken, modelID)
 	case AccountTestModeGrokImage:
-		return s.testGrokImageGeneration(c, ctx, account, authToken, resolveGrokImageTestModel(account, modelID), resolveGrokImagePrompt(prompt), opts.ImageDataURL)
+		return s.testGrokImageGeneration(c, ctx, account, authToken, resolveGrokImageTestModel(account, modelID), resolveGrokImagePrompt(prompt), testOpts.ImageDataURL)
 	case AccountTestModeGrokVideo:
-		return s.testGrokVideoGeneration(c, ctx, account, authToken, resolveGrokVideoTestModel(account, modelID), resolveGrokVideoPrompt(prompt), opts)
+		return s.testGrokVideoGeneration(c, ctx, account, authToken, resolveGrokVideoTestModel(account, modelID), resolveGrokVideoPrompt(prompt), testOpts)
 	case AccountTestModeGrokText:
 		// Force text Responses even if model_id looks like media.
 		testModelID := strings.TrimSpace(modelID)
@@ -1012,9 +1013,9 @@ func (s *AccountTestService) testGrokAccountConnection(c *gin.Context, account *
 
 	switch {
 	case isGrokImageGenerationModel(testModelID):
-		return s.testGrokImageGeneration(c, ctx, account, authToken, testModelID, resolveGrokImagePrompt(prompt), opts.ImageDataURL)
+		return s.testGrokImageGeneration(c, ctx, account, authToken, testModelID, resolveGrokImagePrompt(prompt), testOpts.ImageDataURL)
 	case isGrokVideoGenerationModel(testModelID):
-		return s.testGrokVideoGeneration(c, ctx, account, authToken, testModelID, resolveGrokVideoPrompt(prompt), opts)
+		return s.testGrokVideoGeneration(c, ctx, account, authToken, testModelID, resolveGrokVideoPrompt(prompt), testOpts)
 	default:
 		return s.testGrokResponsesConnection(c, ctx, account, authToken, testModelID)
 	}
@@ -1078,7 +1079,7 @@ func (s *AccountTestService) grokTestAccessToken(ctx context.Context, account *A
 	default:
 		return "", fmt.Errorf("unsupported grok account type: %s", account.Type)
 	}
-	addAccountTestUsageRedaction(c, authToken)
+}
 
 func (s *AccountTestService) grokTestProxyURL(account *Account) string {
 	if account.ProxyID != nil && account.Proxy != nil {
@@ -1110,19 +1111,55 @@ func (s *AccountTestService) applyGrokTestRequestHeaders(req *http.Request, acco
 	account.ApplyHeaderOverrides(req.Header)
 }
 
-func (s *AccountTestService) observeGrokTestResponse(ctx context.Context, account *Account, resp *http.Response) {
-	if resp == nil {
-		return
+// testGrokResponsesConnection 通过 Grok Responses 端点执行文本连通性探测。
+func (s *AccountTestService) testGrokResponsesConnection(c *gin.Context, ctx context.Context, account *Account, authToken, testModelID string) error {
+	apiURL, err := buildGrokResponsesURL(account, s.cfg, s.settingService)
+	if err != nil {
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid Grok base URL: %s", err.Error()))
 	}
-	// 先记录请求目标，再发起上游请求，保证连接失败也能留下可查询的测试记录。
+
+	s.prepareGrokTestSSE(c)
+	payloadBytes, err := buildGrokQuotaProbeBody(testModelID)
+	if err != nil {
+		return s.sendErrorAndEnd(c, "Failed to create Grok test payload")
+	}
+	if !agentIdentityTaskRecoveryWasTried(ctx) {
+		s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(payloadBytes))
+	if err != nil {
+		return s.sendErrorAndEnd(c, "Failed to create Grok request")
+	}
+	s.applyGrokTestRequestHeaders(req, account, authToken, "application/json, text/event-stream")
+
+	// 先记录实际目标，确保连接失败也能保留账号测试的用量审计信息。
 	beginAccountTestUsageRequest(c, testModelID, "/v1/responses")
-	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
+	resp, err := s.httpUpstream.Do(req, s.grokTestProxyURL(account), account.ID, account.Concurrency)
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Grok Responses API request failed: %s", accountTestErrorDetail(account, err.Error(), authToken)))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	recordAccountTestUsageStatus(c, resp.StatusCode)
 
+	s.observeGrokTestResponse(ctx, account, resp)
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		errorDetail := accountTestErrorDetail(account, string(body), authToken)
+		if resp.StatusCode == http.StatusPaymentRequired && s.accountRepo != nil {
+			stateCtx, cancel := openAIAccountStateContext(ctx)
+			defer cancel()
+			_ = s.accountRepo.SetTempUnschedulable(stateCtx, account.ID, time.Now().Add(30*time.Minute), "grok payment required")
+		}
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Grok Responses API returned %d: %s", resp.StatusCode, errorDetail))
+	}
+	return s.processOpenAIStream(c, resp.Body, false, account)
+}
+
+func (s *AccountTestService) observeGrokTestResponse(ctx context.Context, account *Account, resp *http.Response) {
+	if resp == nil {
+		return
+	}
 	now := time.Now()
 	// Error bodies carry Grok's free-usage, billing, and content-policy
 	// classifications when quota headers are absent. Read only non-success
@@ -1152,18 +1189,6 @@ func (s *AccountTestService) observeGrokTestResponse(ctx context.Context, accoun
 		clearGrokRateLimitAfterRecovery(ctx, s.accountRepo, account)
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		errorDetail := accountTestErrorDetail(account, string(body), authToken)
-		if resp.StatusCode == http.StatusPaymentRequired && s.accountRepo != nil {
-			stateCtx, cancel := openAIAccountStateContext(ctx)
-			defer cancel()
-			_ = s.accountRepo.SetTempUnschedulable(stateCtx, account.ID, now.Add(30*time.Minute), "grok payment required")
-		}
-		return s.sendErrorAndEnd(c, fmt.Sprintf("Grok Responses API returned %d: %s", resp.StatusCode, errorDetail))
-	}
-
-	return s.processOpenAIStream(c, resp.Body, false, account)
 }
 
 func (s *AccountTestService) testGrokImageGeneration(c *gin.Context, ctx context.Context, account *Account, authToken, modelID, prompt, imageDataURL string) error {

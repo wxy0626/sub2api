@@ -421,6 +421,16 @@ const generatedVideos = ref<PreviewMedia[]>([])
 const previewImageUrl = ref('')
 // testMode 为当前账号持久化的模型测试模式，OpenAI 和 DeepSeek 共用该字段。
 const testMode = ref<AccountTestMode>('default')
+// Grok 测试模式包含文本、媒体与独立端点，和 OpenAI/DeepSeek 的持久化模式分开维护。
+type GrokTestMode = 'text' | 'image' | 'video' | 'search' | 'tts' | 'stt' | 'realtime'
+const grokTestMode = ref<GrokTestMode>('text')
+const uploadImageDataURL = ref('')
+const uploadImagePreview = ref('')
+const uploadImageName = ref('')
+const uploadAudioDataURL = ref('')
+const uploadAudioName = ref('')
+const imageFileInput = ref<HTMLInputElement | null>(null)
+const audioFileInput = ref<HTMLInputElement | null>(null)
 // 已确认写入账号配置的模式，保存失败时用于回滚界面选择。
 let persistedTestMode: AccountTestMode = 'default'
 // 保存序号保证快速连续切换时，最后一次选择最终写入账号配置。
@@ -429,7 +439,17 @@ let savedTestModeRevision = 0
 let testModeSaveTask: Promise<void> | null = null
 const isOpenAIAccount = computed(() => props.account?.platform === 'openai')
 const isDeepSeekAccount = computed(() => props.account?.platform === 'deepseek')
+const isGrokAccount = computed(() => props.account?.platform === 'grok')
 const supportsTestMode = computed(() => isOpenAIAccount.value || isDeepSeekAccount.value)
+const grokTestModeOptions = computed(() => [
+  { value: 'text', label: t('admin.accounts.grok.testModeText') },
+  { value: 'image', label: t('admin.accounts.grok.testModeImage') },
+  { value: 'video', label: t('admin.accounts.grok.testModeVideo') },
+  { value: 'search', label: t('admin.accounts.grok.testModeSearch') },
+  { value: 'tts', label: t('admin.accounts.grok.testModeTTS') },
+  { value: 'stt', label: t('admin.accounts.grok.testModeSTT') },
+  { value: 'realtime', label: t('admin.accounts.grok.testModeRealtime') }
+])
 // DeepSeek 仅支持 Chat Completions 和 Responses；OpenAI 保留既有四种探测模式。
 const testModeOptions = computed(() => {
   const options = [
@@ -814,6 +834,14 @@ watch(selectedModelId, () => {
   }
 })
 
+watch(grokTestMode, () => {
+  if (!isGrokAccount.value) return
+  testPrompt.value = ''
+  clearMediaUploads()
+  pickDefaultModelForMode()
+  applyDefaultPromptForMode()
+})
+
 const loadAvailableModels = async () => {
   if (!props.account) return
 
@@ -904,7 +932,9 @@ const startTest = async () => {
     const requestBody: {
       model_id: string
       prompt: string
-      mode?: 'default' | 'responses' | 'compact' | 'workspace'
+      mode?: AccountTestMode | GrokTestMode
+      image_data_url?: string
+      audio_data_url?: string
     } = {
       model_id: showModelSelect.value ? selectedModelId.value : '',
       prompt: supportsPromptInput.value ? testPrompt.value.trim() : ''
@@ -934,26 +964,6 @@ const startTest = async () => {
         requestBody.audio_data_url = uploadAudioDataURL.value
       }
     }
-    if (isGrokAccount.value) {
-      // Always send explicit Grok mode. search/tts/stt/realtime are standalone
-      // endpoints (no free-form model select). text/image/video use optional model.
-      requestBody.mode = grokTestMode.value
-      if (
-        grokTestMode.value === 'search' ||
-        grokTestMode.value === 'tts' ||
-        grokTestMode.value === 'stt' ||
-        grokTestMode.value === 'realtime'
-      ) {
-        requestBody.model_id = ''
-      }
-      if (uploadImageDataURL.value && (grokTestMode.value === 'image' || grokTestMode.value === 'video')) {
-        requestBody.image_data_url = uploadImageDataURL.value
-      }
-      if (uploadAudioDataURL.value && grokTestMode.value === 'stt') {
-        requestBody.audio_data_url = uploadAudioDataURL.value
-      }
-    }
-
     // Use the configured API base; EventSource does not support POST.
     const url = buildApiUrl(`/admin/accounts/${props.account.id}/test`)
 

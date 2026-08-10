@@ -328,19 +328,28 @@ func buildChatMessagesFromItems(messages []ChatMessage, rawItems []json.RawMessa
 			pendingReasoning = ""
 			continue
 		case "function_call_output", "custom_tool_call_output", "tool_search_output", "mcp_tool_call_output":
-			outputText, outputImages := responsesToolOutputTextAndImages(item["output"])
+			outputRaw := bytesTrimSpace(item["output"])
+			callID := rawString(item["call_id"])
+			delete(mediaByCallID, callID)
+
+			outputText, outputImages, rewritten := extractToolOutputMedia(outputRaw)
+			if rewritten {
+				if callID != "" {
+					mediaByCallID[callID] = outputImages
+				}
+			} else {
+				outputText = rawString(outputRaw)
+				if outputText == "" && len(outputRaw) > 0 && string(outputRaw) != "null" && string(outputRaw) != `""` {
+					// 对象/数组形式的输出（如 tool_search 的结果列表）整体字符串化。
+					outputText = string(outputRaw)
+				}
+			}
 			content, _ := json.Marshal(outputText)
 			messages = append(messages, ChatMessage{
 				Role:       "tool",
 				ToolCallID: callID,
 				Content:    content,
 			})
-			if len(outputImages) > 0 {
-				// Chat Completions 的 tool 消息不能可靠承载图片；图片作为紧随工具
-				// 结果的 user 多模态消息发送，避免把 data URI 序列化成普通文本。
-				imageContent, _ := json.Marshal(outputImages)
-				messages = append(messages, ChatMessage{Role: "user", Content: imageContent})
-			}
 			pendingReasoning = ""
 			continue
 		case "input_text", "text":
@@ -463,11 +472,11 @@ func rewriteToolOutputMediaValue(value any) (any, []ChatContentPart, bool) {
 		}
 		return typed, media, changed
 	case map[string]any:
-		if imageURL, ok := recognizedToolOutputImageURL(typed); ok {
+		if imageURL, detail, ok := recognizedToolOutputImageURL(typed); ok {
 			return map[string]any{
 				"type": "input_text",
 				"text": toolOutputMediaMarker,
-			}, []ChatContentPart{toolOutputImagePart(imageURL)}, true
+			}, []ChatContentPart{toolOutputImagePart(imageURL, detail)}, true
 		}
 
 		content, ok := typed["content"]
@@ -485,20 +494,24 @@ func rewriteToolOutputMediaValue(value any) (any, []ChatContentPart, bool) {
 	}
 }
 
-func recognizedToolOutputImageURL(value map[string]any) (string, bool) {
+func recognizedToolOutputImageURL(value map[string]any) (string, string, bool) {
 	partType, _ := value["type"].(string)
 	if partType != "input_image" && partType != "image_url" {
-		return "", false
+		return "", "", false
 	}
+	detail, _ := value["detail"].(string)
 
 	switch imageURL := value["image_url"].(type) {
 	case string:
-		return imageURL, strings.TrimSpace(imageURL) != ""
+		return imageURL, detail, strings.TrimSpace(imageURL) != ""
 	case map[string]any:
 		url, _ := imageURL["url"].(string)
-		return url, strings.TrimSpace(url) != ""
+		if nestedDetail, ok := imageURL["detail"].(string); ok && strings.TrimSpace(nestedDetail) != "" {
+			detail = nestedDetail
+		}
+		return url, detail, strings.TrimSpace(url) != ""
 	default:
-		return "", false
+		return "", "", false
 	}
 }
 
@@ -516,10 +529,14 @@ func isToolOutputImageDataURL(value string) bool {
 	return payloadIndex < len(value)
 }
 
-func toolOutputImagePart(imageURL string) ChatContentPart {
+func toolOutputImagePart(imageURL string, detail ...string) ChatContentPart {
+	imageDetail := ""
+	if len(detail) > 0 {
+		imageDetail = detail[0]
+	}
 	return ChatContentPart{
 		Type:     "image_url",
-		ImageURL: &ChatImageURL{URL: imageURL},
+		ImageURL: &ChatImageURL{URL: imageURL, Detail: imageDetail},
 	}
 }
 

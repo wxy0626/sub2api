@@ -1067,7 +1067,6 @@ function generateDeepSeekCodexFiles(baseRoot: string, apiKey: string): FileConfi
   ].join('\n')
 
   return [
-    { path: envPath, content: envContent },
     {
       path: configDir + '/config.toml',
       content: configContent,

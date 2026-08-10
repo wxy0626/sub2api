@@ -37,11 +37,13 @@ func (s *GatewayService) ResolveUserGroupRateMultiplier(ctx context.Context, use
 // RecordUsageInput 记录使用量的输入参数。
 // 异步 worker 只接收计费所需快照，不能持有 ParsedRequest/RequestBodyRef 这类大请求体引用。
 type RecordUsageInput struct {
-	Result              *ForwardResult
-	APIKey              *APIKey
-	User                *User
-	Account             *Account
-	Subscription        *UserSubscription  // 可选：订阅信息
+	Result       *ForwardResult
+	APIKey       *APIKey
+	User         *User
+	Account      *Account
+	Subscription *UserSubscription // 可选：订阅信息
+	// PricingAt 固定本次请求的 token 售价时刻；零值保持原有记录时刻语义。
+	PricingAt           time.Time
 	InboundEndpoint     string             // 入站端点（客户端请求路径）
 	UpstreamEndpoint    string             // 上游端点（标准化后的上游路径）
 	UserAgent           string             // 请求的 User-Agent
@@ -612,6 +614,7 @@ func (s *GatewayService) RecordUsage(ctx context.Context, input *RecordUsageInpu
 		User:                input.User,
 		Account:             input.Account,
 		Subscription:        input.Subscription,
+		PricingAt:           input.PricingAt,
 		InboundEndpoint:     input.InboundEndpoint,
 		UpstreamEndpoint:    input.UpstreamEndpoint,
 		UserAgent:           input.UserAgent,
@@ -660,6 +663,7 @@ func (s *GatewayService) RecordUsageWithLongContext(ctx context.Context, input *
 		User:                input.User,
 		Account:             input.Account,
 		Subscription:        input.Subscription,
+		PricingAt:           input.PricingAt,
 		InboundEndpoint:     input.InboundEndpoint,
 		UpstreamEndpoint:    input.UpstreamEndpoint,
 		UserAgent:           input.UserAgent,
@@ -680,11 +684,13 @@ func (s *GatewayService) RecordUsageWithLongContext(ctx context.Context, input *
 
 // recordUsageCoreInput 是 recordUsageCore 的公共输入字段，从两种输入结构体中提取。
 type recordUsageCoreInput struct {
-	Result              *ForwardResult
-	APIKey              *APIKey
-	User                *User
-	Account             *Account
-	Subscription        *UserSubscription
+	Result       *ForwardResult
+	APIKey       *APIKey
+	User         *User
+	Account      *Account
+	Subscription *UserSubscription
+	// PricingAt 固定本次请求的 token 售价时刻；零值时由核心逻辑回退当前时间。
+	PricingAt           time.Time
 	InboundEndpoint     string
 	UpstreamEndpoint    string
 	UserAgent           string

@@ -53,6 +53,25 @@ function createAPIClientError(options: APIClientErrorOptions): APIClientError {
   return new APIClientError(options)
 }
 
+// tokenRefreshSubscribers 保存同一失效登录态中等待首个刷新请求完成的重试回调。
+let tokenRefreshSubscribers: Array<(accessToken: string | null) => void> = []
+// isRefreshingToken 防止并发 401 为同一登录态发起多次刷新请求。
+let isRefreshingToken = false
+
+// notifyTokenRefreshSubscribers 在刷新成功或失败后一次性唤醒所有等待请求。
+function notifyTokenRefreshSubscribers(accessToken: string | null): void {
+  const subscribers = tokenRefreshSubscribers
+  tokenRefreshSubscribers = []
+  subscribers.forEach((subscriber) => subscriber(accessToken))
+}
+
+// waitForTokenRefresh 将后续 401 请求挂到正在进行的刷新流程，避免重复刷新令牌。
+function waitForTokenRefresh(): Promise<string | null> {
+  return new Promise((resolve) => {
+    tokenRefreshSubscribers.push(resolve)
+  })
+}
+
 // ==================== Axios Instance Configuration ====================
 
 export const apiClient: AxiosInstance = axios.create({
@@ -206,30 +225,25 @@ apiClient.interceptors.response.use(
 
         // If we have a refresh token and this is not an auth endpoint, try to refresh
         if (refreshToken && !isAuthEndpoint) {
-          if (isRefreshing) {
-            // Wait for the ongoing refresh to complete
-            return new Promise((resolve, reject) => {
-              subscribeTokenRefresh((newToken: string) => {
-                if (newToken) {
-                  // Mark as retried to prevent infinite loop if retry also returns 401
-                  originalRequest._retry = true
-                  if (originalRequest.headers) {
-                    originalRequest.headers.Authorization = `Bearer ${newToken}`
-                  }
-                  resolve(apiClient(originalRequest))
-                } else {
-                  // Refresh failed, reject with original error
-                  reject(createAPIClientError({
-                    status,
-                    code: apiData.code,
-                    message: normalizeDisplayErrorMessage(apiData.message || apiData.detail || error.message, '身份验证失败，请重新登录。')
-                  }))
-                }
-              })
-            })
+          if (isRefreshingToken) {
+            const newToken = await waitForTokenRefresh()
+            if (newToken) {
+              originalRequest._retry = true
+              if (originalRequest.headers) {
+                originalRequest.headers.Authorization = `Bearer ${newToken}`
+              }
+              return apiClient(originalRequest)
+            }
+            return Promise.reject(createAPIClientError({
+              status,
+              code: apiData.code,
+              message: normalizeDisplayErrorMessage(apiData.message || apiData.detail || error.message, '身份验证失败，请重新登录。')
+            }))
           }
 
           originalRequest._retry = true
+          const refreshSessionUser = localStorage.getItem('auth_user')
+          isRefreshingToken = true
 
           try {
             const headers = originalRequest.headers as Record<string, unknown> | undefined
@@ -244,6 +258,7 @@ apiClient.interceptors.response.use(
             if (originalRequest.headers) {
               originalRequest.headers.Authorization = `Bearer ${tokens.access_token}`
             }
+            notifyTokenRefreshSubscribers(tokens.access_token)
             return apiClient(originalRequest)
           } catch {
             // A stale request must never destroy a session that was logged out or replaced while
@@ -252,11 +267,12 @@ apiClient.interceptors.response.use(
               localStorage.getItem('refresh_token') !== refreshToken ||
               localStorage.getItem('auth_user') !== refreshSessionUser
             if (sessionChanged) {
-              return Promise.reject({
+              notifyTokenRefreshSubscribers(null)
+              return Promise.reject(createAPIClientError({
                 status: 401,
                 code: 'AUTH_SESSION_CHANGED',
-                message: 'Authentication session changed while refreshing.'
-              })
+                message: '登录会话在刷新期间已变更，请使用当前账号继续操作。'
+              }))
             }
 
             // Clear tokens and redirect to login
@@ -270,11 +286,14 @@ apiClient.interceptors.response.use(
               window.location.href = '/login'
             }
 
+            notifyTokenRefreshSubscribers(null)
             return Promise.reject(createAPIClientError({
               status: 401,
               code: 'TOKEN_REFRESH_FAILED',
               message: '登录状态已过期，请重新登录。'
             }))
+          } finally {
+            isRefreshingToken = false
           }
         }
 

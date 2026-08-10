@@ -409,6 +409,37 @@ describe('API Client', () => {
       expect(adapter.mock.calls[1][0].headers.get('Authorization')).toBe('Bearer new-token')
     })
 
+    it('并发 401 只刷新一次，两个请求都使用新令牌重试', async () => {
+      localStorage.setItem('auth_token', 'expired-token')
+      localStorage.setItem('refresh_token', 'refresh-token')
+      localStorage.setItem('auth_user', JSON.stringify({ id: 7 }))
+
+      const adapter = vi.fn()
+        .mockRejectedValueOnce({
+          response: { status: 401, data: { code: 'TOKEN_EXPIRED', message: 'Token expired' } },
+          config: { url: '/first', headers: { Authorization: 'Bearer expired-token' } },
+          code: 'ERR_BAD_REQUEST',
+        })
+        .mockRejectedValueOnce({
+          response: { status: 401, data: { code: 'TOKEN_EXPIRED', message: 'Token expired' } },
+          config: { url: '/second', headers: { Authorization: 'Bearer expired-token' } },
+          code: 'ERR_BAD_REQUEST',
+        })
+        .mockResolvedValue({ status: 200, data: { code: 0, data: { ok: true } }, headers: {}, config: {}, statusText: 'OK' })
+      apiClient.defaults.adapter = adapter
+      vi.spyOn(axios, 'post').mockResolvedValueOnce({
+        data: { code: 0, data: { access_token: 'new-token', refresh_token: 'new-refresh-token', expires_in: 3600 } },
+      })
+
+      await expect(Promise.all([apiClient.get('/first'), apiClient.get('/second')])).resolves.toHaveLength(2)
+
+      expect(axios.post).toHaveBeenCalledTimes(1)
+      expect(adapter.mock.calls.slice(2).map(([config]) => config.headers.get('Authorization'))).toEqual([
+        'Bearer new-token',
+        'Bearer new-token',
+      ])
+    })
+
     it('刷新期间换号时旧请求不会清除新会话', async () => {
       localStorage.setItem('auth_token', 'user-a-access')
       localStorage.setItem('refresh_token', 'user-a-refresh')

@@ -110,6 +110,22 @@ func NewChannelMonitorService(repo ChannelMonitorRepository, encryptor SecretEnc
 	return &ChannelMonitorService{repo: repo, encryptor: encryptor}
 }
 
+// SetRuntimeReader 注入用于控制主动探测的运行时设置读取器。
+func (s *ChannelMonitorService) SetRuntimeReader(r channelMonitorRuntimeReader) {
+	if s == nil {
+		return
+	}
+	s.settings = r
+}
+
+// probeRuntime 读取运行时探测配置；未配置时按 v2 退役语义关闭主动探测。
+func (s *ChannelMonitorService) probeRuntime(ctx context.Context) ChannelMonitorRuntime {
+	if s == nil || s.settings == nil {
+		return ChannelMonitorRuntime{Enabled: true, Mode: ChannelMonitorModeV2}
+	}
+	return s.settings.GetChannelMonitorRuntime(ctx)
+}
+
 // SetAccountTester 注入账号测试服务；在应用完成依赖装配后调用。
 func (s *ChannelMonitorService) SetAccountTester(tester ChannelMonitorAccountTester) {
 	s.accountTester = tester
