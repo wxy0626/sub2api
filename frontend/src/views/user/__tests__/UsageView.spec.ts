@@ -207,6 +207,16 @@ describe('user UsageView', () => {
     expect(getAvailable).toHaveBeenCalled()
   })
 
+  it('shows a Chinese reason and backend technical detail when loading logs fails', async () => {
+    query.mockRejectedValueOnce(new Error('usage log query failed'))
+
+    mountUsageView()
+    await flushPromises()
+
+    expect(showError).toHaveBeenCalledWith(expect.stringContaining('操作失败，请根据下方技术详情定位原因。'))
+    expect(showError).toHaveBeenCalledWith(expect.stringContaining('技术详情：usage log query failed'))
+  })
+
   it('exports csv with current filters and without admin-only fields', async () => {
     const wrapper = mountUsageView()
     await flushPromises()

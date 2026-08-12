@@ -203,6 +203,7 @@ import { useAppStore } from '@/stores/app'; import { adminAPI } from '@/api/admi
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { formatReasoningEffort } from '@/utils/format'
 import { resolveUsageRequestType, requestTypeToLegacyStream } from '@/utils/usageRequestType'
+import { extractApiErrorMessage } from '@/utils/apiError'
 import AppLayout from '@/components/layout/AppLayout.vue'; import Pagination from '@/components/common/Pagination.vue'; import Select from '@/components/common/Select.vue'; import DateRangePicker from '@/components/common/DateRangePicker.vue'
 import UsageStatsCards from '@/components/admin/usage/UsageStatsCards.vue'; import UsageFilters from '@/components/admin/usage/UsageFilters.vue'
 import UsageTable from '@/components/admin/usage/UsageTable.vue'; import UsageExportProgress from '@/components/admin/usage/UsageExportProgress.vue'; import AccountTestUsageFilters from '@/components/admin/usage/AccountTestUsageFilters.vue'; import AccountTestUsageStatsCards from '@/components/admin/usage/AccountTestUsageStatsCards.vue'; import AccountTestUsageTable from '@/components/admin/usage/AccountTestUsageTable.vue'
@@ -432,7 +433,12 @@ const loadLogs = async () => {
       { signal: c.signal }
     )
     if(!c.signal.aborted) { usageLogs.value = res.items; pagination.total = res.total }
-  } catch (error: any) { if(error?.name !== 'AbortError') console.error('Failed to load usage logs:', error) } finally { if(abortController === c) loading.value = false }
+  } catch (error: any) {
+    if(error?.name !== 'AbortError' && error?.code !== 'ERR_CANCELED') {
+      console.error('Failed to load usage logs:', error)
+      appStore.showError(extractApiErrorMessage(error, t('usage.failedToLoad')))
+    }
+  } finally { if(abortController === c) loading.value = false }
 }
 const loadStats = async (force = false) => {
   const seq = ++statsReqSeq
@@ -591,7 +597,7 @@ const loadAccountTests = async () => {
   } catch (error: any) {
     if (error?.name !== 'AbortError' && !controller.signal.aborted) {
       console.error('Failed to load account test usage:', error)
-      appStore.showError(t('usage.accountTests.failedToLoad'))
+      appStore.showError(extractApiErrorMessage(error, t('usage.accountTests.failedToLoad')))
     }
   } finally {
     if (accountTestAbortController === controller) accountTestLoading.value = false
@@ -950,7 +956,7 @@ const loadAdminErrors = async () => {
     errTotal.value = resp.total
   } catch (error) {
     console.error('Failed to load admin errors:', error)
-    appStore.showError(t('usage.errors.failedToLoad'))
+    appStore.showError(extractApiErrorMessage(error, t('usage.errors.failedToLoad')))
   } finally {
     errLoading.value = false
   }

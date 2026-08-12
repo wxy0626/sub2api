@@ -499,7 +499,7 @@ export default {
       failedToCreate: '创建优惠码失败',
       failedToUpdate: '更新优惠码失败',
       failedToDelete: '删除优惠码失败',
-      failedToLoadUsages: '加载使用记录失败'
+      failedToLoadUsages: '加载使用记录失败，请检查优惠码状态和后端服务；详情见下方技术信息。'
     },
 
     // Usage Records
@@ -530,7 +530,7 @@ export default {
       cacheCreation5mTokens: '缓存创建',
       cacheCreation1hTokens: '缓存创建',
       cacheReadTokens: '缓存读取 Token',
-      failedToLoad: '加载使用记录失败',
+      failedToLoad: '加载使用记录失败，请检查筛选条件、管理员权限和后端服务；详情见下方技术信息。',
       billingType: '计费类型',
       allBillingTypes: '全部计费类型',
       billingTypeBalance: '钱包余额',

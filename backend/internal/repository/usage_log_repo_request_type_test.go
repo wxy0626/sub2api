@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -1068,4 +1069,17 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 		require.Equal(t, "priority", *log.ServiceTier)
 	})
 
+}
+
+// TestUsageLogSelectColumnsMatchesScannerContract 防止查询列清单与扫描顺序再次漂移。
+func TestUsageLogSelectColumnsMatchesScannerContract(t *testing.T) {
+	// 查询字段顺序必须与 scanUsageLog 的 62 个接收目标保持一致。
+	columns := strings.Split(usageLogSelectColumns, ", ")
+	require.Len(t, columns, 62)
+	require.Equal(t, []string{
+		"upstream_model",
+		"upstream_response_model",
+		"upstream_model_mismatch",
+		"group_id",
+	}, columns[7:11])
 }

@@ -233,6 +233,7 @@ import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { formatReasoningEffort } from '@/utils/format'
 import { getBillingModeLabel, getDisplayBillingMode as resolveDisplayBillingMode } from '@/utils/billingMode'
 import { resolveUsageRequestType, requestTypeToLegacyStream } from '@/utils/usageRequestType'
+import { extractApiErrorMessage } from '@/utils/apiError'
 import type {
   ApiKey,
   EndpointStat,
@@ -444,7 +445,7 @@ const loadLogs = async () => {
     }
   } catch (error: any) {
     if (error?.name !== 'AbortError' && error?.code !== 'ERR_CANCELED') {
-      appStore.showError(t('usage.failedToLoad'))
+      appStore.showError(extractApiErrorMessage(error, t('usage.failedToLoad')))
     }
   } finally {
     if (abortController === controller) loading.value = false
@@ -842,7 +843,7 @@ const loadErrors = async () => {
     errorTotal.value = resp.total
   } catch (error) {
     console.error('[UsageView] loadErrors failed:', error)
-    appStore.showError(t('usage.errors.failedToLoad'))
+    appStore.showError(extractApiErrorMessage(error, t('usage.errors.failedToLoad')))
   } finally {
     errorLoading.value = false
   }

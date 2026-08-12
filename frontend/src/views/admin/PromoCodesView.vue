@@ -393,6 +393,7 @@ import { useClipboard } from '@/composables/useClipboard'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { adminAPI } from '@/api/admin'
 import { formatDateTime, formatDateTimeLocalInput } from '@/utils/format'
+import { extractApiErrorMessage } from '@/utils/apiError'
 import type { PromoCode, PromoCodeUsage } from '@/types'
 import type { Column } from '@/components/common/types'
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -725,7 +726,7 @@ const loadUsages = async () => {
     usages.value = response.items
     usagesTotal.value = response.total
   } catch (error: any) {
-    appStore.showError(error.response?.data?.detail || t('admin.promo.failedToLoadUsages'))
+    appStore.showError(extractApiErrorMessage(error, t('admin.promo.failedToLoadUsages')))
   } finally {
     usagesLoading.value = false
   }

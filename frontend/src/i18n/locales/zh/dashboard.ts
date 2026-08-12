@@ -385,7 +385,7 @@ export default {
     original: '原始',
     billed: '计费',
     noRecords: '未找到使用记录，请尝试调整筛选条件。',
-    failedToLoad: '加载使用记录失败',
+    failedToLoad: '加载使用记录失败，请检查筛选条件、登录状态和后端服务；详情见下方技术信息。',
     noDataToExport: '没有可导出的数据',
     exportSuccess: '使用数据导出成功',
     exportFailed: '使用数据导出失败',
@@ -435,7 +435,7 @@ export default {
       category: '分类', platform: '平台', message: '错误信息',
       keyName: 'Key 名称', keyDeleted: '已删除', allKeys: '全部 Key',
       modelPlaceholder: '搜索模型', allCategories: '全部分类', allStatuses: '全部状态码',
-      empty: '暂无错误请求', failedToLoad: '加载错误请求失败',
+      empty: '暂无错误请求', failedToLoad: '加载错误请求失败，请检查筛选条件和后端服务；详情见下方技术信息。',
       categories: {
         auth: '认证失败', rate_limit: '限流', quota: '余额/订阅',
         invalid_request: '参数错误', service_unavailable: '服务暂时不可用',

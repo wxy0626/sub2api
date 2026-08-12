@@ -4,7 +4,7 @@ import { defineComponent, ref } from 'vue'
 
 import UsageView from '../UsageView.vue'
 
-const { list, getStats, listTestLogs, getTestStats, getSnapshotV2, getById, getModelStats, listErrorLogs, routeQuery } = vi.hoisted(() => {
+const { list, exportList, getStats, listTestLogs, getTestStats, getSnapshotV2, getById, getModelStats, listErrorLogs, routeQuery, showError, saveAs, aoaToSheet, sheetAddAoa, xlsxWrite } = vi.hoisted(() => {
   vi.stubGlobal('localStorage', {
     getItem: vi.fn(() => null),
     setItem: vi.fn(),
@@ -22,6 +22,7 @@ const { list, getStats, listTestLogs, getTestStats, getSnapshotV2, getById, getM
     getModelStats: vi.fn(),
     listErrorLogs: vi.fn(),
     routeQuery: {} as Record<string, string>,
+    showError: vi.fn(),
 		aoaToSheet: vi.fn(() => ({})),
 		sheetAddAoa: vi.fn(),
 		saveAs: vi.fn(),
@@ -91,7 +92,7 @@ vi.mock('@/api/admin/ops', () => ({
 
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
-    showError: vi.fn(),
+    showError,
     showWarning: vi.fn(),
     showSuccess: vi.fn(),
     showInfo: vi.fn(),
@@ -196,6 +197,17 @@ describe('admin UsageView route filters', () => {
     getSnapshotV2.mockReset().mockResolvedValue({ trend: [], models: [], groups: [] })
     getModelStats.mockReset().mockResolvedValue({ models: [] })
     getById.mockReset()
+    showError.mockReset()
+  })
+
+  it('shows a Chinese reason and backend technical detail when loading logs fails', async () => {
+    list.mockRejectedValueOnce(new Error('admin usage log query failed'))
+
+    mountRouteFilteredUsageView()
+    await flushPromises()
+
+    expect(showError).toHaveBeenCalledWith(expect.stringContaining('操作失败，请根据下方技术详情定位原因。'))
+    expect(showError).toHaveBeenCalledWith(expect.stringContaining('技术详情：admin usage log query failed'))
   })
 
   afterEach(() => {
