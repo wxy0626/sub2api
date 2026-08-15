@@ -926,13 +926,30 @@
         </div>
         <div>
           <label class="input-label">{{ t('admin.accounts.upstream.apiKey') }}</label>
-          <input
-            v-model="upstreamApiKey"
-            type="password"
-            required
-            class="input font-mono"
-            placeholder="sk-..."
-          />
+          <div class="relative">
+            <input
+              v-model="upstreamApiKey"
+              :type="secretVisible.upstreamApiKey ? 'text' : 'password'"
+              required
+              class="input w-full pr-10 font-mono"
+              placeholder="sk-..."
+            />
+            <button
+              type="button"
+              class="absolute inset-y-0 right-0 flex items-center px-3 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
+              :aria-label="secretVisible.upstreamApiKey ? t('admin.accounts.hideApiKey') : t('admin.accounts.showApiKey')"
+              :title="secretVisible.upstreamApiKey ? t('admin.accounts.hideApiKey') : t('admin.accounts.showApiKey')"
+              @click="secretVisible.upstreamApiKey = !secretVisible.upstreamApiKey"
+            >
+              <svg v-if="secretVisible.upstreamApiKey" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+              </svg>
+              <svg v-else class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+              </svg>
+            </button>
+          </div>
           <p class="input-hint">{{ t('admin.accounts.upstream.apiKeyHint') }}</p>
         </div>
         <!-- 上游倍率自动探测：antigravity upstream 也是 API-key 账号 -->
@@ -1189,24 +1206,41 @@
         </div>
         <div>
           <label class="input-label">{{ t('admin.accounts.apiKeyRequired') }}</label>
-          <input
-            v-model="apiKeyValue"
-            type="password"
-            required
-            class="input font-mono"
-            data-testid="account-api-key-input"
-            :placeholder="
-              form.platform === 'openai'
-                ? 'sk-proj-...'
-                : form.platform === 'gemini'
-                  ? 'AIza...'
-                  : form.platform === 'grok'
-                    ? 'xai-...'
-                    : form.platform === 'deepseek'
-                      ? 'sk-...'
-                    : 'sk-ant-...'
-            "
-          />
+          <div class="relative">
+            <input
+              v-model="apiKeyValue"
+              :type="secretVisible.apiKey ? 'text' : 'password'"
+              required
+              class="input w-full pr-10 font-mono"
+              data-testid="account-api-key-input"
+              :placeholder="
+                form.platform === 'openai'
+                  ? 'sk-proj-...'
+                  : form.platform === 'gemini'
+                    ? 'AIza...'
+                    : form.platform === 'grok'
+                      ? 'xai-...'
+                      : form.platform === 'deepseek'
+                        ? 'sk-...'
+                      : 'sk-ant-...'
+              "
+            />
+            <button
+              type="button"
+              class="absolute inset-y-0 right-0 flex items-center px-3 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
+              :aria-label="secretVisible.apiKey ? t('admin.accounts.hideApiKey') : t('admin.accounts.showApiKey')"
+              :title="secretVisible.apiKey ? t('admin.accounts.hideApiKey') : t('admin.accounts.showApiKey')"
+              @click="secretVisible.apiKey = !secretVisible.apiKey"
+            >
+              <svg v-if="secretVisible.apiKey" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+              </svg>
+              <svg v-else class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+              </svg>
+            </button>
+          </div>
           <p v-if="apiKeyHint" class="input-hint">{{ apiKeyHint }}</p>
         </div>
 
@@ -1672,20 +1706,54 @@
           </div>
           <div>
             <label class="input-label">{{ t('admin.accounts.bedrockSecretAccessKey') }}</label>
-            <input
-              v-model="bedrockSecretAccessKey"
-              type="password"
-              required
-              class="input font-mono"
-            />
+            <div class="relative">
+              <input
+                v-model="bedrockSecretAccessKey"
+                :type="secretVisible.bedrockSecretAccessKey ? 'text' : 'password'"
+                required
+                class="input w-full pr-10 font-mono"
+              />
+              <button
+                type="button"
+                class="absolute inset-y-0 right-0 flex items-center px-3 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
+                :aria-label="secretVisible.bedrockSecretAccessKey ? t('admin.accounts.hideApiKey') : t('admin.accounts.showApiKey')"
+                :title="secretVisible.bedrockSecretAccessKey ? t('admin.accounts.hideApiKey') : t('admin.accounts.showApiKey')"
+                @click="secretVisible.bedrockSecretAccessKey = !secretVisible.bedrockSecretAccessKey"
+              >
+                <svg v-if="secretVisible.bedrockSecretAccessKey" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                </svg>
+                <svg v-else class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                </svg>
+              </button>
+            </div>
           </div>
           <div>
             <label class="input-label">{{ t('admin.accounts.bedrockSessionToken') }}</label>
-            <input
-              v-model="bedrockSessionToken"
-              type="password"
-              class="input font-mono"
-            />
+            <div class="relative">
+              <input
+                v-model="bedrockSessionToken"
+                :type="secretVisible.bedrockSessionToken ? 'text' : 'password'"
+                class="input w-full pr-10 font-mono"
+              />
+              <button
+                type="button"
+                class="absolute inset-y-0 right-0 flex items-center px-3 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
+                :aria-label="secretVisible.bedrockSessionToken ? t('admin.accounts.hideApiKey') : t('admin.accounts.showApiKey')"
+                :title="secretVisible.bedrockSessionToken ? t('admin.accounts.hideApiKey') : t('admin.accounts.showApiKey')"
+                @click="secretVisible.bedrockSessionToken = !secretVisible.bedrockSessionToken"
+              >
+                <svg v-if="secretVisible.bedrockSessionToken" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                </svg>
+                <svg v-else class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                </svg>
+              </button>
+            </div>
             <p class="input-hint">{{ t('admin.accounts.bedrockSessionTokenHint') }}</p>
           </div>
         </template>
@@ -1693,12 +1761,29 @@
         <!-- API Key field -->
         <div v-if="bedrockAuthMode === 'apikey'">
           <label class="input-label">{{ t('admin.accounts.bedrockApiKeyInput') }}</label>
-          <input
-            v-model="bedrockApiKeyValue"
-            type="password"
-            required
-            class="input font-mono"
-          />
+          <div class="relative">
+            <input
+              v-model="bedrockApiKeyValue"
+              :type="secretVisible.bedrockApiKey ? 'text' : 'password'"
+              required
+              class="input w-full pr-10 font-mono"
+            />
+            <button
+              type="button"
+              class="absolute inset-y-0 right-0 flex items-center px-3 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
+              :aria-label="secretVisible.bedrockApiKey ? t('admin.accounts.hideApiKey') : t('admin.accounts.showApiKey')"
+              :title="secretVisible.bedrockApiKey ? t('admin.accounts.hideApiKey') : t('admin.accounts.showApiKey')"
+              @click="secretVisible.bedrockApiKey = !secretVisible.bedrockApiKey"
+            >
+              <svg v-if="secretVisible.bedrockApiKey" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+              </svg>
+              <svg v-else class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         <!-- Shared: Region -->
@@ -3806,15 +3891,27 @@ const accountCategory = ref<'oauth-based' | 'apikey' | 'bedrock' | 'service_acco
 const addMethod = ref<AddMethod>('oauth') // For oauth-based: 'oauth' or 'setup-token'
 const apiKeyBaseUrl = ref('https://api.anthropic.com')
 const apiKeyValue = ref('')
+// 创建账号时，敏感凭据默认以 password 显示；提供眼睛图标按需切换明文，避免输错却看不到内容。
+const secretVisible = ref({
+  apiKey: false,
+  upstreamApiKey: false,
+  bedrockSecretAccessKey: false,
+  bedrockSessionToken: false,
+  bedrockApiKey: false
+})
 const upstreamBillingAutoProbeEnabled = ref(true)
 
 const syncPreviewCredentials = computed(() => {
-  if (!apiKeyValue.value) return undefined
+  // Antigravity upstream 类型使用独立的 Key / Base URL 字段，而非标准 apiKeyValue。
+  const isAntigravityUpstream = form.platform === 'antigravity' && antigravityAccountType.value === 'upstream'
+  const key = isAntigravityUpstream ? upstreamApiKey.value : apiKeyValue.value
+  const baseUrl = isAntigravityUpstream ? upstreamBaseUrl.value : apiKeyBaseUrl.value
+  if (!key) return undefined
   return {
     platform: form.platform,
     type: form.type,
-    base_url: apiKeyBaseUrl.value || undefined,
-    api_key: apiKeyValue.value
+    base_url: baseUrl || undefined,
+    api_key: key
   }
 })
 
