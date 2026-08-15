@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	// AccountTestModeDefault drives the standard /responses connection test.
+	// AccountTestModeDefault drives the standard /v1/chat/completions connection test.
 	AccountTestModeDefault = "default"
 	// AccountTestModeResponses 强制 API Key 账号使用 /v1/responses 测试，不受账号能力缓存影响。
 	AccountTestModeResponses = "responses"

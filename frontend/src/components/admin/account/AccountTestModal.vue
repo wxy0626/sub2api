@@ -451,9 +451,14 @@ const grokTestModeOptions = computed(() => [
   { value: 'realtime', label: t('admin.accounts.grok.testModeRealtime') }
 ])
 // DeepSeek 仅支持 Chat Completions 和 Responses；OpenAI 保留既有四种探测模式。
+// OpenAI 的 default 模式固定使用 /v1/chat/completions；只有明确选择 responses
+// 才会调用 /v1/responses。
 const testModeOptions = computed(() => {
+  const defaultLabel = isOpenAIAccount.value
+    ? t('admin.accounts.openai.testModeDefaultOpenAI')
+    : t('admin.accounts.openai.testModeDefault')
   const options = [
-    { value: 'default', label: t('admin.accounts.openai.testModeDefault') },
+    { value: 'default', label: defaultLabel },
     { value: 'responses', label: t('admin.accounts.openai.testModeResponses') }
   ]
   if (isDeepSeekAccount.value) return options

@@ -30,7 +30,6 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 	"github.com/gin-gonic/gin"
@@ -679,11 +678,10 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		testModelID = openai.DefaultTestModel
 	}
 
-	// API Key 的普通 Responses 测试对齐 Codex++ Provider Doctor：使用供应商原始模型，
-	// 不应用账号模型映射。Compact、Chat Completions 和 OAuth 测试仍保持生产映射规则。
-	isAPIKeyResponsesDiagnostic := mode != AccountTestModeCompact &&
-		account.Type == AccountTypeAPIKey &&
-		(mode == AccountTestModeResponses || openai_compat.ShouldUseResponsesAPI(account.Extra))
+	// API Key 只有在用户明确选择 Responses 模式时才进入 Responses 诊断。
+	// default/跟随账号配置固定使用 Chat Completions，不能再被账号历史能力探测
+	// 结果自动切换到 /v1/responses；这对所有 OpenAI 兼容代理都成立。
+	isAPIKeyResponsesDiagnostic := mode == AccountTestModeResponses && account.Type == AccountTypeAPIKey
 	if !isAPIKeyResponsesDiagnostic {
 		testModelID = account.GetMappedModel(testModelID)
 	}
@@ -754,8 +752,9 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			}
 			return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
 		}
-		// /responses 测试只影响本次请求，忽略 capability 缓存且不回写账号 Extra。
-		if mode != AccountTestModeResponses && !openai_compat.ShouldUseResponsesAPI(account.Extra) {
+		// OpenAI API Key 与所有自定义 OpenAI 兼容端点的默认测试固定走
+		// /v1/chat/completions。只有显式选择 responses 才构造 /v1/responses。
+		if mode != AccountTestModeResponses {
 			return s.testOpenAIChatCompletionsConnection(c, account, testModelID, prompt, normalizedBaseURL, authToken)
 		}
 		apiURL = buildOpenAIResponsesURL(normalizedBaseURL)

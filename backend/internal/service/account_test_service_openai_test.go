@@ -588,13 +588,23 @@ func TestAccountTestService_OpenAIWorkspaceProbeMarksDeactivatedWorkspace(t *tes
 	require.Contains(t, recorder.Body.String(), `"code":"deactivated_workspace"`)
 }
 
-func TestAccountTestService_OpenAIAPIKeyResponsesMatchesCodexPlusPlusDiagnostic(t *testing.T) {
+func TestAccountTestService_OpenAIAPIKeyDefaultAlwaysUsesChatCompletions(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	ctx, _ := newTestContext()
+	ctx, recorder := newTestContext()
 
-	resp := newJSONResponse(http.StatusOK, "")
-	resp.Body = io.NopCloser(strings.NewReader(`{"id":"resp_test","status":"completed"}`))
-	upstream := &queuedHTTPUpstream{responses: []*http.Response{resp}}
+	upstreamBody := strings.Join([]string{
+		`data: {"id":"chatcmpl_test","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"pong"},"finish_reason":null}]}`,
+		"",
+		`data: {"id":"chatcmpl_test","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":7,"completion_tokens":3}}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+	}}
 	svc := &AccountTestService{
 		httpUpstream: upstream,
 		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
@@ -605,32 +615,22 @@ func TestAccountTestService_OpenAIAPIKeyResponsesMatchesCodexPlusPlusDiagnostic(
 		Type:        AccountTypeAPIKey,
 		Concurrency: 1,
 		Credentials: map[string]any{
-			"api_key":  "sk-test",
-			"base_url": "https://compat-upstream.example/v1",
-			"model_mapping": map[string]any{
-				"gpt-5.4": "gpt-5.6-luna",
-			},
+			"api_key":       "sk-test",
+			"base_url":      "https://compat-upstream.example/v1",
+			"model_mapping": map[string]any{"gemini-3.7-flash": "gemini-3.7-flash"},
 		},
+		// 即使历史 capability 标记为支持 Responses，default 也不得改走 Responses。
 		Extra: map[string]any{openai_compat.ExtraKeyResponsesSupported: true},
 	}
 
-	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4", "", "")
+	err := svc.testOpenAIAccountConnection(ctx, account, "gemini-3.7-flash", "hello", AccountTestModeDefault)
 	require.NoError(t, err)
-	require.Len(t, upstream.requests, 1)
-	req := upstream.requests[0]
-	require.Equal(t, "https://compat-upstream.example/v1/responses", req.URL.String())
-	require.Equal(t, "CodexPlusPlus/RelayTest", req.Header.Get("User-Agent"))
-	require.Equal(t, "*/*", req.Header.Get("Accept"))
-	require.Empty(t, req.Header.Get("Originator"))
-	require.Empty(t, req.Header.Get("X-Codex-Window-ID"))
-
-	body, readErr := io.ReadAll(req.Body)
-	require.NoError(t, readErr)
-	require.Equal(t, "gpt-5.4", gjson.GetBytes(body, "model").String(), "Codex++ 诊断不应应用账号模型映射")
-	require.Equal(t, "hi", gjson.GetBytes(body, "input").String())
-	require.Equal(t, int64(16), gjson.GetBytes(body, "max_output_tokens").Int())
-	require.False(t, gjson.GetBytes(body, "stream").Exists())
-	require.False(t, gjson.GetBytes(body, "instructions").Exists())
+	require.Equal(t, "https://compat-upstream.example/v1/chat/completions", upstream.lastReq.URL.String())
+	require.Equal(t, "gemini-3.7-flash", gjson.GetBytes(upstream.lastBody, "model").String())
+	require.Equal(t, "hello", gjson.GetBytes(upstream.lastBody, "messages.0.content").String())
+	require.Contains(t, recorder.Body.String(), "pong")
+	require.Contains(t, recorder.Body.String(), "正在通过 /v1/chat/completions 测试连接")
+	require.Contains(t, recorder.Body.String(), `"success":true`)
 }
 
 func TestAccountTestService_OpenAIAPIKeyResponsesUnsupportedUsesChatCompletionsPath(t *testing.T) {

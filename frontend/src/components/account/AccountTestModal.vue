@@ -293,7 +293,7 @@ const generatedImages = ref<PreviewImage[]>([])
 const testMode = ref<'default' | 'compact'>('default')
 const isOpenAIAccount = computed(() => props.account?.platform === 'openai')
 const openAITestModeOptions = computed(() => [
-  { value: 'default', label: t('admin.accounts.openai.testModeDefault') },
+  { value: 'default', label: t('admin.accounts.openai.testModeDefaultOpenAI') },
   { value: 'compact', label: t('admin.accounts.openai.testModeCompact') }
 ])
 const previewImageUrl = ref('')

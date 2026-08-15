@@ -623,6 +623,7 @@ export default {
         compactLastChecked: 'Last compact probe',
         testMode: 'Test mode',
         testModeDefault: '/chat/completions test',
+        testModeDefaultOpenAI: 'Chat Completions (default)',
         testModeResponses: '/responses test',
         testModeCompact: 'Compact probe',
         testModeWorkspace: 'Workspace 402 check',

@@ -11,6 +11,11 @@ describe('account test and Compact status locales', () => {
     expect(en.accounts.openai.testModeResponses).toBe('/responses test')
   })
 
+  it('labels OpenAI default mode as Chat Completions', () => {
+    expect(zh.accounts.openai.testModeDefaultOpenAI).toBe('Chat Completions（默认）')
+    expect(en.accounts.openai.testModeDefaultOpenAI).toBe('Chat Completions (default)')
+  })
+
   it('provides a distinct Responses unsupported Compact status', () => {
     expect(zh.accounts.openai.compactResponsesUnsupported).toBe('不支持 Responses')
     expect(en.accounts.openai.compactResponsesUnsupported).toBe('Responses unsupported')

@@ -695,6 +695,7 @@ export default {
         compactLastChecked: '最近探测',
         testMode: '测试模式',
         testModeDefault: '/chat/completions测试',
+        testModeDefaultOpenAI: 'Chat Completions（默认）',
         testModeResponses: '/responses 测试',
         testModeCompact: 'Compact 探测',
         testModeWorkspace: '工作区 402 测活',
