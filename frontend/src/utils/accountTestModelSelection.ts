@@ -13,9 +13,16 @@ const openAITestModelIDs = new Set([
 // 仅放开已知前缀（如 gemini），避免任意垃圾模型进入测试选择。
 const openAINonOpenAITestModelPatterns = ['gemini-*', 'gemini:*']
 
+// upstreamCatalogOwner 对应后端 openai.UpstreamCatalogOwner：
+// 该标记说明模型来自上游 /v1/models 实时目录，只要端点兼容 OpenAI 协议就应全部放行，
+// 不再限制为内置 GPT 模型集；未带该标记的内置默认模型集仍沿用原白名单限制。
+const upstreamCatalogOwner = 'upstream'
+
 // matchesOpenAITestModel 判断 OpenAI 平台下某模型是否可用于测试：
-// 命中白名单固定 ID，或命中非 OpenAI 第三方模型前缀（仅尾部 * 通配）。
-function matchesOpenAITestModel(modelID: string): boolean {
+// 上游实时目录模型全部放行；否则命中白名单固定 ID，或命中非 OpenAI 第三方模型前缀（仅尾部 * 通配）。
+function matchesOpenAITestModel(model: ClaudeModel): boolean {
+  if (model.owned_by === upstreamCatalogOwner) return true
+  const modelID = model.id
   if (openAITestModelIDs.has(modelID)) return true
   return openAINonOpenAITestModelPatterns.some((pattern) => {
     if (!pattern.endsWith('*')) return modelID === pattern
@@ -89,10 +96,12 @@ export function resolveAccountTestModelSelection(
   models: ClaudeModel[]
 ): AccountTestModelSelection {
   // OpenAI 测试模型白名单只影响管理员模型测试，不改变账号模型映射或网关模型列表。
-  // 固定 OpenAI ID 保持原白名单限制不变；同时放行上游返回的非 OpenAI 模型（如 gemini-*）。
-  // 若二者均无命中（上游只返回其它未放开前缀的模型），回退到上游返回的全部模型，保证仍可测试。
+  // 后端标记为上游实时目录（owned_by='upstream'）的模型全部放行：只要端点兼容 OpenAI 协议，
+  // 上游返回什么模型就能测什么，不再限制为 GPT 模型。
+  // 内置默认模型集仍保持原白名单限制，并继续放行 gemini-* 等已知非 OpenAI 前缀。
+  // 若全部被滤空（上游只返回其它未放开前缀的模型），回退到上游返回的全部模型，保证仍可测试。
   let filteredModels = platform === 'openai'
-    ? models.filter((model) => matchesOpenAITestModel(model.id))
+    ? models.filter((model) => matchesOpenAITestModel(model))
     : models
   if (platform === 'openai' && filteredModels.length === 0) {
     filteredModels = models

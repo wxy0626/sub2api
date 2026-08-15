@@ -2692,6 +2692,54 @@ func (h *AccountHandler) SetSchedulable(c *gin.Context) {
 	response.Success(c, h.buildAccountResponseWithRuntime(c.Request.Context(), account))
 }
 
+// fetchOpenAICompatibleUpstreamModels 拉取 OpenAI 兼容端点的实时模型目录并转换为响应模型。
+// 返回 ok=false 表示无法获得上游目录（服务未配置、端点不支持 /v1/models、请求失败或返回空），
+// 调用方需回落到内置默认模型集，避免第三方端点异常时模型测试直接不可用。
+func (h *AccountHandler) fetchOpenAICompatibleUpstreamModels(ctx context.Context, account *service.Account) ([]openai.Model, bool) {
+	if h.accountTestService == nil || account == nil {
+		return nil, false
+	}
+
+	upstreamModelIDs, err := h.accountTestService.FetchUpstreamModelsForTest(ctx, account)
+	if err != nil {
+		// 这里只记录失败类别，不暴露上游地址与凭据；具体原因由同步接口负责回显。
+		var syncErr *service.UpstreamModelSyncError
+		if errors.As(err, &syncErr) {
+			slog.Warn("openai_upstream_models_fetch_failed", "account_id", account.ID, "kind", syncErr.Kind)
+		} else {
+			slog.Warn("openai_upstream_models_fetch_failed", "account_id", account.ID)
+		}
+		return nil, false
+	}
+	if len(upstreamModelIDs) == 0 {
+		return nil, false
+	}
+
+	// defaultByID 用于给命中内置模型的上游 ID 补齐展示名等元数据。
+	defaultByID := make(map[string]openai.Model, len(openai.DefaultModels))
+	for _, model := range openai.DefaultModels {
+		defaultByID[model.ID] = model
+	}
+
+	models := make([]openai.Model, 0, len(upstreamModelIDs))
+	for _, modelID := range upstreamModelIDs {
+		model := openai.Model{
+			ID:          modelID,
+			Object:      "model",
+			Type:        "model",
+			DisplayName: modelID,
+		}
+		if defaultModel, exists := defaultByID[modelID]; exists {
+			model.Created = defaultModel.Created
+			model.DisplayName = defaultModel.DisplayName
+		}
+		// OwnedBy 统一标记为上游目录，前端据此放行上游返回的全部模型。
+		model.OwnedBy = openai.UpstreamCatalogOwner
+		models = append(models, model)
+	}
+	return models, true
+}
+
 // GetAvailableModels handles getting available models for an account
 // GET /api/v1/admin/accounts/:id/models
 func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
@@ -2709,13 +2757,25 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 
 	// Handle OpenAI accounts
 	if account.IsOpenAI() {
+		mapping := account.GetModelMapping()
+
+		// OpenAI 兼容端点（含第三方 v1 协议代理）优先返回上游 /v1/models 实时目录，
+		// 不再把可测试模型限制在内置 GPT 模型集：上游返回什么就能测什么。
+		// 仅在 API Key 账号且管理员未显式配置 model_mapping 时生效；
+		// 上游不支持 /v1/models 或请求失败时静默回落到原有默认/映射逻辑。
+		if account.Type == service.AccountTypeAPIKey && len(mapping) == 0 {
+			if upstreamModels, ok := h.fetchOpenAICompatibleUpstreamModels(c.Request.Context(), account); ok {
+				response.Success(c, upstreamModels)
+				return
+			}
+		}
+
 		// OpenAI 自动透传会绕过常规模型改写，测试/模型列表也应回落到默认模型集。
 		if account.IsOpenAIPassthroughEnabled() {
 			response.Success(c, openai.DefaultModels)
 			return
 		}
 
-		mapping := account.GetModelMapping()
 		if len(mapping) == 0 {
 			response.Success(c, openai.DefaultModels)
 			return

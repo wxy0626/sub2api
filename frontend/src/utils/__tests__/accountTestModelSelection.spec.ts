@@ -10,7 +10,52 @@ const createModel = (id: string): ClaudeModel => ({
   created_at: '2026-07-19T00:00:00Z'
 })
 
+// createUpstreamModel 构造后端标记为上游实时目录的模型（owned_by='upstream'）。
+const createUpstreamModel = (id: string): ClaudeModel => ({
+  ...createModel(id),
+  owned_by: 'upstream'
+})
+
 describe('accountTestModelSelection', () => {
+  it('OpenAI 兼容端点返回的上游实时目录全部保留，不再限制为 GPT 模型', () => {
+    const selection = resolveAccountTestModelSelection('openai', [
+      createUpstreamModel('gpt-4o'),
+      createUpstreamModel('gemini-3-pro-preview'),
+      createUpstreamModel('deepseek-chat'),
+      createUpstreamModel('gpt-5.6-luna')
+    ])
+
+    expect(selection.models.map((model) => model.id)).toEqual([
+      'gpt-4o',
+      'gemini-3-pro-preview',
+      'deepseek-chat',
+      'gpt-5.6-luna'
+    ])
+    expect(selection).toMatchObject({ modelId: 'gpt-5.6-luna', mode: 'default' })
+  })
+
+  it('OpenAI 上游目录不含 GPT 模型时同样全部保留并预填首项', () => {
+    const selection = resolveAccountTestModelSelection('openai', [
+      createUpstreamModel('glm-4.6'),
+      createUpstreamModel('qwen3-max')
+    ])
+
+    expect(selection.models.map((model) => model.id)).toEqual(['glm-4.6', 'qwen3-max'])
+    expect(selection).toMatchObject({ modelId: 'glm-4.6', mode: 'default' })
+  })
+
+  it('OpenAI 内置默认模型集未标记上游时仍受原白名单限制', () => {
+    const selection = resolveAccountTestModelSelection('openai', [
+      createModel('gpt-5.5'),
+      createModel('gpt-5.4'),
+      createModel('gpt-5.6-terra'),
+      createModel('gpt-image-2')
+    ])
+
+    expect(selection.models.map((model) => model.id)).toEqual(['gpt-5.6-terra', 'gpt-image-2'])
+    expect(selection).toMatchObject({ modelId: 'gpt-5.6-terra', mode: 'default' })
+  })
+
   it('OpenAI 未返回 Luna 时按弹窗白名单后的首项预填，并固定 default 模式', () => {
     const selection = resolveAccountTestModelSelection('openai', [
       createModel('unsupported-model'),

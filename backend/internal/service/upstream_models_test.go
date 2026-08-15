@@ -400,6 +400,70 @@ func TestFetchUpstreamSupportedModelsParsesGrokAPIKeyResponse(t *testing.T) {
 	require.Equal(t, "Bearer xai-key", upstream.lastReq.Header.Get("Authorization"))
 }
 
+// TestFetchUpstreamModelsForTestKeepsFullOpenAICompatibleCatalog 验证模型测试目录保留 OpenAI 兼容端点的全部上游模型：
+// 只要端点兼容 OpenAI 协议，gemini-*、claude-*、gpt-4o 等非 GPT-5.6 模型都应可被测试。
+func TestFetchUpstreamModelsForTestKeepsFullOpenAICompatibleCatalog(t *testing.T) {
+	t.Parallel()
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body: io.NopCloser(strings.NewReader(
+			`{"data":[{"id":"gpt-4o"},{"id":"gemini-3-pro-preview"},{"id":"gpt-5.6-luna"},{"id":"claude-sonnet-4-6"},{"id":"gpt-4o"}]}`,
+		)),
+	}}
+	svc := &AccountTestService{
+		httpUpstream: upstream,
+		cfg:          upstreamModelSyncTestConfig(),
+	}
+
+	account := &Account{
+		ID:       70,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":  "proxy-key",
+			"base_url": "https://proxy.example.com/v1",
+		},
+	}
+
+	models, err := svc.FetchUpstreamModelsForTest(context.Background(), account)
+	require.NoError(t, err)
+	require.Equal(t, []string{"claude-sonnet-4-6", "gemini-3-pro-preview", "gpt-4o", "gpt-5.6-luna"}, models)
+	require.Equal(t, "https://proxy.example.com/v1/models", upstream.lastReq.URL.String())
+	require.Equal(t, "Bearer proxy-key", upstream.lastReq.Header.Get("Authorization"))
+}
+
+// TestFetchUpstreamSupportedModelsKeepsSyncWhitelistForGateway 验证网关模型同步仍按 GPT-5.6+ 白名单裁剪，
+// 测试目录放宽不会影响同步策略。
+func TestFetchUpstreamSupportedModelsKeepsSyncWhitelistForGateway(t *testing.T) {
+	t.Parallel()
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body: io.NopCloser(strings.NewReader(
+			`{"data":[{"id":"gpt-4o"},{"id":"gemini-3-pro-preview"},{"id":"gpt-5.6-luna"},{"id":"claude-sonnet-4-6"}]}`,
+		)),
+	}}
+	svc := &AccountTestService{
+		httpUpstream: upstream,
+		cfg:          upstreamModelSyncTestConfig(),
+	}
+
+	models, err := svc.FetchUpstreamSupportedModels(context.Background(), &Account{
+		ID:       71,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":  "proxy-key",
+			"base_url": "https://proxy.example.com/v1",
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{"gpt-5.6-luna"}, models)
+}
+
 func TestFilterSyncedModelIDs(t *testing.T) {
 	t.Parallel()
 

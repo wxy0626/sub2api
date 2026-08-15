@@ -33,6 +33,10 @@ var DefaultModels = []Model{
 	{ID: "gpt-image-2", Object: "model", Created: 1738368000, OwnedBy: "openai", Type: "model", DisplayName: "GPT Image 2"},
 }
 
+// UpstreamCatalogOwner 标记模型来自上游 /v1/models 实时目录，而非内置默认模型集。
+// 管理端模型测试下拉据此放行上游返回的全部模型（含非 GPT 命名），内置默认集仍保留原白名单限制。
+const UpstreamCatalogOwner = "upstream"
+
 // DefaultModelIDs returns the default model ID list
 func DefaultModelIDs() []string {
 	ids := make([]string, len(DefaultModels))

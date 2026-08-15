@@ -432,6 +432,135 @@ func TestAccountHandlerGetAvailableModels_OpenAIAPIKeyDefaultsToConcreteGPT56Sol
 	require.Equal(t, "gpt-5.6-sol", resp.Data[0].ID)
 }
 
+// TestAccountHandlerGetAvailableModels_OpenAICompatibleAPIKeyReturnsFullUpstreamCatalog
+// 验证 OpenAI 兼容端点（第三方 v1 代理）返回上游全部模型，不再被 GPT 白名单裁剪。
+func TestAccountHandlerGetAvailableModels_OpenAICompatibleAPIKeyReturnsFullUpstreamCatalog(t *testing.T) {
+	svc := &availableModelsAdminService{
+		stubAdminService: newStubAdminService(),
+		account: service.Account{
+			ID:       60,
+			Name:     "openai-compatible-proxy",
+			Platform: service.PlatformOpenAI,
+			Type:     service.AccountTypeAPIKey,
+			Status:   service.StatusActive,
+			Credentials: map[string]any{
+				"api_key":  "proxy-key",
+				"base_url": "https://proxy.example.com/v1",
+			},
+		},
+	}
+	upstream := &syncUpstreamHTTPUpstream{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body: io.NopCloser(strings.NewReader(
+			`{"data":[{"id":"gpt-4o"},{"id":"gemini-3-pro-preview"},{"id":"gpt-5.6-luna"},{"id":"claude-sonnet-4"}]}`,
+		)),
+	}}
+	router := setupAvailableModelsRouterWithUpstream(svc, upstream)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/60/models", nil)
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp struct {
+		Data []struct {
+			ID          string `json:"id"`
+			OwnedBy     string `json:"owned_by"`
+			DisplayName string `json:"display_name"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+
+	ids := make([]string, 0, len(resp.Data))
+	for _, model := range resp.Data {
+		ids = append(ids, model.ID)
+		// owned_by 标记上游目录来源，前端据此放行全部上游模型。
+		require.Equal(t, "upstream", model.OwnedBy)
+	}
+	require.Equal(t, []string{"claude-sonnet-4", "gemini-3-pro-preview", "gpt-4o", "gpt-5.6-luna"}, ids)
+	require.NotNil(t, upstream.lastReq)
+	require.Equal(t, "https://proxy.example.com/v1/models", upstream.lastReq.URL.String())
+	require.Equal(t, "Bearer proxy-key", upstream.lastReq.Header.Get("Authorization"))
+}
+
+// TestAccountHandlerGetAvailableModels_OpenAIAPIKeyUpstreamFailureFallsBackToDefaults
+// 验证上游不支持 /v1/models 或请求失败时静默回落内置默认模型集，模型测试不被阻断。
+func TestAccountHandlerGetAvailableModels_OpenAIAPIKeyUpstreamFailureFallsBackToDefaults(t *testing.T) {
+	svc := &availableModelsAdminService{
+		stubAdminService: newStubAdminService(),
+		account: service.Account{
+			ID:       61,
+			Name:     "openai-apikey-upstream-unavailable",
+			Platform: service.PlatformOpenAI,
+			Type:     service.AccountTypeAPIKey,
+			Status:   service.StatusActive,
+			Credentials: map[string]any{
+				"api_key":  "proxy-key-secret",
+				"base_url": "https://proxy.example.com/v1",
+			},
+		},
+	}
+	upstream := &syncUpstreamHTTPUpstream{err: errors.New("connection refused: Authorization: Bearer proxy-key-secret")}
+	router := setupAvailableModelsRouterWithUpstream(svc, upstream)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/61/models", nil)
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotContains(t, rec.Body.String(), "proxy-key-secret")
+
+	var resp struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.NotEmpty(t, resp.Data)
+	require.Equal(t, "gpt-5.6-sol", resp.Data[0].ID)
+}
+
+// TestAccountHandlerGetAvailableModels_OpenAIAPIKeyWithMappingSkipsUpstream
+// 验证管理员已显式配置 model_mapping 时仍以映射为准，不额外访问上游。
+func TestAccountHandlerGetAvailableModels_OpenAIAPIKeyWithMappingSkipsUpstream(t *testing.T) {
+	svc := &availableModelsAdminService{
+		stubAdminService: newStubAdminService(),
+		account: service.Account{
+			ID:       62,
+			Name:     "openai-apikey-mapped",
+			Platform: service.PlatformOpenAI,
+			Type:     service.AccountTypeAPIKey,
+			Status:   service.StatusActive,
+			Credentials: map[string]any{
+				"api_key": "proxy-key",
+				"model_mapping": map[string]any{
+					"gemini:130": "gemini-3-pro-preview",
+				},
+			},
+		},
+	}
+	upstream := &syncUpstreamHTTPUpstream{err: errors.New("上游不应被已保存映射请求")}
+	router := setupAvailableModelsRouterWithUpstream(svc, upstream)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/62/models", nil)
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Len(t, resp.Data, 1)
+	require.Equal(t, "gemini:130", resp.Data[0].ID)
+	require.Nil(t, upstream.lastReq)
+}
+
 func TestAccountHandlerGetAvailableModels_OpenAISparkShadowReturnsMappingModels(t *testing.T) {
 	parentID := int64(100)
 	svc := &availableModelsAdminService{

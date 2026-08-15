@@ -81,7 +81,21 @@ func newUpstreamModelSyncUpstreamError(message string, err error) error {
 }
 
 // FetchUpstreamSupportedModels fetches the live model list from the account's upstream API format.
+// 该方法服务于网关模型同步：OpenAI 结果仍按 GPT-5.6+ 白名单裁剪，策略保持不变。
 func (s *AccountTestService) FetchUpstreamSupportedModels(ctx context.Context, account *Account) ([]string, error) {
+	return s.fetchUpstreamModelIDs(ctx, account, true)
+}
+
+// FetchUpstreamModelsForTest 返回上游模型目录的完整结果，供管理端模型测试下拉使用。
+// 与 FetchUpstreamSupportedModels 的唯一差异：不做 GPT-5.6+ 白名单裁剪，
+// 因此 OpenAI 兼容端点（第三方 v1 代理）返回的 gemini-*、claude-*、gpt-4o 等模型都能被测试到。
+// 网关的模型同步链路不使用该方法，同步白名单行为不受影响。
+func (s *AccountTestService) FetchUpstreamModelsForTest(ctx context.Context, account *Account) ([]string, error) {
+	return s.fetchUpstreamModelIDs(ctx, account, false)
+}
+
+// fetchUpstreamModelIDs 拉取上游模型目录；applySyncWhitelist 控制是否对 OpenAI 结果套用同步白名单。
+func (s *AccountTestService) fetchUpstreamModelIDs(ctx context.Context, account *Account, applySyncWhitelist bool) ([]string, error) {
 	if s == nil {
 		return nil, newUpstreamModelSyncConfigError("Account test service is not configured", nil)
 	}
@@ -94,7 +108,10 @@ func (s *AccountTestService) FetchUpstreamSupportedModels(ctx context.Context, a
 		if err != nil {
 			return nil, err
 		}
-		return filterSyncedModelIDs(models), nil
+		if applySyncWhitelist {
+			return filterSyncedModelIDs(models), nil
+		}
+		return dedupeAndSortModelIDs(models), nil
 	}
 
 	if s.httpUpstream == nil {
@@ -140,11 +157,12 @@ func (s *AccountTestService) FetchUpstreamSupportedModels(ctx context.Context, a
 		return nil, newUpstreamModelSyncUpstreamError("Upstream returned no supported models", nil)
 	}
 
-	if account.IsOpenAI() {
+	if account.IsOpenAI() && applySyncWhitelist {
 		return filterSyncedModelIDs(models), nil
 	}
 
 	// Grok、Gemini 和 Anthropic 的模型命名不遵循 OpenAI GPT 白名单，保留其上游结果。
+	// OpenAI 兼容端点在 applySyncWhitelist=false（模型测试目录）时同样保留上游全量结果。
 	return dedupeAndSortModelIDs(models), nil
 }
 

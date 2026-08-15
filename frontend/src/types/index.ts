@@ -887,6 +887,9 @@ export interface ClaudeModel {
   type: string
   display_name: string
   created_at: string
+  // owned_by 为账号模型接口的可选字段；值为 'upstream' 时表示该模型来自上游实时目录，
+  // 而非后端内置默认模型集（对应后端 openai.UpstreamCatalogOwner）。
+  owned_by?: string
 }
 
 export interface Proxy {
