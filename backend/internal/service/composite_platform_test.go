@@ -22,6 +22,8 @@ func TestDetectModelPlatform(t *testing.T) {
 		{name: "embedding", model: "text-embedding-3-large", platform: PlatformOpenAI, ok: true},
 		{name: "gemini", model: "gemini-3-pro", platform: PlatformGemini, ok: true},
 		{name: "gemini models prefix", model: "models/gemini-2.5-flash", platform: PlatformGemini, ok: true},
+		{name: "glm openai compatible", model: "glm-5.2-think", platform: PlatformOpenAI, ok: true},
+		{name: "chatglm openai compatible", model: "chatglm-4", platform: PlatformOpenAI, ok: true},
 		{name: "learnlm", model: "learnlm-2.0-flash-experimental", platform: PlatformGemini, ok: true},
 		{name: "grok", model: "grok-4", platform: PlatformGrok, ok: true},
 		{name: "xai prefix", model: "xai/grok-4", platform: PlatformGrok, ok: true},

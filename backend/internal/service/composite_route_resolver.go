@@ -51,6 +51,22 @@ func (r *CompositeRouteResolver) Resolve(ctx context.Context, groupID int64, mod
 		}
 	}
 
+	// OpenAI-compatible endpoints must not infer a vendor from the model ID.
+	// A private OpenAI-compatible upstream may expose Gemini, GLM, Qwen, Llama,
+	// or any other model name. The account's model_mapping is the authority for
+	// eligibility; composite routing only needs to select the OpenAI scheduler.
+	if isOpenAICompatibleCompositeEndpoint(endpoint) {
+		return CompositeRouteDecision{
+			Matched:        true,
+			Source:         CompositeRouteSourceDetector,
+			GroupID:        groupID,
+			PublicModel:    model,
+			TargetPlatform: PlatformOpenAI,
+			UpstreamModel:  model,
+			Endpoint:       endpoint,
+		}, nil
+	}
+
 	if platform, ok := DetectModelPlatform(model); ok {
 		return CompositeRouteDecision{
 			Matched:        true,
@@ -64,6 +80,15 @@ func (r *CompositeRouteResolver) Resolve(ctx context.Context, groupID int64, mod
 	}
 	decision.Reason = "no explicit route or built-in detector match"
 	return decision, nil
+}
+
+func isOpenAICompatibleCompositeEndpoint(endpoint string) bool {
+	switch normalizeCompositeRouteEndpoint(endpoint) {
+	case CompositeRouteEndpointChatCompletions, CompositeRouteEndpointResponses, CompositeRouteEndpointEmbeddings:
+		return true
+	default:
+		return false
+	}
 }
 
 func matchCompositeRoute(routes []CompositeModelRoute, model, endpoint string) (CompositeModelRoute, bool) {

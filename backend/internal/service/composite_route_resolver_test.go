@@ -41,6 +41,18 @@ func (s compositeRouteRepoStub) DeleteByGroup(ctx context.Context, groupID int64
 	return nil
 }
 
+func TestCompositeRouteResolverUnknownModelOnOpenAICompatibleEndpointUsesOpenAIScheduler(t *testing.T) {
+	resolver := NewCompositeRouteResolver(nil)
+
+	for _, endpoint := range []string{CompositeRouteEndpointChatCompletions, CompositeRouteEndpointResponses, CompositeRouteEndpointEmbeddings} {
+		decision, err := resolver.Resolve(context.Background(), 7, "private-proxy-model", endpoint)
+		require.NoError(t, err)
+		require.True(t, decision.Matched)
+		require.Equal(t, PlatformOpenAI, decision.TargetPlatform)
+		require.Equal(t, "private-proxy-model", decision.UpstreamModel)
+	}
+}
+
 func TestCompositeRouteResolverExplicitExactRouteRewritesModel(t *testing.T) {
 	resolver := NewCompositeRouteResolver(compositeRouteRepoStub{
 		routes: []CompositeModelRoute{

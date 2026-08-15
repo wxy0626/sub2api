@@ -133,6 +133,12 @@ func DetectModelPlatform(model string) (string, bool) {
 	case strings.HasPrefix(normalized, "gemini-"),
 		strings.HasPrefix(normalized, "learnlm-"):
 		return PlatformGemini, true
+	case strings.HasPrefix(normalized, "glm-"),
+		strings.HasPrefix(normalized, "chatglm-"):
+		// GLM is served through OpenAI-compatible account adapters. Keep it in
+		// the OpenAI scheduler bucket while allowing composite groups to resolve
+		// the model instead of rejecting it as an unknown platform.
+		return PlatformOpenAI, true
 	case normalized == "grok" || strings.HasPrefix(normalized, "grok-"):
 		return PlatformGrok, true
 	case strings.HasPrefix(normalized, "deepseek-"):
