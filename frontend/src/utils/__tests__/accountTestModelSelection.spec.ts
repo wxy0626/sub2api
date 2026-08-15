@@ -22,6 +22,27 @@ describe('accountTestModelSelection', () => {
     expect(selection).toMatchObject({ modelId: 'gpt-5.6-terra', mode: 'default' })
   })
 
+  it('OpenAI 上游只返回非 OpenAI 模型时回退使用上游模型，避免 v1 兼容代理测试被白名单滤空', () => {
+    const selection = resolveAccountTestModelSelection('openai', [
+      createModel('gemini-2.5-pro'),
+      createModel('gemini:130')
+    ])
+
+    expect(selection.models.map((model) => model.id)).toEqual(['gemini-2.5-pro', 'gemini:130'])
+    expect(selection).toMatchObject({ modelId: 'gemini-2.5-pro', mode: 'default' })
+  })
+
+  it('OpenAI 同时返回固定白名单模型与非 OpenAI 模型时二者都保留，仍优先 Luna', () => {
+    const selection = resolveAccountTestModelSelection('openai', [
+      createModel('unsupported-model'),
+      createModel('gpt-5.6-luna'),
+      createModel('gemini-2.5-pro')
+    ])
+
+    expect(selection.models.map((model) => model.id)).toEqual(['gpt-5.6-luna', 'gemini-2.5-pro'])
+    expect(selection).toMatchObject({ modelId: 'gpt-5.6-luna', mode: 'default' })
+  })
+
   it('Gemini 使用弹窗原有的优先顺序预填第一项', () => {
     const selection = resolveAccountTestModelSelection('gemini', [
       createModel('gemini-2.5-pro'),
