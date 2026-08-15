@@ -147,6 +147,19 @@ export async function getById(id: number): Promise<Account> {
 }
 
 /**
+ * Get plaintext value of a sensitive account credential.
+ * Requires step-up 2FA verification on the backend.
+ */
+export interface AccountCredentialResponse {
+  value: string
+}
+
+export async function getCredential(id: number, key: string): Promise<AccountCredentialResponse> {
+  const { data } = await apiClient.get<AccountCredentialResponse>(`/admin/accounts/${id}/credentials/${encodeURIComponent(key)}`)
+  return data
+}
+
+/**
  * Create new account
  * @param accountData - Account data
  * @returns Created account
@@ -636,10 +649,17 @@ export interface SyncUpstreamModelsResult {
 /**
  * Sync live supported models from the account's upstream model-list endpoint
  * @param id - Account ID
+ * @param overrides - 尚未保存的表单内凭据覆盖（api_key / base_url），用于“修改 Key 后直接获取上游模型”。
  * @returns List of model IDs returned by the upstream
  */
-export async function syncUpstreamModels(id: number): Promise<SyncUpstreamModelsResult> {
-  const { data } = await apiClient.post<SyncUpstreamModelsResult>(`/admin/accounts/${id}/models/sync-upstream`)
+export async function syncUpstreamModels(
+  id: number,
+  overrides?: { api_key?: string; base_url?: string }
+): Promise<SyncUpstreamModelsResult> {
+  const { data } = await apiClient.post<SyncUpstreamModelsResult>(
+    `/admin/accounts/${id}/models/sync-upstream`,
+    overrides ?? {}
+  )
   return data
 }
 
@@ -1080,6 +1100,7 @@ export const accountsAPI = {
   listWithEtag,
   getFilterOptions,
   getById,
+  getCredential,
   create,
   duplicate,
   update,

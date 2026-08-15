@@ -825,6 +825,31 @@ func (h *AccountHandler) GetByID(c *gin.Context) {
 	response.Success(c, h.buildAccountResponseWithRuntime(c.Request.Context(), account))
 }
 
+// GetCredential returns the plaintext value of a sensitive credential key for an account.
+// GET /api/v1/admin/accounts/:id/credentials/:key
+// 该接口泄露上游凭证原文，必须配合 step-up 2FA 使用。
+func (h *AccountHandler) GetCredential(c *gin.Context) {
+	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid account ID")
+		return
+	}
+
+	key := strings.TrimSpace(c.Param("key"))
+	if key == "" {
+		response.BadRequest(c, "Credential key is required")
+		return
+	}
+
+	value, err := h.adminService.GetAccountCredential(c.Request.Context(), accountID, key)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, gin.H{"value": value})
+}
+
 // CheckMixedChannel handles checking mixed channel risk for account-group binding.
 // POST /api/v1/admin/accounts/check-mixed-channel
 func (h *AccountHandler) CheckMixedChannel(c *gin.Context) {
@@ -2996,6 +3021,9 @@ func respondDeepSeekAvailableModelsError(c *gin.Context, account *service.Accoun
 
 // SyncUpstreamModels handles syncing live supported models from an account's upstream.
 // POST /api/v1/admin/accounts/:id/models/sync-upstream
+//
+// 支持在请求体中携带尚未保存的凭据覆盖（api_key / base_url）。这样在编辑账号时，
+// “直接修改 API Key / Base URL 后获取上游支持模型”无需先保存、关闭再重新打开。
 func (h *AccountHandler) SyncUpstreamModels(c *gin.Context) {
 	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -3003,22 +3031,49 @@ func (h *AccountHandler) SyncUpstreamModels(c *gin.Context) {
 		return
 	}
 
+	// overrideReq 携带表单内的未保存凭据。忽略空 body / 解析错误以保持向后兼容。
+	var overrideReq struct {
+		APIKey  string `json:"api_key"`
+		BaseURL string `json:"base_url"`
+	}
+	_ = c.ShouldBindJSON(&overrideReq)
+
 	account, err := h.adminService.GetAccount(c.Request.Context(), accountID)
 	if err != nil {
 		response.NotFound(c, "Account not found")
 		return
 	}
 
+	// 仅当提供了非空的覆盖凭据时才使用临时账号，否则沿用已保存账号（向后兼容）。
+	target := account
+	if key := strings.TrimSpace(overrideReq.APIKey); key != "" || strings.TrimSpace(overrideReq.BaseURL) != "" {
+		overridden := &service.Account{
+			Platform:    account.Platform,
+			Type:        account.Type,
+			Credentials: map[string]any{},
+		}
+		for k, v := range account.Credentials {
+			overridden.Credentials[k] = v
+		}
+		if key != "" {
+			overridden.Credentials["api_key"] = key
+		}
+		if baseURL := strings.TrimSpace(overrideReq.BaseURL); baseURL != "" {
+			overridden.Credentials["base_url"] = baseURL
+		}
+		target = overridden
+	}
+
 	if h.accountTestService == nil {
-		if account.Platform == service.PlatformDeepSeek {
-			respondDeepSeekAvailableModelsError(c, account, &service.UpstreamModelSyncError{
+		if target.Platform == service.PlatformDeepSeek {
+			respondDeepSeekAvailableModelsError(c, target, &service.UpstreamModelSyncError{
 				Kind:    service.UpstreamModelSyncErrorConfiguration,
 				Message: "DeepSeek 模型同步服务未配置，请联系管理员检查服务初始化",
 			})
 			return
 		}
-		if account.Platform == service.PlatformGrok {
-			respondUpstreamModelSyncError(c, "Grok", account, &service.UpstreamModelSyncError{
+		if target.Platform == service.PlatformGrok {
+			respondUpstreamModelSyncError(c, "Grok", target, &service.UpstreamModelSyncError{
 				Kind:    service.UpstreamModelSyncErrorConfiguration,
 				Message: "Grok 模型同步服务未配置，请联系管理员检查服务初始化",
 			})
@@ -3028,14 +3083,14 @@ func (h *AccountHandler) SyncUpstreamModels(c *gin.Context) {
 		return
 	}
 
-	models, err := h.accountTestService.FetchUpstreamSupportedModels(c.Request.Context(), account)
+	models, err := h.accountTestService.FetchUpstreamSupportedModels(c.Request.Context(), target)
 	if err != nil {
-		if account.Platform == service.PlatformDeepSeek {
-			respondDeepSeekAvailableModelsError(c, account, err)
+		if target.Platform == service.PlatformDeepSeek {
+			respondDeepSeekAvailableModelsError(c, target, err)
 			return
 		}
-		if account.Platform == service.PlatformGrok {
-			respondUpstreamModelSyncError(c, "Grok", account, err)
+		if target.Platform == service.PlatformGrok {
+			respondUpstreamModelSyncError(c, "Grok", target, err)
 			return
 		}
 

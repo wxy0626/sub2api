@@ -50,6 +50,32 @@ func (s *adminServiceImpl) GetAccount(ctx context.Context, id int64) (*Account, 
 	return s.accountRepo.GetByID(ctx, id)
 }
 
+func (s *adminServiceImpl) GetAccountCredential(ctx context.Context, accountID int64, key string) (string, error) {
+	if !IsSensitiveCredentialKey(key) {
+		return "", infraerrors.BadRequest("invalid_credential_key", fmt.Sprintf("不支持的凭据键: %s", key))
+	}
+
+	account, err := s.accountRepo.GetByID(ctx, accountID)
+	if err != nil {
+		return "", err
+	}
+
+	rawValue, ok := account.Credentials[key]
+	if !ok || rawValue == nil {
+		return "", infraerrors.NotFound("credential_not_found", fmt.Sprintf("账号未配置该凭据: %s", key))
+	}
+
+	strValue, ok := rawValue.(string)
+	if !ok {
+		return "", infraerrors.InternalServer("credential_not_string", fmt.Sprintf("凭据 %s 不是字符串类型", key))
+	}
+	if strValue == "" {
+		return "", infraerrors.NotFound("credential_empty", fmt.Sprintf("账号该凭据为空: %s", key))
+	}
+
+	return strValue, nil
+}
+
 func (s *adminServiceImpl) GetAccountsByIDs(ctx context.Context, ids []int64) ([]*Account, error) {
 	if len(ids) == 0 {
 		return []*Account{}, nil

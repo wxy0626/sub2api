@@ -344,7 +344,17 @@ const syncUpstreamModels = async () => {
   try {
     let result
     if (props.accountId) {
-      result = await accountsAPI.syncUpstreamModels(props.accountId)
+      // 编辑账号时，若表单内提供了尚未保存的凭据（API Key / Base URL），
+      // 则作为覆盖项传给后端，使“修改 Key 后直接获取上游模型”无需先保存、关闭再重新打开。
+      const override = props.syncCredentials
+      if (override && (override.api_key || override.base_url)) {
+        result = await accountsAPI.syncUpstreamModels(props.accountId, {
+          api_key: override.api_key,
+          base_url: override.base_url
+        })
+      } else {
+        result = await accountsAPI.syncUpstreamModels(props.accountId)
+      }
     } else if (props.syncCredentials) {
       result = await accountsAPI.syncUpstreamModelsPreview(props.syncCredentials as SyncUpstreamPreviewParams)
     } else {

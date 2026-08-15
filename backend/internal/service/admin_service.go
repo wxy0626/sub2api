@@ -77,6 +77,9 @@ type AdminService interface {
 	// 可调度的 OpenAI 账号，用于按组计算调度分数。
 	ListOpenAISchedulableAccountsForSchedulerScore(ctx context.Context, groupID *int64) ([]Account, error)
 	GetAccount(ctx context.Context, id int64) (*Account, error)
+	// GetAccountCredential 返回指定账号 credentials 中某个敏感键的明文值。
+	// key 必须是 SensitiveCredentialKeys 中声明的合法敏感键；返回前会校验该凭证已存在且非空。
+	GetAccountCredential(ctx context.Context, accountID int64, key string) (string, error)
 	GetAccountsByIDs(ctx context.Context, ids []int64) ([]*Account, error)
 	CreateAccount(ctx context.Context, input *CreateAccountInput) (*Account, error)
 	// DuplicateAccount creates an independent account from an existing account's configuration.

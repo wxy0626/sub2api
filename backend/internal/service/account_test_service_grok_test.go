@@ -81,7 +81,7 @@ func probeGrokModelsForTest(t *testing.T, svc *AccountTestService, account *Acco
 		recorder := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(recorder)
 		c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/1/test", nil)
-		err := svc.testGrokAccountConnection(c, account, model)
+		err := svc.testGrokAccountConnection(c, account, model, "", AccountTestModeDefault)
 		if err == nil {
 			allowed = append(allowed, model)
 		}

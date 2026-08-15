@@ -37,6 +37,8 @@ type stubAdminService struct {
 	bulkUpdateAccountErr                error
 	lastBulkUpdateAccountInput          *service.BulkUpdateAccountsInput
 	getAccountResult                    *service.Account
+	getAccountCredentialResult          string
+	getAccountCredentialErr             error
 	updateAccountCalls                  int
 	updateAccountExtraCalls             int
 	// lastAccountExtraUpdate 记录专用 Extra 更新，用于断言键级合并请求。
@@ -474,6 +476,10 @@ func (s *stubAdminService) GetAccount(ctx context.Context, id int64) (*service.A
 	}
 	account := service.Account{ID: id, Name: "account", Status: service.StatusActive}
 	return &account, nil
+}
+
+func (s *stubAdminService) GetAccountCredential(ctx context.Context, accountID int64, key string) (string, error) {
+	return s.getAccountCredentialResult, s.getAccountCredentialErr
 }
 
 func (s *stubAdminService) GetAccountsByIDs(ctx context.Context, ids []int64) ([]*service.Account, error) {

@@ -1,10 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 
-const { updateAccountMock, checkMixedChannelRiskMock, authIsSimpleMode } = vi.hoisted(() => ({
+const {
+  updateAccountMock,
+  checkMixedChannelRiskMock,
+  getCredentialMock,
+  authIsSimpleMode
+} = vi.hoisted(() => ({
   updateAccountMock: vi.fn(),
   checkMixedChannelRiskMock: vi.fn(),
+  getCredentialMock: vi.fn(),
   authIsSimpleMode: { value: true }
 }))
 
@@ -28,7 +34,8 @@ vi.mock('@/api/admin', () => ({
   adminAPI: {
     accounts: {
       update: updateAccountMock,
-      checkMixedChannelRisk: checkMixedChannelRiskMock
+      checkMixedChannelRisk: checkMixedChannelRiskMock,
+      getCredential: getCredentialMock
     },
     settings: {
       getWebSearchEmulationConfig: vi.fn().mockResolvedValue({ enabled: false, providers: [] }),
@@ -305,7 +312,8 @@ function mountModal(account = buildAccount()) {
         Icon: true,
         ProxySelector: true,
         GroupSelector: GroupSelectorStub,
-        ModelWhitelistSelector: ModelWhitelistSelectorStub
+        ModelWhitelistSelector: ModelWhitelistSelectorStub,
+        TotpStepUpDialog: true
       }
     }
   })
@@ -1094,6 +1102,54 @@ describe('EditAccountModal', () => {
 
     expect(updateAccountMock).toHaveBeenCalledTimes(1)
     // 用户未输入新 key 时，payload 不应带 api_key，由后端合并保留旧值
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).not.toHaveProperty('api_key')
+  })
+
+  it('shows masked placeholder when account has existing api_key', async () => {
+    const account = buildAccount()
+    account.credentials = {
+      base_url: 'https://api.openai.com',
+      model_mapping: { 'gpt-5.2': 'gpt-5.2' }
+    }
+    account.credentials_status = { has_api_key: true }
+
+    const wrapper = mountModal(account)
+    const input = wrapper.find('[data-testid="account-api-key-input"]')
+
+    expect(input.exists()).toBe(true)
+    expect((input.element as HTMLInputElement).value).toBe('••••••••••••••••')
+  })
+
+  it('reveals api_key when clicking the eye button and does not resubmit unchanged value', async () => {
+    const account = buildAccount()
+    account.credentials = {
+      base_url: 'https://api.openai.com',
+      model_mapping: { 'gpt-5.2': 'gpt-5.2' }
+    }
+    account.credentials_status = { has_api_key: true }
+    getCredentialMock.mockReset()
+    getCredentialMock.mockResolvedValue({ value: 'sk-revealed' })
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    const input = wrapper.find('[data-testid="account-api-key-input"]')
+    expect((input.element as HTMLInputElement).value).toBe('••••••••••••••••')
+
+    // 点击眼睛按钮揭示真实值
+    const eyeButton = wrapper.find('button[aria-label="admin.accounts.showApiKey"]')
+    expect(eyeButton.exists()).toBe(true)
+    await eyeButton.trigger('click')
+    await flushPromises()
+
+    expect(getCredentialMock).toHaveBeenCalledWith(1, 'api_key')
+    expect((input.element as HTMLInputElement).value).toBe('sk-revealed')
+
+    // 不修改直接保存，不应把已揭示的原值再次提交
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
     expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).not.toHaveProperty('api_key')
   })
 

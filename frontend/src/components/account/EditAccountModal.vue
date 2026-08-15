@@ -58,29 +58,94 @@
         </div>
         <div>
           <label class="input-label">{{ t('admin.accounts.apiKey') }}</label>
-          <input
-            v-model="editApiKey"
-            type="password"
-            class="input font-mono"
-            data-testid="account-api-key-input"
-            autocomplete="new-password"
-            data-1p-ignore
-            data-lpignore="true"
-            data-bwignore="true"
-            :placeholder="
-              account.platform === 'openai'
-                ? 'sk-proj-...'
-                : account.platform === 'gemini'
-                  ? 'AIza...'
-                  : account.platform === 'antigravity'
-                    ? 'sk-...'
-                    : account.platform === 'grok'
-                      ? 'xai-...'
-                      : account.platform === 'deepseek'
-                        ? 'sk-...'
-                      : 'sk-ant-...'
-            "
-          />
+          <div class="relative">
+            <input
+              v-model="editApiKey"
+              :type="apiKeyVisible ? 'text' : 'password'"
+              class="input w-full pr-10 font-mono"
+              data-testid="account-api-key-input"
+              autocomplete="new-password"
+              data-1p-ignore
+              data-lpignore="true"
+              data-bwignore="true"
+              :placeholder="
+                account.platform === 'openai'
+                  ? 'sk-proj-...'
+                  : account.platform === 'gemini'
+                    ? 'AIza...'
+                    : account.platform === 'antigravity'
+                      ? 'sk-...'
+                      : account.platform === 'grok'
+                        ? 'xai-...'
+                        : account.platform === 'deepseek'
+                          ? 'sk-...'
+                        : 'sk-ant-...'
+              "
+            />
+            <button
+              type="button"
+              class="absolute inset-y-0 right-0 flex items-center px-3 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
+              :aria-label="apiKeyVisible ? t('admin.accounts.hideApiKey') : t('admin.accounts.showApiKey')"
+              :title="apiKeyVisible ? t('admin.accounts.hideApiKey') : t('admin.accounts.showApiKey')"
+              :disabled="apiKeyLoading"
+              @click="toggleApiKeyVisibility"
+            >
+              <svg
+                v-if="apiKeyLoading"
+                class="h-4 w-4 animate-spin"
+                fill="none"
+                viewBox="0 0 24 24"
+              >
+                <circle
+                  class="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  stroke-width="4"
+                />
+                <path
+                  class="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                />
+              </svg>
+              <svg
+                v-else-if="apiKeyVisible"
+                class="h-4 w-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"
+                />
+              </svg>
+              <svg
+                v-else
+                class="h-4 w-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                />
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
+                />
+              </svg>
+            </button>
+          </div>
           <p class="input-hint">{{ t('admin.accounts.leaveEmptyToKeep') }}</p>
         </div>
 
@@ -154,7 +219,7 @@
 
             <!-- Whitelist Mode -->
             <div v-if="modelRestrictionMode === 'whitelist'">
-              <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" :account-type="account?.type" />
+              <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" :account-type="account?.type" :sync-credentials="editSyncPreviewCredentials" />
               <p class="text-xs text-gray-500 dark:text-gray-400">
                 {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
                 <span v-if="allowedModels.length === 0 && modelMappings.length === 0">{{
@@ -583,7 +648,7 @@
 
           <!-- Whitelist Mode -->
           <div v-if="modelRestrictionMode === 'whitelist'">
-            <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" :account-type="account?.type" />
+            <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" :account-type="account?.type" :sync-credentials="editSyncPreviewCredentials" />
             <p class="text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
               <span v-if="allowedModels.length === 0 && modelMappings.length === 0">{{
@@ -686,12 +751,77 @@
         </div>
         <div>
           <label class="input-label">{{ t('admin.accounts.upstream.apiKey') }}</label>
-          <input
-            v-model="editApiKey"
-            type="password"
-            class="input font-mono"
-            placeholder="sk-..."
-          />
+          <div class="relative">
+            <input
+              v-model="editApiKey"
+              :type="apiKeyVisible ? 'text' : 'password'"
+              class="input w-full pr-10 font-mono"
+              placeholder="sk-..."
+            />
+            <button
+              type="button"
+              class="absolute inset-y-0 right-0 flex items-center px-3 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
+              :aria-label="apiKeyVisible ? t('admin.accounts.hideApiKey') : t('admin.accounts.showApiKey')"
+              :title="apiKeyVisible ? t('admin.accounts.hideApiKey') : t('admin.accounts.showApiKey')"
+              :disabled="apiKeyLoading"
+              @click="toggleApiKeyVisibility"
+            >
+              <svg
+                v-if="apiKeyLoading"
+                class="h-4 w-4 animate-spin"
+                fill="none"
+                viewBox="0 0 24 24"
+              >
+                <circle
+                  class="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  stroke-width="4"
+                />
+                <path
+                  class="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                />
+              </svg>
+              <svg
+                v-else-if="apiKeyVisible"
+                class="h-4 w-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"
+                />
+              </svg>
+              <svg
+                v-else
+                class="h-4 w-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                />
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
+                />
+              </svg>
+            </button>
+          </div>
           <p class="input-hint">{{ t('admin.accounts.leaveEmptyToKeep') }}</p>
         </div>
       </div>
@@ -795,7 +925,7 @@
 
           <!-- Whitelist Mode -->
           <div v-if="modelRestrictionMode === 'whitelist'">
-            <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" :account-type="account?.type" />
+            <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" :account-type="account?.type" :sync-credentials="editSyncPreviewCredentials" />
             <p class="text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
               <span v-if="allowedModels.length === 0 && modelMappings.length === 0">{{
@@ -2713,6 +2843,9 @@
     @confirm="handleMixedChannelConfirm"
     @cancel="handleMixedChannelCancel"
   />
+
+  <!-- Step-up 2FA 弹窗：查看明文 API Key 时可能触发 TOTP 验证 -->
+  <TotpStepUpDialog :controller="apiKeyStepUp" />
 </template>
 
 <script setup lang="ts">
@@ -2722,6 +2855,7 @@ import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { adminAPI } from '@/api/admin'
 import { useQuotaNotifyState } from '@/composables/useQuotaNotifyState'
+import { useStepUp, isStepUpCancelled, isStepUpBlocked, stepUpBlockReason } from '@/composables/useStepUp'
 import type {
   Account,
   Proxy,
@@ -2745,6 +2879,7 @@ import QuotaLimitCard from '@/components/account/QuotaLimitCard.vue'
 import GrokBaseUrlPresets from '@/components/account/GrokBaseUrlPresets.vue'
 import HeaderOverrideEditor from '@/components/account/HeaderOverrideEditor.vue'
 import OllamaCloudUsageSettings from '@/components/account/OllamaCloudUsageSettings.vue'
+import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 import {
   applyAntigravityProjectID,
   applyHeaderOverride,
@@ -2837,6 +2972,28 @@ interface TempUnschedRuleForm {
 const submitting = ref(false)
 const editBaseUrl = ref('https://api.anthropic.com')
 const editApiKey = ref('')
+const API_KEY_MASK = '••••••••••••••••'
+const apiKeyVisible = ref(false)
+const apiKeyRevealed = ref(false)
+const apiKeyLoading = ref(false)
+const apiKeyOriginalValue = ref('')
+// 查看明文 API Key 属于敏感读取，需要 step-up 2FA 验证（后端路由已用 stepUpAuth 保护）。
+const apiKeyStepUp = useStepUp()
+
+// editSyncPreviewCredentials 携带表单内（尚未保存的）API Key / Base URL，
+// 供“同步上游支持的模型”在编辑时直接使用新凭据，无需先保存、关闭再重新打开。
+// 仅当用户实际输入了新的 API Key 时才携带覆盖凭据：OAuth 账号没有可输入的 Key，
+// 会回退到已保存账号（避免用默认 Base URL 误覆盖 OAuth 账号的转发端点）。
+const editSyncPreviewCredentials = computed(() => {
+  const key = editApiKey.value.trim()
+  if (!key) return undefined
+  return {
+    platform: props.account?.platform || 'anthropic',
+    type: props.account?.type || 'apikey',
+    base_url: editBaseUrl.value.trim() || undefined,
+    api_key: key
+  }
+})
 // Bedrock credentials
 const editBedrockAccessKeyId = ref('')
 const editBedrockSecretAccessKey = ref('')
@@ -3738,7 +3895,60 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     customErrorCodesEnabled.value = false
     selectedErrorCodes.value = []
   }
-  editApiKey.value = ''
+
+  // 若账号已配置 api_key，编辑时显示掩码占位符；真实值需点击眼睛图标按需获取。
+  const hasApiKey =
+    newAccount.credentials_status?.has_api_key ??
+    Boolean((newAccount.credentials as Record<string, unknown>)?.api_key)
+  editApiKey.value = hasApiKey ? API_KEY_MASK : ''
+  apiKeyVisible.value = false
+  apiKeyRevealed.value = false
+  apiKeyOriginalValue.value = ''
+}
+
+async function toggleApiKeyVisibility() {
+  if (!props.account) return
+  // 在闭包外捕获 accountId，避免 TS 在异步回调里丢失 props.account 的非空收窄。
+  const accountId = props.account.id
+
+  // 已经揭示过真实值，只做显示/隐藏切换
+  if (apiKeyRevealed.value) {
+    apiKeyVisible.value = !apiKeyVisible.value
+    return
+  }
+
+  // 当前为掩码占位符且未揭示过，调用后端接口获取明文（敏感读取，需 step-up 2FA）
+  if (editApiKey.value === API_KEY_MASK) {
+    apiKeyLoading.value = true
+    try {
+      const { value } = await apiKeyStepUp.run(() =>
+        adminAPI.accounts.getCredential(accountId, 'api_key')
+      )
+      editApiKey.value = value
+      apiKeyOriginalValue.value = value
+      apiKeyRevealed.value = true
+      apiKeyVisible.value = true
+    } catch (error) {
+      if (isStepUpCancelled(error)) {
+        // 用户主动取消 step-up 验证，静默返回，不弹错误提示、也不改变掩码状态。
+      } else if (isStepUpBlocked(error)) {
+        appStore.showError(
+          stepUpBlockReason(error) === 'STEP_UP_ADMIN_API_KEY_FORBIDDEN'
+            ? t('stepUp.adminApiKeyForbidden')
+            : t('stepUp.notEnabled')
+        )
+      } else {
+        const message = error instanceof Error ? error.message : t('admin.accounts.apiKeyRevealFailed')
+        appStore.showError(t('admin.accounts.apiKeyRevealError', { message }))
+      }
+    } finally {
+      apiKeyLoading.value = false
+    }
+    return
+  }
+
+  // 用户已手动输入新值，仅切换显示/隐藏
+  apiKeyVisible.value = !apiKeyVisible.value
 }
 
 async function loadTLSProfiles() {
@@ -3812,7 +4022,13 @@ const syncAntigravityUpstreamModels = async () => {
 
   isSyncingAntigravityUpstream.value = true
   try {
-    const result = await adminAPI.accounts.syncUpstreamModels(props.account.id)
+    // 若表单内提供了尚未保存的 API Key，则作为覆盖项传给后端，
+    // 使“修改 Key 后直接获取上游模型”无需先保存、关闭再重新打开。
+    const override = editSyncPreviewCredentials.value
+    const result = await adminAPI.accounts.syncUpstreamModels(
+      props.account.id,
+      override ? { api_key: override.api_key, base_url: override.base_url } : undefined
+    )
     const upstreamModels = result.models.map((model) => model.trim()).filter(Boolean)
     if (upstreamModels.length === 0) {
       appStore.showInfo(t('admin.accounts.syncUpstreamModelsEmpty'))
@@ -4325,9 +4541,11 @@ const handleSubmit = async () => {
       // 两者都无才报错。
       const hasExistingApiKey =
         props.account.credentials_status?.has_api_key ?? Boolean(currentCredentials.api_key)
-      if (editApiKey.value.trim()) {
-        newCredentials.api_key = editApiKey.value.trim()
-      } else if (!hasExistingApiKey) {
+      const apiKeyInput = editApiKey.value.trim()
+      // 掩码占位符或未改动的原始值都表示用户未修改已有密钥，不应作为新值提交。
+      if (apiKeyInput && apiKeyInput !== API_KEY_MASK && apiKeyInput !== apiKeyOriginalValue.value) {
+        newCredentials.api_key = apiKeyInput
+      } else if (!hasExistingApiKey && !apiKeyInput) {
         appStore.showError(t('admin.accounts.apiKeyIsRequired'))
         return
       }
@@ -4404,8 +4622,9 @@ const handleSubmit = async () => {
 
       newCredentials.base_url = editBaseUrl.value.trim()
 
-      if (editApiKey.value.trim()) {
-        newCredentials.api_key = editApiKey.value.trim()
+      const upstreamApiKeyInput = editApiKey.value.trim()
+      if (upstreamApiKeyInput && upstreamApiKeyInput !== API_KEY_MASK && upstreamApiKeyInput !== apiKeyOriginalValue.value) {
+        newCredentials.api_key = upstreamApiKeyInput
       }
 
       // Add intercept warmup requests setting
