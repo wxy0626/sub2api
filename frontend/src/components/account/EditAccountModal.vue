@@ -2986,7 +2986,9 @@ const apiKeyStepUp = useStepUp()
 // 会回退到已保存账号（避免用默认 Base URL 误覆盖 OAuth 账号的转发端点）。
 const editSyncPreviewCredentials = computed(() => {
   const key = editApiKey.value.trim()
-  if (!key) return undefined
+  // 未输入新 key，或输入框仍显示掩码占位符时，不携带 api_key 覆盖项，
+  // 否则会把掩码字符串当成真实 key 发给上游，导致 401 身份验证失败。
+  if (!key || key === API_KEY_MASK) return undefined
   return {
     platform: props.account?.platform || 'anthropic',
     type: props.account?.type || 'apikey',

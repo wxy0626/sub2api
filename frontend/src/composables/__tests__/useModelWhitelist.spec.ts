@@ -133,20 +133,27 @@ describe('useModelWhitelist', () => {
     })
   })
 
-  it('同步模型清理只保留 GPT-5.6 及以上和 GPT Image 2', () => {
+  it('同步模型清理保留 OpenAI 兼容端点返回的全部非空模型并去重', () => {
     expect(isAllowedSyncedModel(' GPT-5.6-LUNA ')).toBe(true)
-    expect(isAllowedSyncedModel('gpt-5.7-preview')).toBe(true)
-    expect(isAllowedSyncedModel('gpt-6')).toBe(true)
-    expect(isAllowedSyncedModel('gpt-image-2')).toBe(true)
-    expect(isAllowedSyncedModel('gpt-image-2-2026-04-21')).toBe(true)
-    expect(isAllowedSyncedModel('gpt-5.5')).toBe(false)
-    expect(isAllowedSyncedModel('gpt-5.4')).toBe(false)
-    expect(isAllowedSyncedModel('gpt-5.50')).toBe(false)
-    expect(isAllowedSyncedModel('gpt-5.6x')).toBe(false)
-    expect(isAllowedSyncedModel('gpt-image-1.5')).toBe(false)
-    expect(isAllowedSyncedModel('claude-sonnet-4-6')).toBe(false)
-    expect(restrictSyncedModels(['gpt-5.4', 'gpt-5.5', 'gpt-5.6-luna', 'gpt-5.7-preview', 'gpt-5.5', 'gpt-image-1.5', 'gpt-image-2', 'o3']))
-      .toEqual(['gpt-5.6-luna', 'gpt-5.7-preview', 'gpt-image-2'])
+    expect(isAllowedSyncedModel('gpt-5.5')).toBe(true)
+    expect(isAllowedSyncedModel('claude-sonnet-4-6', 'openai')).toBe(true)
+    expect(isAllowedSyncedModel('gemini-3.5-flash', 'openai')).toBe(true)
+    expect(isAllowedSyncedModel('   ', 'openai')).toBe(false)
+    expect(restrictSyncedModels([
+      'gpt-5.4',
+      'gpt-5.5',
+      'gpt-5.6-luna',
+      'gemini-3.5-flash',
+      'gemini-3.5-flash',
+      'gemma-4-26b-it',
+      '  '
+    ], 'openai')).toEqual([
+      'gpt-5.4',
+      'gpt-5.5',
+      'gpt-5.6-luna',
+      'gemini-3.5-flash',
+      'gemma-4-26b-it'
+    ])
   })
 
   it('DeepSeek 同步模型保留非空上游模型并去重，不套用 GPT 白名单', () => {

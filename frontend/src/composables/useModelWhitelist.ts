@@ -397,30 +397,15 @@ export const commonErrorCodes = [
 // 辅助函数
 // =====================
 
-// syncedGPTModelVersionPattern 匹配可比较版本号的 GPT 模型，并要求后缀以连字符分隔。
-const syncedGPTModelVersionPattern = /^gpt-(\d+)(?:\.(\d))?(?:-|$)/
-
-// syncedImageModelPrefix 是自动同步时允许的 GPT Image 2 模型前缀。
-const syncedImageModelPrefix = 'gpt-image-2'
-
 // defaultOpenAIModelWhitelist 是无既有映射时默认开放的 GPT-5.6 与 GPT Image 2 模型。
 const defaultOpenAIModelWhitelist = ['gpt-5.6', 'gpt-image-2']
 
 // isAllowedSyncedModel 按平台判断模型是否可写入“同步最新支持模型”或“同步上游支持的模型”白名单。
-export function isAllowedSyncedModel(model: string, platform = 'openai'): boolean {
-  if (platform.trim().toLowerCase() !== 'openai') return model.trim().length > 0
-
-  const normalizedModel = model.trim().toLowerCase()
-  if (normalizedModel === syncedImageModelPrefix || normalizedModel.startsWith(`${syncedImageModelPrefix}-`)) {
-    return true
-  }
-
-  const versionMatch = normalizedModel.match(syncedGPTModelVersionPattern)
-  if (!versionMatch) return false
-
-  const majorVersion = Number(versionMatch[1])
-  const minorVersion = versionMatch[2] ? Number(versionMatch[2]) : 0
-  return majorVersion > 5 || (majorVersion === 5 && minorVersion >= 6)
+// OpenAI 兼容端点可能返回 Gemini、Claude、GLM 等非 GPT 模型；官方 OpenAI
+// 端点的 GPT 白名单由后端同步策略负责，前端只做非空校验，避免把兼容端点的
+// 合法上游模型误过滤掉。
+export function isAllowedSyncedModel(model: string, _platform = 'openai'): boolean {
+  return model.trim().length > 0
 }
 
 // restrictSyncedModels 按平台清理同步结果，去重后返回可写入模型白名单的非空模型。
