@@ -247,6 +247,44 @@ func TestBuildUpstreamModelsRequestsForAPIKeyAccounts(t *testing.T) {
 	require.Equal(t, "antigravity-key", antigravityReq.Header.Get("x-api-key"))
 }
 
+// TestBuildGeminiUpstreamModelsRequestRoutesOpenAICompatibleProxy 验证：
+// Gemini 账号指向 OpenAI 兼容代理（非 Google 原生端点）时，模型目录请求应走
+// OpenAI 兼容路径（Bearer 鉴权 + /v1/models），而不是 Gemini 原生
+// （x-goog-api-key + /v1beta/models），否则代理会拒绝并返回空目录。
+func TestBuildGeminiUpstreamModelsRequestRoutesOpenAICompatibleProxy(t *testing.T) {
+	t.Parallel()
+
+	svc := &AccountTestService{cfg: upstreamModelSyncTestConfig()}
+	ctx := context.Background()
+
+	proxyReq, err := svc.buildUpstreamModelsRequest(ctx, &Account{
+		Platform: PlatformGemini,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":  "gemini-proxy-key",
+			"base_url": "https://aistudio-proxy.example.com/v1",
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "https://aistudio-proxy.example.com/v1/models", proxyReq.URL.String())
+	require.Equal(t, "Bearer gemini-proxy-key", proxyReq.Header.Get("Authorization"))
+	require.Empty(t, proxyReq.Header.Get("x-goog-api-key"))
+
+	// 官方原生端点不应被上述逻辑劫持，仍走 Gemini 原生协议。
+	nativeReq, err := svc.buildUpstreamModelsRequest(ctx, &Account{
+		Platform: PlatformGemini,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":  "gemini-key",
+			"base_url": "https://generativelanguage.googleapis.com/v1beta",
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "https://generativelanguage.googleapis.com/v1beta/models", nativeReq.URL.String())
+	require.Equal(t, "gemini-key", nativeReq.Header.Get("x-goog-api-key"))
+	require.Empty(t, nativeReq.Header.Get("Authorization"))
+}
+
 func TestBuildUpstreamModelsRequestSupportsGrokOAuth(t *testing.T) {
 	t.Parallel()
 
@@ -327,18 +365,19 @@ func TestFetchUpstreamSupportedModelsParsesOpenAIResponse(t *testing.T) {
 		cfg:          upstreamModelSyncTestConfig(),
 	}
 
+	// 官方端点保持 GPT-5.6+ 白名单裁剪，第三方兼容端点另见 KeepsFullCatalogForOpenAICompatibleProxy。
 	models, err := svc.FetchUpstreamSupportedModels(context.Background(), &Account{
 		ID:       7,
 		Platform: PlatformOpenAI,
 		Type:     AccountTypeAPIKey,
 		Credentials: map[string]any{
 			"api_key":  "openai-key",
-			"base_url": "https://openai.example.com/v1",
+			"base_url": "https://api.openai.com/v1",
 		},
 	})
 	require.NoError(t, err)
 	require.Equal(t, []string{"gpt-5.6-luna", "gpt-image-2"}, models)
-	require.Equal(t, "https://openai.example.com/v1/models", upstream.lastReq.URL.String())
+	require.Equal(t, "https://api.openai.com/v1/models", upstream.lastReq.URL.String())
 	require.Equal(t, "Bearer openai-key", upstream.lastReq.Header.Get("Authorization"))
 }
 
@@ -400,9 +439,9 @@ func TestFetchUpstreamSupportedModelsParsesGrokAPIKeyResponse(t *testing.T) {
 	require.Equal(t, "Bearer xai-key", upstream.lastReq.Header.Get("Authorization"))
 }
 
-// TestFetchUpstreamModelsForTestKeepsFullOpenAICompatibleCatalog 验证模型测试目录保留 OpenAI 兼容端点的全部上游模型：
-// 只要端点兼容 OpenAI 协议，gemini-*、claude-*、gpt-4o 等非 GPT-5.6 模型都应可被测试。
-func TestFetchUpstreamModelsForTestKeepsFullOpenAICompatibleCatalog(t *testing.T) {
+// TestFetchUpstreamSupportedModelsKeepsFullCatalogForOpenAICompatibleProxy 验证自定义 base_url 的
+// OpenAI 兼容端点按上游实际目录返回：gemini-*、claude-*、gpt-4o 等模型不再被 GPT 白名单裁掉。
+func TestFetchUpstreamSupportedModelsKeepsFullCatalogForOpenAICompatibleProxy(t *testing.T) {
 	t.Parallel()
 
 	upstream := &httpUpstreamRecorder{resp: &http.Response{
@@ -417,42 +456,8 @@ func TestFetchUpstreamModelsForTestKeepsFullOpenAICompatibleCatalog(t *testing.T
 		cfg:          upstreamModelSyncTestConfig(),
 	}
 
-	account := &Account{
-		ID:       70,
-		Platform: PlatformOpenAI,
-		Type:     AccountTypeAPIKey,
-		Credentials: map[string]any{
-			"api_key":  "proxy-key",
-			"base_url": "https://proxy.example.com/v1",
-		},
-	}
-
-	models, err := svc.FetchUpstreamModelsForTest(context.Background(), account)
-	require.NoError(t, err)
-	require.Equal(t, []string{"claude-sonnet-4-6", "gemini-3-pro-preview", "gpt-4o", "gpt-5.6-luna"}, models)
-	require.Equal(t, "https://proxy.example.com/v1/models", upstream.lastReq.URL.String())
-	require.Equal(t, "Bearer proxy-key", upstream.lastReq.Header.Get("Authorization"))
-}
-
-// TestFetchUpstreamSupportedModelsKeepsSyncWhitelistForGateway 验证网关模型同步仍按 GPT-5.6+ 白名单裁剪，
-// 测试目录放宽不会影响同步策略。
-func TestFetchUpstreamSupportedModelsKeepsSyncWhitelistForGateway(t *testing.T) {
-	t.Parallel()
-
-	upstream := &httpUpstreamRecorder{resp: &http.Response{
-		StatusCode: http.StatusOK,
-		Header:     http.Header{"Content-Type": []string{"application/json"}},
-		Body: io.NopCloser(strings.NewReader(
-			`{"data":[{"id":"gpt-4o"},{"id":"gemini-3-pro-preview"},{"id":"gpt-5.6-luna"},{"id":"claude-sonnet-4-6"}]}`,
-		)),
-	}}
-	svc := &AccountTestService{
-		httpUpstream: upstream,
-		cfg:          upstreamModelSyncTestConfig(),
-	}
-
 	models, err := svc.FetchUpstreamSupportedModels(context.Background(), &Account{
-		ID:       71,
+		ID:       70,
 		Platform: PlatformOpenAI,
 		Type:     AccountTypeAPIKey,
 		Credentials: map[string]any{
@@ -461,7 +466,38 @@ func TestFetchUpstreamSupportedModelsKeepsSyncWhitelistForGateway(t *testing.T) 
 		},
 	})
 	require.NoError(t, err)
-	require.Equal(t, []string{"gpt-5.6-luna"}, models)
+	require.Equal(t, []string{"claude-sonnet-4-6", "gemini-3-pro-preview", "gpt-4o", "gpt-5.6-luna"}, models)
+	require.Equal(t, "https://proxy.example.com/v1/models", upstream.lastReq.URL.String())
+	require.Equal(t, "Bearer proxy-key", upstream.lastReq.Header.Get("Authorization"))
+}
+
+// TestIsOfficialOpenAIUpstream 验证官方端点识别规则：空 base_url 与官方域名按官方处理，
+// 第三方域名（含容器内 host.docker.internal 这类私有地址）按兼容端点处理。
+func TestIsOfficialOpenAIUpstream(t *testing.T) {
+	t.Parallel()
+
+	officialBaseURLs := []string{"", "https://api.openai.com/v1", "https://chatgpt.com/backend-api/codex", "https://API.OpenAI.com"}
+	for _, baseURL := range officialBaseURLs {
+		credentials := map[string]any{"api_key": "k"}
+		if baseURL != "" {
+			credentials["base_url"] = baseURL
+		}
+		require.True(t, isOfficialOpenAIUpstream(&Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: credentials}), baseURL)
+	}
+
+	compatibleBaseURLs := []string{
+		"http://host.docker.internal:7860/v1",
+		"https://proxy.example.com/v1",
+		"https://open.bigmodel.cn/api/coding/paas/v4",
+		"https://openai.com.attacker.net/v1",
+	}
+	for _, baseURL := range compatibleBaseURLs {
+		require.False(t, isOfficialOpenAIUpstream(&Account{
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Credentials: map[string]any{"api_key": "k", "base_url": baseURL},
+		}), baseURL)
+	}
 }
 
 func TestFilterSyncedModelIDs(t *testing.T) {

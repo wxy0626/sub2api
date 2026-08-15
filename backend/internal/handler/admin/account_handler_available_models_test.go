@@ -733,6 +733,49 @@ func TestAccountHandlerGetAvailableModels_DeepSeekMappingReturnsSortedModelObjec
 	}
 }
 
+// TestAccountHandlerSyncUpstreamModels_OpenAICompatibleProxyReturnsFullCatalog
+// 验证「同步上游模型」对第三方 OpenAI 兼容端点返回全量目录，gemini-* 等模型可写入账号白名单。
+func TestAccountHandlerSyncUpstreamModels_OpenAICompatibleProxyReturnsFullCatalog(t *testing.T) {
+	svc := &availableModelsAdminService{
+		stubAdminService: newStubAdminService(),
+		account: service.Account{
+			ID:       63,
+			Name:     "openai-compatible-sync",
+			Platform: service.PlatformOpenAI,
+			Type:     service.AccountTypeAPIKey,
+			Status:   service.StatusActive,
+			Credentials: map[string]any{
+				"api_key":  "proxy-key",
+				"base_url": "http://host.docker.internal:7860/v1",
+			},
+		},
+	}
+	upstream := &syncUpstreamHTTPUpstream{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body: io.NopCloser(strings.NewReader(
+			`{"data":[{"id":"gemini-3.5-flash"},{"id":"gemini-3-pro-preview"},{"id":"gpt-4o"}]}`,
+		)),
+	}}
+	router := setupSyncUpstreamModelsRouter(svc, upstream)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/63/models/sync-upstream", nil)
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp struct {
+		Data struct {
+			Models []string `json:"models"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(t, []string{"gemini-3-pro-preview", "gemini-3.5-flash", "gpt-4o"}, resp.Data.Models)
+	require.NotNil(t, upstream.lastReq)
+	require.Equal(t, "http://host.docker.internal:7860/v1/models", upstream.lastReq.URL.String())
+}
+
 func TestAccountHandlerSyncUpstreamModels_ConfigErrorReturnsBadRequest(t *testing.T) {
 	svc := &availableModelsAdminService{
 		stubAdminService: newStubAdminService(),

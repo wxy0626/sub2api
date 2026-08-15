@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -81,21 +82,12 @@ func newUpstreamModelSyncUpstreamError(message string, err error) error {
 }
 
 // FetchUpstreamSupportedModels fetches the live model list from the account's upstream API format.
-// 该方法服务于网关模型同步：OpenAI 结果仍按 GPT-5.6+ 白名单裁剪，策略保持不变。
+//
+// OpenAI 结果的裁剪策略按端点区分：
+//   - 官方端点（未配置 base_url 或指向 openai.com / chatgpt.com）保持 GPT-5.6+ 同步白名单不变；
+//   - 自定义 base_url 的 OpenAI 兼容端点（第三方 v1 协议代理）按上游实际目录返回，
+//     避免 gemini-*、glm-*、gpt-4o 等模型被 GPT 白名单裁掉。
 func (s *AccountTestService) FetchUpstreamSupportedModels(ctx context.Context, account *Account) ([]string, error) {
-	return s.fetchUpstreamModelIDs(ctx, account, true)
-}
-
-// FetchUpstreamModelsForTest 返回上游模型目录的完整结果，供管理端模型测试下拉使用。
-// 与 FetchUpstreamSupportedModels 的唯一差异：不做 GPT-5.6+ 白名单裁剪，
-// 因此 OpenAI 兼容端点（第三方 v1 代理）返回的 gemini-*、claude-*、gpt-4o 等模型都能被测试到。
-// 网关的模型同步链路不使用该方法，同步白名单行为不受影响。
-func (s *AccountTestService) FetchUpstreamModelsForTest(ctx context.Context, account *Account) ([]string, error) {
-	return s.fetchUpstreamModelIDs(ctx, account, false)
-}
-
-// fetchUpstreamModelIDs 拉取上游模型目录；applySyncWhitelist 控制是否对 OpenAI 结果套用同步白名单。
-func (s *AccountTestService) fetchUpstreamModelIDs(ctx context.Context, account *Account, applySyncWhitelist bool) ([]string, error) {
 	if s == nil {
 		return nil, newUpstreamModelSyncConfigError("Account test service is not configured", nil)
 	}
@@ -108,10 +100,7 @@ func (s *AccountTestService) fetchUpstreamModelIDs(ctx context.Context, account 
 		if err != nil {
 			return nil, err
 		}
-		if applySyncWhitelist {
-			return filterSyncedModelIDs(models), nil
-		}
-		return dedupeAndSortModelIDs(models), nil
+		return filterSyncedModelIDs(models), nil
 	}
 
 	if s.httpUpstream == nil {
@@ -157,16 +146,58 @@ func (s *AccountTestService) fetchUpstreamModelIDs(ctx context.Context, account 
 		return nil, newUpstreamModelSyncUpstreamError("Upstream returned no supported models", nil)
 	}
 
-	if account.IsOpenAI() && applySyncWhitelist {
+	if account.IsOpenAI() && isOfficialOpenAIUpstream(account) {
 		return filterSyncedModelIDs(models), nil
 	}
 
 	// Grok、Gemini 和 Anthropic 的模型命名不遵循 OpenAI GPT 白名单，保留其上游结果。
-	// OpenAI 兼容端点在 applySyncWhitelist=false（模型测试目录）时同样保留上游全量结果。
+	// 自定义 base_url 的 OpenAI 兼容端点同理：上游返回什么就作为可用模型目录。
 	return dedupeAndSortModelIDs(models), nil
 }
 
+// officialOpenAIUpstreamHostSuffixes 是 OpenAI 官方模型目录的域名后缀。
+var officialOpenAIUpstreamHostSuffixes = []string{"openai.com", "chatgpt.com"}
+
+// isOfficialOpenAIUpstream 判断 OpenAI 账号是否直连官方端点。
+// 未配置 base_url、base_url 无法解析（保守按官方处理）或域名命中官方后缀时返回 true；
+// 其余情况视为第三方 OpenAI 兼容端点，其模型目录不套用 GPT 白名单。
+func isOfficialOpenAIUpstream(account *Account) bool {
+	if account == nil {
+		return true
+	}
+	baseURL := strings.TrimSpace(account.GetCredential("base_url"))
+	if baseURL == "" {
+		return true
+	}
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return true
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host == "" {
+		return true
+	}
+	for _, suffix := range officialOpenAIUpstreamHostSuffixes {
+		if host == suffix || strings.HasSuffix(host, "."+suffix) {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *AccountTestService) buildUpstreamModelsRequest(ctx context.Context, account *Account) (*http.Request, error) {
+	// Gemini 原生协议（x-goog-api-key + /v1beta/models）与 OpenAI 兼容代理
+	// （One-API / aistudio-to-api 等，暴露 /v1/models 且要求 Bearer 鉴权）互不兼容。
+	// 当 Gemini 账号配置了自定义 base_url 且不是 Google 官方原生端点时，
+	// 视为 OpenAI 兼容代理，按 OpenAI 兼容端点拉取模型目录并返回上游实际模型。
+	// 其余平台（OpenAI / DeepSeek / Grok 本就用 Bearer + /v1/models；
+	// Anthropic 自定义端点沿用原生 x-api-key 约定）保持原有逻辑。
+	if account != nil && account.Type == AccountTypeAPIKey && account.IsGemini() {
+		baseURL := strings.TrimSpace(account.GetCredential("base_url"))
+		if baseURL != "" && !isNativePlatformEndpoint(account, baseURL) {
+			return s.buildOpenAICompatibleUpstreamModelsRequest(ctx, account)
+		}
+	}
 	switch {
 	case account.Platform == PlatformAntigravity:
 		return s.buildAntigravityAPIKeyModelsRequest(ctx, account)
@@ -430,6 +461,68 @@ func (s *AccountTestService) buildDeepSeekUpstreamModelsRequest(ctx context.Cont
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	account.ApplyHeaderOverrides(req.Header)
 	return req, nil
+}
+
+// buildOpenAICompatibleUpstreamModelsRequest 构造 OpenAI 兼容端点的模型列表请求。
+// 用于 Gemini / Anthropic 等非 OpenAI 平台、但 base_url 实际指向 OpenAI 兼容代理
+// （如 One-API / aistudio-to-api）的场景：使用 Bearer 鉴权并请求 /v1/models，
+// 返回上游目录中实际存在的模型，而非平台原生协议所需的鉴权与路径。
+func (s *AccountTestService) buildOpenAICompatibleUpstreamModelsRequest(ctx context.Context, account *Account) (*http.Request, error) {
+	if account == nil || account.Type != AccountTypeAPIKey {
+		return nil, newUpstreamModelSyncUnsupportedError("仅支持 API Key 账号通过 OpenAI 兼容端点同步模型", nil)
+	}
+	apiKey := strings.TrimSpace(account.GetCredential("api_key"))
+	if apiKey == "" {
+		return nil, newUpstreamModelSyncConfigError("未配置 API Key，无法向 OpenAI 兼容端点鉴权", nil)
+	}
+	baseURL := strings.TrimSpace(account.GetCredential("base_url"))
+	if baseURL == "" {
+		return nil, newUpstreamModelSyncConfigError("缺少自定义 Base URL，无法确定 OpenAI 兼容端点", nil)
+	}
+	normalizedBaseURL, err := s.validateUpstreamBaseURL(baseURL)
+	if err != nil {
+		return nil, newUpstreamModelSyncConfigError("自定义 Base URL 无效，请检查 URL 与安全白名单配置", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, buildOpenAIModelsURL(normalizedBaseURL), nil)
+	if err != nil {
+		return nil, newUpstreamModelSyncConfigError("OpenAI 兼容模型列表 URL 无效", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	account.ApplyHeaderOverrides(req.Header)
+	return req, nil
+}
+
+// isNativePlatformEndpoint 判断 base_url 是否指向该平台的官方原生端点。
+// 若不是（即第三方 OpenAI 兼容代理），模型列表应走 OpenAI 兼容路径。
+func isNativePlatformEndpoint(account *Account, baseURL string) bool {
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host == "" {
+		return false
+	}
+	var nativeSuffixes []string
+	switch {
+	case account.IsGemini():
+		nativeSuffixes = []string{"googleapis.com", "google.dev"}
+	case account.IsAnthropic():
+		nativeSuffixes = []string{"anthropic.com"}
+	case account.IsDeepSeek():
+		nativeSuffixes = []string{"deepseek.com", "deepseek.cn"}
+	case account.IsGrok():
+		nativeSuffixes = []string{"x.ai"}
+	default:
+		return false
+	}
+	for _, suffix := range nativeSuffixes {
+		if host == suffix || strings.HasSuffix(host, "."+suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *AccountTestService) buildGeminiUpstreamModelsRequest(ctx context.Context, account *Account) (*http.Request, error) {

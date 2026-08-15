@@ -2700,7 +2700,7 @@ func (h *AccountHandler) fetchOpenAICompatibleUpstreamModels(ctx context.Context
 		return nil, false
 	}
 
-	upstreamModelIDs, err := h.accountTestService.FetchUpstreamModelsForTest(ctx, account)
+	upstreamModelIDs, err := h.accountTestService.FetchUpstreamSupportedModels(ctx, account)
 	if err != nil {
 		// 这里只记录失败类别，不暴露上游地址与凭据；具体原因由同步接口负责回显。
 		var syncErr *service.UpstreamModelSyncError
