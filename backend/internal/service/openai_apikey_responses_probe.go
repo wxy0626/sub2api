@@ -226,21 +226,74 @@ func shouldPersistResponsesProbeSupport(status int) bool {
 // 携带工具的请求。
 //
 //   - 404 / 405：端点不存在 → false
-//   - 其他可持久化的非 2xx（401/403/422 等）：端点存在,但本次无法判定工具能力
-//     （鉴权/校验/瞬时故障）→ 保守按 true,保持既有"端点存在即支持"行为
-//   - 2xx：探测以 tool_choice=required 强制工具调用,响应必须含 function_call
-//     输出项才算真正可用;否则(如火山方舟 coding/v3 × kimi-k2.6 仅回 reasoning)
-//     判为 false,使网关改走 /v1/chat/completions 直转路径。
+//   - 422 且响应正文明确拒绝 Responses API（如 GLM 类上游返回"不支持 responses"）
+//     → false，避免后续网关把 Chat Completions 请求错误地转成 Responses 格式。
+//   - 其他可持久化的非 2xx（401/403/400 等）：端点存在，但本次无法判定工具能力
+//     （鉴权/校验/瞬时故障）→ 保守按 true，保持既有"端点存在即支持"行为。
+//   - 2xx：探测以 tool_choice=required 强制工具调用，响应必须含 function_call
+//     输出项才算真正可用；否则（如火山方舟 coding/v3 × kimi-k2.6 仅回 reasoning）
+//     判为 false，使网关改走 /v1/chat/completions 直转路径。
 //
 // 调用方必须先使用 shouldPersistResponsesProbeSupport 过滤 5xx 响应。
 func decideResponsesProbeSupport(status int, body []byte) bool {
 	if status == http.StatusNotFound || status == http.StatusMethodNotAllowed {
 		return false
 	}
+	// GLM 等第三方 OpenAI 兼容上游对 /v1/responses 可能返回 422，且正文明确
+	// 表明不支持 Responses API。此类响应应判为不支持，防止后续路由错误。
+	if status == http.StatusUnprocessableEntity && responsesProbeBodyRejectsResponses(body) {
+		return false
+	}
 	if status < 200 || status >= 300 {
 		return true
 	}
 	return responsesProbeBodyHasFunctionCall(body)
+}
+
+// responsesProbeBodyRejectsResponses 判断探测响应正文是否明确表示不支持
+// /v1/responses 端点。识别中英文常见拒识文案，例如：
+//   - "不支持 responses"
+//   - "does not support the responses api"
+//   - "the responses api is unsupported"
+//
+// 为避免误判 OpenAI 官方/other 上游的普通参数校验 422，必须同时满足：
+//  1. 正文提到 responses（或 /v1/responses）；
+//  2. 正文包含"不支持 / not support / unsupported / not supported"等拒识信号。
+func responsesProbeBodyRejectsResponses(body []byte) bool {
+	msg := strings.ToLower(responsesProbeErrorMessage(body))
+	if msg == "" {
+		return false
+	}
+	mentionsResponses := strings.Contains(msg, "responses") || strings.Contains(msg, "/v1/responses")
+	if !mentionsResponses {
+		return false
+	}
+	rejectionSignals := []string{
+		"不支持",
+		"not support",
+		"does not support",
+		"is not supported",
+		"unsupported",
+		"not supported",
+	}
+	for _, sig := range rejectionSignals {
+		if strings.Contains(msg, sig) {
+			return true
+		}
+	}
+	return false
+}
+
+// responsesProbeErrorMessage 从探测响应体中提取最可能的错误描述文本。
+// 依次尝试 error.message、message 字段，否则返回整个响应体字符串。
+func responsesProbeErrorMessage(body []byte) string {
+	if msg := gjson.GetBytes(body, "error.message").String(); msg != "" {
+		return msg
+	}
+	if msg := gjson.GetBytes(body, "message").String(); msg != "" {
+		return msg
+	}
+	return string(body)
 }
 
 // responsesProbeBodyHasFunctionCall 判断非流式 Responses 响应体的 output 数组里

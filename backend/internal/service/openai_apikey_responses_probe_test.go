@@ -72,10 +72,40 @@ func TestDecideResponsesProbeSupport(t *testing.T) {
 		{"400 conservative true", 400, reasoningOnly, true},
 		{"401 conservative true", 401, nil, true},
 		{"500 conservative true", 500, nil, true},
+		// 422 with explicit Responses rejection -> unsupported (GLM-style).
+		{"422 chinese responses unsupported", 422, []byte(`{"error":{"message":"该模型不支持 /v1/responses"}}`), false},
+		{"422 english responses unsupported", 422, []byte(`{"error":{"message":"The model does not support the responses API"}}`), false},
+		{"422 responses unsupported short", 422, []byte(`{"error":{"message":"responses unsupported"}}`), false},
+		// 422 without Responses rejection -> conservative true.
+		{"422 unrelated validation", 422, []byte(`{"error":{"message":"Invalid model ID"}}`), true},
+		{"422 no message", 422, []byte(`{}`), true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			require.Equal(t, tc.want, decideResponsesProbeSupport(tc.status, tc.body))
+		})
+	}
+}
+
+func TestResponsesProbeBodyRejectsResponses(t *testing.T) {
+	cases := []struct {
+		name string
+		body []byte
+		want bool
+	}{
+		{"chinese unsupported", []byte(`{"error":{"message":"该模型不支持 /v1/responses"}}`), true},
+		{"english not support", []byte(`{"error":{"message":"The model does not support responses"}}`), true},
+		{"english unsupported", []byte(`{"error":{"message":"Responses API is unsupported"}}`), true},
+		{"uppercase", []byte(`{"error":{"message":"RESPONSES API IS NOT SUPPORTED"}}`), true},
+		{"message field", []byte(`{"message":"responses not supported"}`), true},
+		{"raw body fallback", []byte(`this responses api is unsupported`), true},
+		{"missing responses keyword", []byte(`{"error":{"message":"Model not supported"}}`), false},
+		{"missing rejection signal", []byte(`{"error":{"message":"Bad responses request"}}`), false},
+		{"empty body", []byte(``), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, responsesProbeBodyRejectsResponses(tc.body))
 		})
 	}
 }

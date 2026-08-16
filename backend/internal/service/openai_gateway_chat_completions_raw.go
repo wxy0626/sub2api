@@ -134,7 +134,7 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 
 	if clientStream {
 		var usageErr error
-		upstreamBody, usageErr = ensureOpenAIChatStreamUsage(upstreamBody)
+		upstreamBody, usageErr = ensureOpenAIChatStreamUsageForModel(upstreamBody, upstreamModel)
 		if usageErr != nil {
 			return nil, fmt.Errorf("enable stream usage: %w", usageErr)
 		}
@@ -397,6 +397,19 @@ func ensureOpenAIChatStreamUsage(body []byte) ([]byte, error) {
 		return body, err
 	}
 	return updated, nil
+}
+
+// ensureOpenAIChatStreamUsageForModel 为兼容上游选择流式 usage 策略。
+//
+// GLM OpenAI 兼容端点（尤其是第三方中转）可能返回 422 拒绝
+// stream_options.include_usage；后台连通性测试只发送 model/messages/stream，
+// 因此真实网关请求与测试请求会出现额外字段差异。GLM 的 usage 可从普通内容
+// chunk 中获取不到时仍会返回响应，避免为了计费字段破坏请求兼容性。
+func ensureOpenAIChatStreamUsageForModel(body []byte, model string) ([]byte, error) {
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "glm-") {
+		return body, nil
+	}
+	return ensureOpenAIChatStreamUsage(body)
 }
 
 func isOpenAIChatUsageOnlyStreamChunk(payload string) bool {

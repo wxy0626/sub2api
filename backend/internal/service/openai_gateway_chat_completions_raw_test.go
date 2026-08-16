@@ -746,6 +746,18 @@ func TestEnsureOpenAIChatStreamUsage(t *testing.T) {
 	require.True(t, gjson.GetBytes(body, "stream_options.include_usage").Bool())
 }
 
+func TestEnsureOpenAIChatStreamUsageForModelSkipsGLMStreamOptions(t *testing.T) {
+	t.Parallel()
+
+	body, err := ensureOpenAIChatStreamUsageForModel([]byte(`{"model":"glm-5.2","messages":[],"stream":true}`), "glm-5.2")
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(body, "stream_options").Exists())
+
+	body, err = ensureOpenAIChatStreamUsageForModel([]byte(`{"model":"gpt-5.4","messages":[],"stream":true}`), "gpt-5.4")
+	require.NoError(t, err)
+	require.True(t, gjson.GetBytes(body, "stream_options.include_usage").Bool())
+}
+
 func TestBufferRawChatCompletions_RejectsOversizedResponse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
