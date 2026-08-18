@@ -5,7 +5,15 @@
 
 import { apiClient } from '../client'
 
-export type Provider = 'openai' | 'anthropic' | 'gemini' | 'grok'
+export type Provider =
+  | 'openai'
+  | 'anthropic'
+  | 'gemini'
+  | 'grok'
+  | 'antigravity'
+  | 'kimi'
+  | 'zhipu'
+  | 'deepseek'
 export type MonitorStatus = 'operational' | 'degraded' | 'failed' | 'error'
 export type BodyOverrideMode = 'off' | 'merge' | 'replace'
 export type APIMode = 'chat_completions' | 'responses'
@@ -55,6 +63,12 @@ export interface ChannelMonitor {
   extra_headers: Record<string, string>
   body_override_mode: BodyOverrideMode
   body_override: Record<string, unknown> | null
+  /** 检测模式：probe（默认）/ quota / quota_probe */
+  check_mode: CheckMode
+  /** 配额模式关联的账号 ID；探活模式为 null */
+  account_id: number | null
+  /** 主模型最近一次配额快照（配额模式；无历史时为 null） */
+  latest_quota?: MonitorQuotaSnapshot | null
 }
 
 export interface ExtraModelStatus {
@@ -83,11 +97,16 @@ export interface CreateParams {
   name: string
   provider: Provider
   api_mode?: APIMode
+  /** 探活模式必填（base origin）；quota 模式可留空 */
   endpoint: string
   account_id?: number | null
   /** 通过“使用我的 Key”选择的 API Key ID，仅用于编辑界面展示。 */
   api_key_id?: number | null
   api_key: string
+  /** 缺省 probe；antigravity 仅支持 quota */
+  check_mode?: CheckMode
+  /** 配额模式必填：数据源账号（provider 需与账号平台一致） */
+  account_id?: number | null
   primary_model: string
   extra_models?: string[]
   group_name?: string
@@ -116,6 +135,8 @@ export interface CheckResult {
   ping_latency_ms: number | null
   message: string
   checked_at: string
+  /** 配额模式（quota / quota_probe 主模型行）附带的配额快照 */
+  quota?: MonitorQuotaSnapshot | null
 }
 
 export interface RunNowResponse {
@@ -130,6 +151,8 @@ export interface HistoryItem {
   ping_latency_ms: number | null
   message: string
   checked_at: string
+  /** 配额快照（配额模式行；探活行为空） */
+  quota?: MonitorQuotaSnapshot | null
 }
 
 export interface HistoryParams {

@@ -25,31 +25,42 @@ func newCompactBodySignalTestContext(t *testing.T, path string, body []byte) *gi
 
 func TestNormalizeOpenAIResponsesCompactRequest_RemoteV2PreservesNativeResponsesWire(t *testing.T) {
 	h := &OpenAIGatewayHandler{}
-	body := []byte(`{
-		"model":"gpt-5.6-sol",
-		"stream":true,
-		"store":true,
-		"prompt_cache_key":"pck-signal-1",
-		"reasoning":{"effort":"max","context":"all_turns"},
-		"input":[
-			{"type":"message","role":"user","content":"hello"},
-			{"type":"compaction_trigger"}
-		]
-	}`)
-	c := newCompactBodySignalTestContext(t, "/v1/responses", body)
-	c.Request.Header.Set("x-codex-beta-features", "responses_websockets_v2, remote_compaction_v2, another_feature")
+	tests := []struct {
+		name       string
+		betaHeader string
+		userAgent  string
+	}{
+		{name: "headerless"},
+		{name: "unrelated_header", betaHeader: "responses_websockets_v2"},
+		{name: "wrong_case_header", betaHeader: "REMOTE_COMPACTION_V2"},
+		{name: "declared_header", betaHeader: "remote_compaction_v2"},
+		{name: "codex_cli_user_agent", userAgent: "codex_cli_rs/0.144.1 (Ubuntu 22.4.0; x86_64) xterm-256color"},
+		{name: "codex_desktop_user_agent", userAgent: "Codex Desktop/0.139.0 (Mac OS X 14; arm64) unknown"},
+	}
 
-	normalized, ok := h.normalizeOpenAIResponsesCompactRequest(c, zap.NewNop(), body)
-	require.True(t, ok)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := []byte(`{
+				"model":"gpt-5.6-sol",
+				"stream":true,
+				"store":true,
+				"prompt_cache_key":"pck-signal-1",
+				"reasoning":{"effort":"max","context":"all_turns"},
+				"input":[
+					{"type":"message","role":"user","content":"hello"},
+					{"type":"compaction_trigger"}
+				]
+			}`)
+			c := newCompactBodySignalTestContext(t, "/v1/responses", body)
+			if tt.betaHeader != "" {
+				c.Request.Header.Set("x-codex-beta-features", tt.betaHeader)
+			}
+			if tt.userAgent != "" {
+				c.Request.Header.Set("User-Agent", tt.userAgent)
+			}
 
-	require.Equal(t, "/v1/responses", c.Request.URL.Path)
-	require.False(t, isOpenAIRemoteCompactPath(c))
-	require.Equal(t, body, normalized)
-	require.True(t, gjson.GetBytes(normalized, "stream").Bool())
-	require.True(t, gjson.GetBytes(normalized, "store").Bool())
-	require.Equal(t, "pck-signal-1", gjson.GetBytes(normalized, "prompt_cache_key").String())
-	require.Equal(t, "max", gjson.GetBytes(normalized, "reasoning.effort").String())
-	require.Equal(t, "all_turns", gjson.GetBytes(normalized, "reasoning.context").String())
+			normalized, ok := h.normalizeOpenAIResponsesCompactRequest(c, zap.NewNop(), body)
+			require.True(t, ok)
 
 	_, streamMarkerExists := c.Get(service.OpenAICompactClientStreamKeyForTest())
 	require.False(t, streamMarkerExists)
@@ -138,15 +149,12 @@ func TestNormalizeOpenAIResponsesCompactRequest_NonRemoteV2BodySignalPromoted(t 
 		wantMarked bool
 	}{
 		{
-			name:       "no_header",
-			body:       []byte(`{"model":"gpt-5.5","stream":true,"input":[{"type":"compaction_trigger"}]}`),
-			wantMarked: true,
+			name: "stream_false_headerless",
+			body: []byte(`{"model":"gpt-5.5","stream":false,"input":[{"type":"compaction_trigger"}]}`),
 		},
 		{
-			name:       "unrelated_header",
-			body:       []byte(`{"model":"gpt-5.5","stream":true,"input":[{"type":"compaction_trigger"}]}`),
-			betaHeader: "responses_websockets_v2",
-			wantMarked: true,
+			name: "stream_absent_headerless",
+			body: []byte(`{"model":"gpt-5.5","input":[{"type":"compaction_trigger"}]}`),
 		},
 		{
 			name:       "wrong_case_header",
@@ -160,9 +168,9 @@ func TestNormalizeOpenAIResponsesCompactRequest_NonRemoteV2BodySignalPromoted(t 
 			betaHeader: "remote_compaction_v2",
 		},
 		{
-			name:       "stream_absent",
+			name:       "stream_absent_wrong_case_header",
 			body:       []byte(`{"model":"gpt-5.5","input":[{"type":"compaction_trigger"}]}`),
-			betaHeader: "remote_compaction_v2",
+			betaHeader: "REMOTE_COMPACTION_V2",
 		},
 	}
 
@@ -195,7 +203,7 @@ func TestNormalizeOpenAIResponsesCompactRequest_NoTriggerUntouched(t *testing.T)
 	normalized, ok := h.normalizeOpenAIResponsesCompactRequest(c, zap.NewNop(), body)
 	require.True(t, ok)
 	require.Equal(t, "/v1/responses", c.Request.URL.Path)
-	require.False(t, isOpenAIRemoteCompactPath(c))
+	require.False(t, isOpenAILegacyCompactPath(c))
 	require.Equal(t, body, normalized)
 	require.True(t, gjson.GetBytes(normalized, "stream").Bool())
 }
@@ -204,7 +212,6 @@ func TestNormalizeOpenAIResponsesCompactRequest_PathBasedNoDoubleSuffix(t *testi
 	h := &OpenAIGatewayHandler{}
 	body := []byte(`{"model":"gpt-5.5","stream":true,"store":true,"input":[{"type":"message","role":"user","content":"hello"}]}`)
 	c := newCompactBodySignalTestContext(t, "/v1/responses/compact", body)
-	c.Request.Header.Set("x-codex-beta-features", "remote_compaction_v2")
 
 	normalized, ok := h.normalizeOpenAIResponsesCompactRequest(c, zap.NewNop(), body)
 	require.True(t, ok)
