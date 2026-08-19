@@ -94,6 +94,31 @@ export default {
       priorityUpdateFailed: 'Failed to update the account priority level. Enter an integer greater than or equal to 0 and try again.',
       priorityInvalid: 'Priority level must be an integer greater than or equal to 0. Enter a valid number and try again.',
       oauthType: 'OAuth',
+      cnProviders: {
+        accountMode: {
+          title: 'Account mode',
+          payg: 'Pay-as-you-go',
+          paygDesc: 'Use a platform API key and pay for actual usage.',
+          coding: 'Coding Plan',
+          codingDesc: 'Use the platform Coding Plan credentials and quota endpoint.'
+        },
+        apiProtocol: {
+          title: 'API protocol',
+          chat_completions: 'Chat Completions',
+          chat_completionsDesc: 'Use the OpenAI-compatible Chat Completions endpoint.',
+          anthropic: 'Anthropic Messages',
+          anthropicDesc: 'Use the Anthropic Messages-compatible endpoint.',
+          responses: 'Responses',
+          responsesDesc: 'Use the Responses endpoint with native response-style requests.'
+        },
+        balance: 'Balance',
+        balanceLow: 'Low balance',
+        noBalanceEndpoint: 'No balance endpoint is available for this account.',
+        probeTooltip: 'Query account quota',
+        window5h: '5-hour',
+        windowWeekly: 'Weekly',
+        resetSoon: 'Resetting soon'
+      },
       setupToken: 'Setup Token',
       apiKey: 'API Key',
       // Schedulable toggle

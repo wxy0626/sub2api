@@ -94,6 +94,31 @@ export default {
       priorityUpdateFailed: '更新账号优先等级失败，请确认输入为大于等于 0 的整数后重试。',
       priorityInvalid: '优先等级必须是大于等于 0 的整数，请输入有效数字后重试。',
       oauthType: 'OAuth',
+      cnProviders: {
+        accountMode: {
+          title: '账号模式',
+          payg: '按量付费',
+          paygDesc: '使用平台 API Key，按实际用量计费。',
+          coding: 'Coding Plan',
+          codingDesc: '使用平台 Coding Plan 凭据和配额接口。'
+        },
+        apiProtocol: {
+          title: 'API 协议',
+          chat_completions: 'Chat Completions',
+          chat_completionsDesc: '使用 OpenAI 兼容的 Chat Completions 接口。',
+          anthropic: 'Anthropic Messages',
+          anthropicDesc: '使用 Anthropic Messages 兼容接口。',
+          responses: 'Responses',
+          responsesDesc: '使用 Responses 接口，支持原生响应式请求。'
+        },
+        balance: '余额',
+        balanceLow: '余额偏低',
+        noBalanceEndpoint: '当前账号没有可用的余额查询地址。',
+        probeTooltip: '查询账号配额',
+        window5h: '5 小时',
+        windowWeekly: '每周',
+        resetSoon: '即将重置'
+      },
       // Schedulable toggle
       schedulable: '参与调度',
       schedulableHint: '开启后账号参与API请求调度',
