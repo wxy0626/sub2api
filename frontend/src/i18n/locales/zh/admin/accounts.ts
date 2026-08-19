@@ -104,11 +104,13 @@ export default {
         },
         apiProtocol: {
           title: 'API 协议',
+          chatCompletions: 'Chat Completions 协议',
+          chatCompletionsDesc: '使用 OpenAI 兼容的 Chat Completions 接口。',
           chat_completions: 'Chat Completions',
           chat_completionsDesc: '使用 OpenAI 兼容的 Chat Completions 接口。',
-          anthropic: 'Anthropic Messages',
+          anthropic: 'Anthropic Messages 协议',
           anthropicDesc: '使用 Anthropic Messages 兼容接口。',
-          responses: 'Responses',
+          responses: 'Responses 协议',
           responsesDesc: '使用 Responses 接口，支持原生响应式请求。'
         },
         balance: '余额',

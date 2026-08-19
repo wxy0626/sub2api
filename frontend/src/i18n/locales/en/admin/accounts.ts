@@ -104,6 +104,8 @@ export default {
         },
         apiProtocol: {
           title: 'API protocol',
+          chatCompletions: 'Chat Completions',
+          chatCompletionsDesc: 'Use the OpenAI-compatible Chat Completions endpoint.',
           chat_completions: 'Chat Completions',
           chat_completionsDesc: 'Use the OpenAI-compatible Chat Completions endpoint.',
           anthropic: 'Anthropic Messages',
