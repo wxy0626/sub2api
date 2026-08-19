@@ -3032,6 +3032,54 @@ const apiKeyVisible = ref(false)
 const apiKeyRevealed = ref(false)
 const apiKeyLoading = ref(false)
 const apiKeyOriginalValue = ref('')
+
+// 国产供应商账号的模式与协议可在编辑时修正，并同步对应默认端点。
+const isCNApiKeyAccount = computed(() =>
+  props.account?.type === 'apikey' &&
+  (props.account.platform === 'kimi' || props.account.platform === 'zhipu' || props.account.platform === 'deepseek'),
+)
+const cnPresetPlatform = computed<'kimi' | 'zhipu' | 'deepseek'>(() => {
+  const platform = props.account?.platform
+  return platform === 'kimi' || platform === 'zhipu' || platform === 'deepseek' ? platform : 'kimi'
+})
+const editApiProtocol = ref<CnApiProtocol>('chat_completions')
+const editAccountMode = ref<CnAccountMode>('payg')
+const syncingForm = ref(false)
+const cnAccountModeOptions = computed<Array<{ value: CnAccountMode; labelKey: 'payg' | 'coding' }>>(() =>
+  props.account?.platform === 'deepseek'
+    ? [{ value: 'payg', labelKey: 'payg' }]
+    : [{ value: 'payg', labelKey: 'payg' }, { value: 'coding', labelKey: 'coding' }],
+)
+const cnProtocolOptions = computed<Array<{ value: CnApiProtocol; labelKey: string }>>(() => {
+  const options: Array<{ value: CnApiProtocol; labelKey: string }> = [
+    { value: 'chat_completions', labelKey: 'chatCompletions' },
+    { value: 'anthropic', labelKey: 'anthropic' },
+  ]
+  if (props.account?.platform === 'deepseek') options.push({ value: 'responses', labelKey: 'responses' })
+  return options
+})
+watch(editApiProtocol, (protocol) => {
+  if (!isCNApiKeyAccount.value || syncingForm.value || !props.account) return
+  editBaseUrl.value = defaultCNBaseUrl(props.account.platform, editAccountMode.value, protocol)
+})
+watch(editAccountMode, (mode) => {
+  if (!isCNApiKeyAccount.value || syncingForm.value || !props.account) return
+  const effectiveMode = props.account.platform === 'deepseek' ? 'payg' : mode
+  if (effectiveMode !== mode) {
+    editAccountMode.value = effectiveMode
+    return
+  }
+  editBaseUrl.value = defaultCNBaseUrl(props.account.platform, mode, editApiProtocol.value)
+})
+const cnProtocolDescKey = computed(
+  () => cnProtocolOptions.value.find((option) => option.value === editApiProtocol.value)?.labelKey ?? 'chatCompletions',
+)
+function onCnPresetSelect(preset: { mode: CnAccountMode; protocol: CnApiProtocol; url: string }) {
+  editAccountMode.value = preset.mode
+  editApiProtocol.value = preset.protocol
+  editBaseUrl.value = preset.url
+}
+
 // 查看明文 API Key 属于敏感读取，需要 step-up 2FA 验证（后端路由已用 stepUpAuth 保护）。
 const apiKeyStepUp = useStepUp()
 

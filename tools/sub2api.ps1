@@ -1,7 +1,7 @@
 ﻿# Sub2API Compose 部署目录。
 $部署目录 = 'E:\AI\sun2api\deploy'
 # Docker Desktop 程序路径。
-$Docker桌面程序 = 'C:\Program Files\Docker\Docker\Docker Desktop.exe'
+$Docker桌面程序 = 'C:\Users\Administrator\AppData\Local\Programs\DockerDesktop\Docker Desktop.exe'
 # 本地服务健康检查地址。
 $健康检查地址 = 'http://127.0.0.1:8080/health'
 # 本地管理页面地址。

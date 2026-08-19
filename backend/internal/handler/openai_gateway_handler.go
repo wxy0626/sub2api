@@ -836,6 +836,18 @@ func isOpenAILegacyCompactPath(c *gin.Context) bool {
 	return service.IsOpenAIResponsesCompactPath(c)
 }
 
+// isOpenAIRemoteCompactionV2Request 保留 handler 层调用兼容，协议级严格判定
+// 由 normalizeOpenAIResponsesCompactRequest 通过 service 函数完成。
+func isOpenAIRemoteCompactionV2Request(body []byte) bool {
+	stream, valid := parseOpenAICompatibleStream(body)
+	return valid && stream && service.HasCompactionTriggerInInput(body)
+}
+
+// isOpenAIRemoteCompactPath 保留旧调用点的路径语义：仅显式 compact 端点。
+func isOpenAIRemoteCompactPath(c *gin.Context) bool {
+	return isOpenAILegacyCompactPath(c)
+}
+
 // isBareOpenAIResponsesPath 仅匹配裸 /responses 端点（无 /compact 等子路径），
 // body-signal 提升只允许发生在这里，避免误伤 /responses/{id}/... 形态的请求。
 func isBareOpenAIResponsesPath(c *gin.Context) bool {

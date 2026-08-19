@@ -3963,42 +3963,6 @@ const apiKeyHint = computed(() => {
   return t('admin.accounts.apiKeyHint')
 })
 
-// Base URL / API Key 占位符：国产供应商随账号类型变化。
-const apiKeyBaseUrlPlaceholder = computed(() => {
-  if (isCNPlatform.value) {
-    return defaultCNBaseUrl(form.platform, accountMode.value, apiProtocol.value) || 'https://api.example.com'
-  }
-  switch (form.platform) {
-    case 'openai':
-      return 'https://api.openai.com'
-    case 'gemini':
-      return 'https://generativelanguage.googleapis.com'
-    case 'grok':
-      return 'https://api.x.ai/v1'
-    default:
-      return 'https://api.anthropic.com'
-  }
-})
-
-const apiKeyValuePlaceholder = computed(() => {
-  switch (form.platform) {
-    case 'openai':
-      return 'sk-proj-...'
-    case 'gemini':
-      return 'AIza...'
-    case 'grok':
-      return 'xai-...'
-    case 'kimi':
-      return 'sk-...'
-    case 'zhipu':
-      return '<api-key>.<secret>'
-    case 'deepseek':
-      return 'sk-...'
-    default:
-      return 'sk-ant-...'
-  }
-})
-
 interface Props {
   show: boolean
   proxies: Proxy[]

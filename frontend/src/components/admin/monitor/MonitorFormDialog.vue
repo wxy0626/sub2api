@@ -63,10 +63,35 @@
         </div>
       </div>
 
+      <!-- 本地“已有账号”来源选择 -->
       <div v-if="form.source_type === 'account'">
         <label class="input-label">{{ t('admin.channelMonitor.form.account') }} <span class="text-red-500">*</span></label>
-        <Select v-model="accountSelectValue" :options="accountOptions" :placeholder="t('admin.channelMonitor.form.accountPlaceholder')" />
+        <Select v-model="sourceAccountSelectValue" :options="sourceAccountOptions" :placeholder="t('admin.channelMonitor.form.accountPlaceholder')" />
         <p class="mt-1 text-xs text-gray-400">{{ t('admin.channelMonitor.form.accountHint') }}</p>
+      </div>
+
+      <!-- 配额 / 配额+探活模式使用关联账号，并保留远程搜索与已选账号回填。 -->
+      <div v-if="usesQuotaMode">
+        <label class="input-label">
+          {{ t('admin.channelMonitor.form.linkedAccount') }} <span class="text-red-500">*</span>
+        </label>
+        <div data-testid="monitor-linked-account">
+          <Select
+            v-model="accountSelectValue"
+            :options="accountOptions"
+            :placeholder="t('admin.channelMonitor.form.linkedAccountPlaceholder')"
+            remote
+            :loading="accountsLoading"
+            @search="onAccountSearch"
+          />
+        </div>
+        <p class="mt-1 text-xs text-gray-400">{{ t('admin.channelMonitor.form.linkedAccountHint') }}</p>
+        <p v-if="accountHydrationFailed" class="mt-1 text-xs text-amber-600 dark:text-amber-400">
+          {{ t('admin.channelMonitor.form.linkedAccountMissing') }}
+        </p>
+        <p v-if="accountOptions.length === 0 && !accountsLoading && !accountSearchQuery" class="mt-1 text-xs text-amber-600 dark:text-amber-400">
+          {{ t('admin.channelMonitor.form.linkedAccountEmpty') }}
+        </p>
       </div>
 
       <div v-if="form.provider === PROVIDER_OPENAI" class="rounded-lg border border-blue-100 bg-blue-50/50 p-3 dark:border-blue-500/20 dark:bg-blue-500/10">
@@ -362,6 +387,7 @@ interface MonitorForm {
   interval_seconds: number
   jitter_seconds: number
   enabled: boolean
+  check_mode: CheckMode
   // 高级设置快照
   template_id: number | null
   extra_headers: Record<string, string>
@@ -374,6 +400,7 @@ const form = reactive<MonitorForm>({
   provider: PROVIDER_OPENAI,
   api_mode: API_MODE_CHAT_COMPLETIONS,
   source_type: 'external',
+  check_mode: CHECK_MODE_PROBE,
   account_id: null,
   endpoint: '',
   api_key: '',
@@ -388,6 +415,9 @@ const form = reactive<MonitorForm>({
   body_override_mode: 'off',
   body_override: null,
 })
+
+const usesQuotaMode = computed(() => form.check_mode !== CHECK_MODE_PROBE)
+const usesProbePart = computed(() => form.check_mode !== CHECK_MODE_QUOTA)
 
 // OpenAI 旧监控的自定义模型会保留在下拉框中，避免编辑时意外改写历史配置。
 const openAIPrimaryModelOptions = computed(() => {
@@ -405,22 +435,19 @@ const maxJitterSeconds = computed<number>(() => Math.max(0, (form.interval_secon
 // 当前服务是否由 HTTPS 提供；仅 HTTPS 才能作为安全的监控上游地址。
 const currentServiceUsesHTTPS = window.location.protocol === 'https:'
 
-// 可选账号列表仅用于“已有账号”来源，凭据始终保留在后端。
+// “已有账号”来源列表，配额模式仍使用下方服务端搜索列表。
 const monitorAccounts = ref<Account[]>([])
-
-const accountOptions = computed(() => monitorAccounts.value.map((account) => ({
+const sourceAccountOptions = computed(() => monitorAccounts.value.map((account) => ({
   value: String(account.id),
   label: `${account.name || `#${account.id}`} (#${account.id})`,
 })))
-
-// accountSelectValue 在 Select 的字符串值与表单数字账号 ID 之间转换。
-const accountSelectValue = computed<string>({
-  get: () => (form.account_id == null ? '' : String(form.account_id)),
+const sourceAccountSelectValue = computed<string>({
+  get: () => (form.source_type === 'account' && form.account_id != null ? String(form.account_id) : ''),
   set: (raw: string) => {
     const id = Number(raw)
     form.account_id = Number.isSafeInteger(id) && id > 0 ? id : null
     const account = monitorAccounts.value.find((item) => item.id === form.account_id)
-    if (account && ['openai', 'anthropic', 'gemini', 'grok'].includes(account.platform)) {
+    if (account && ['openai', 'anthropic', 'gemini', 'grok', 'kimi', 'zhipu', 'deepseek'].includes(account.platform)) {
       selectProvider(account.platform as Provider)
       if (account.platform === PROVIDER_OPENAI) form.api_mode = API_MODE_RESPONSES
     }
@@ -465,7 +492,7 @@ async function loadMonitorAccounts() {
   try {
     const response = await accountsAPI.list(1, 100, { status: 'active' })
     monitorAccounts.value = response.items.filter((account) =>
-      ['openai', 'anthropic', 'gemini', 'grok'].includes(account.platform),
+      ['openai', 'anthropic', 'gemini', 'grok', 'kimi', 'zhipu', 'deepseek'].includes(account.platform),
     )
   } catch (err: unknown) {
     appStore.showError(extractApiErrorMessage(err, t('common.error')))
@@ -742,8 +769,6 @@ function selectProvider(provider: Provider) {
     previousProvider === PROVIDER_GROK && form.endpoint === DEFAULT_GROK_ENDPOINT
   const clearGrokModel =
     previousProvider === PROVIDER_GROK && form.primary_model === DEFAULT_GROK_MODEL
-  const clearPrevDefaultEndpoint =
-    !!PROVIDER_DEFAULT_ENDPOINTS[previousProvider] && form.endpoint === PROVIDER_DEFAULT_ENDPOINTS[previousProvider]
   form.provider = provider
   // 关联账号与平台绑定：切换 provider 时显式清空（这是唯一主动清空的入口）。
   form.account_id = null
@@ -795,6 +820,7 @@ function resetForm() {
   form.provider = PROVIDER_OPENAI
   form.api_mode = API_MODE_CHAT_COMPLETIONS
   form.source_type = 'external'
+  form.check_mode = CHECK_MODE_PROBE
   form.account_id = null
   form.endpoint = ''
   form.api_key = ''
@@ -818,6 +844,7 @@ function loadFromMonitor(m: ChannelMonitor) {
   form.provider = m.provider
   form.api_mode = normalizeAPIMode(m.api_mode)
   form.source_type = m.source_type === 'account' ? 'account' : 'external'
+  form.check_mode = m.check_mode || CHECK_MODE_PROBE
   form.account_id = m.account_id ?? null
   form.endpoint = m.endpoint
   form.api_key = ''
@@ -907,12 +934,14 @@ function buildPayload(): CreateParams {
     name: form.name.trim(),
     provider: form.provider,
     api_mode: form.provider === PROVIDER_OPENAI ? form.api_mode : API_MODE_CHAT_COMPLETIONS,
-    endpoint: form.source_type === 'external' ? form.endpoint.trim() : '',
-    account_id: form.source_type === 'account' ? form.account_id : undefined,
-    api_key_id: form.source_type === 'external' ? selectedMyKey.value?.id : undefined,
-    api_key: form.source_type === 'external' ? form.api_key.trim() : '',
-    primary_model: form.primary_model.trim(),
-    extra_models: form.extra_models,
+    source_type: form.source_type,
+    check_mode: form.check_mode,
+    account_id: usesQuotaMode.value || form.source_type === 'account' ? form.account_id : null,
+    endpoint: usesProbePart.value && form.source_type === 'external' ? form.endpoint.trim() : '',
+    api_key_id: usesProbePart.value && form.source_type === 'external' ? selectedMyKey.value?.id : undefined,
+    api_key: usesProbePart.value && form.source_type === 'external' ? form.api_key.trim() : '',
+    primary_model: usesProbePart.value ? form.primary_model.trim() : 'quota',
+    extra_models: usesProbePart.value ? form.extra_models : [],
     group_name: form.group_name.trim(),
     enabled: form.enabled,
     interval_seconds: form.interval_seconds,
@@ -942,7 +971,7 @@ async function handleSubmit() {
     appStore.showError(t('admin.channelMonitor.form.accountRequired'))
     return
   }
-  if (form.source_type === 'external' && !validateEndpointForSubmit()) {
+  if (usesProbePart.value && form.source_type === 'external' && !validateEndpointForSubmit()) {
     appStore.showError(t('admin.channelMonitor.form.endpointHTTPSRequired'))
     return
   }

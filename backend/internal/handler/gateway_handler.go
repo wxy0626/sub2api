@@ -1169,8 +1169,9 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 	availableModels := h.gatewayService.GetAvailableModels(c.Request.Context(), groupID, platform)
 	if apiKey != nil && apiKey.Group != nil && apiKey.Group.CustomModelsListEnabled() {
 		fallbackModels := defaultModelIDsForPlatform(platform)
-		if availableModels != nil {
-			// 非 nil 表示服务层已确认账号模型目录，即使为空也不能补回静态模型。
+		if availableModels != nil && platform != service.PlatformAnthropic {
+			// 除 Anthropic 外，非 nil 表示服务层已确认账号模型目录，即使为空也不能补回静态模型。
+			// Anthropic 的 OAuth 账号依赖静态 Claude 目录，需与账号映射模型合并。
 			fallbackModels = nil
 		}
 		availableModels = filterModelsByCustomList(customModelsListSource(platform, availableModels, fallbackModels), fallbackModels, apiKey.Group.ModelsListConfig.Models)

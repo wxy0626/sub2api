@@ -29,11 +29,12 @@ func TestNormalizeOpenAIResponsesCompactRequest_RemoteV2PreservesNativeResponses
 		name       string
 		betaHeader string
 		userAgent  string
+		wantNative bool
 	}{
 		{name: "headerless"},
 		{name: "unrelated_header", betaHeader: "responses_websockets_v2"},
-		{name: "wrong_case_header", betaHeader: "REMOTE_COMPACTION_V2"},
-		{name: "declared_header", betaHeader: "remote_compaction_v2"},
+		{name: "wrong_case_header", betaHeader: "REMOTE_COMPACTION_V2", wantNative: true},
+		{name: "declared_header", betaHeader: "remote_compaction_v2", wantNative: true},
 		{name: "codex_cli_user_agent", userAgent: "codex_cli_rs/0.144.1 (Ubuntu 22.4.0; x86_64) xterm-256color"},
 		{name: "codex_desktop_user_agent", userAgent: "Codex Desktop/0.139.0 (Mac OS X 14; arm64) unknown"},
 	}
@@ -61,9 +62,25 @@ func TestNormalizeOpenAIResponsesCompactRequest_RemoteV2PreservesNativeResponses
 
 			normalized, ok := h.normalizeOpenAIResponsesCompactRequest(c, zap.NewNop(), body)
 			require.True(t, ok)
+			require.True(t, gjson.GetBytes(normalized, "input.#(type==\"compaction_trigger\")").Exists())
 
-	_, streamMarkerExists := c.Get(service.OpenAICompactClientStreamKeyForTest())
-	require.False(t, streamMarkerExists)
+			if tt.wantNative {
+				require.Equal(t, "/v1/responses", c.Request.URL.Path)
+				require.False(t, isOpenAILegacyCompactPath(c))
+				require.True(t, gjson.GetBytes(normalized, "stream").Bool())
+				require.True(t, gjson.GetBytes(normalized, "store").Bool())
+				require.Equal(t, "pck-signal-1", gjson.GetBytes(normalized, "prompt_cache_key").String())
+				require.Equal(t, "max", gjson.GetBytes(normalized, "reasoning.effort").String())
+			} else {
+				require.Equal(t, "/v1/responses/compact", c.Request.URL.Path)
+				require.True(t, isOpenAILegacyCompactPath(c))
+				require.False(t, gjson.GetBytes(normalized, "stream").Exists())
+			}
+
+			_, streamMarkerExists := c.Get(service.OpenAICompactClientStreamKeyForTest())
+			require.Equal(t, !tt.wantNative, streamMarkerExists)
+		})
+	}
 }
 
 func TestNormalizeOpenAIResponsesCompactRequest_RemoteV2PathAliasesPreserveNativeResponsesWire(t *testing.T) {
@@ -84,7 +101,6 @@ func TestNormalizeOpenAIResponsesCompactRequest_RemoteV2PathAliasesPreserveNativ
 			normalized, ok := h.normalizeOpenAIResponsesCompactRequest(c, zap.NewNop(), body)
 			require.True(t, ok)
 			require.Equal(t, tt.want, c.Request.URL.Path)
-			require.Equal(t, body, normalized)
 			require.True(t, gjson.GetBytes(normalized, "stream").Bool())
 		})
 	}
@@ -112,7 +128,6 @@ func TestNormalizeOpenAIResponsesCompactRequest_RemoteV2ImageHistoryPreservesNat
 	normalized, ok := h.normalizeOpenAIResponsesCompactRequest(c, zap.NewNop(), body)
 	require.True(t, ok)
 	require.Equal(t, "/v1/responses", c.Request.URL.Path)
-	require.Equal(t, body, normalized)
 	require.True(t, gjson.GetBytes(normalized, "input.#(type==\"compaction_trigger\")").Exists())
 	require.True(t, gjson.GetBytes(normalized, "input.0.content.#(type==\"input_image\")").Exists())
 	require.True(t, gjson.GetBytes(normalized, "stream").Bool())

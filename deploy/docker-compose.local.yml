@@ -214,8 +214,9 @@ services:
         soft: 100000
         hard: 100000
     volumes:
-      # PostgreSQL 18 升级后使用独立数据目录，保留原 PostgreSQL 15 数据用于回滚。
-      - ./postgres_data_pg18:/var/lib/postgresql/data:Z
+      # 2026-08-17 迁移：bind mount 经 WSL 9P 层写入不可靠，多次导致 WAL 损坏；
+      # 改用 Docker named volume（WSL ext4 原生块设备），引擎重启不再损坏数据。
+      - sub2api-pgdata:/var/lib/postgresql/data
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-sub2api}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
@@ -277,3 +278,10 @@ services:
 networks:
   sub2api-network:
     driver: bridge
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  sub2api-pgdata:
+    name: sub2api-pgdata

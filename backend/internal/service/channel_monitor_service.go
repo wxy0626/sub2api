@@ -80,6 +80,8 @@ type ChannelMonitorService struct {
 	scheduler MonitorScheduler
 	// accountTester 在账号来源监控执行时复用已有账号的原生测试链路。
 	accountTester ChannelMonitorAccountTester
+	// quotaFetcher 提供 1.178 配额模式的账号额度快照。
+	quotaFetcher *ChannelMonitorQuotaFetcher
 }
 
 const maxChannelMonitorNameRunes = 100
@@ -174,6 +176,7 @@ func (s *ChannelMonitorService) Create(ctx context.Context, p ChannelMonitorCrea
 	if err := validateExtraHeaders(p.ExtraHeaders); err != nil {
 		return nil, err
 	}
+	checkMode := defaultCheckMode(p.CheckMode)
 	apiKeyForStorage := strings.TrimSpace(p.APIKey)
 	if p.AccountID != nil {
 		apiKeyForStorage = channelMonitorAccountAPIKeyMarker
@@ -202,7 +205,6 @@ func (s *ChannelMonitorService) Create(ctx context.Context, p ChannelMonitorCrea
 		BodyOverrideMode: defaultBodyMode(p.BodyOverrideMode),
 		BodyOverride:     p.BodyOverride,
 		CheckMode:        checkMode,
-		AccountID:        cloneInt64Pointer(p.AccountID),
 	}
 	if err := s.repo.Create(ctx, m); err != nil {
 		return nil, fmt.Errorf("create channel monitor: %w", err)
@@ -407,20 +409,20 @@ func validateCreateParams(p ChannelMonitorCreateParams) error {
 	if err := validateJitter(p.JitterSeconds, p.IntervalSeconds); err != nil {
 		return err
 	}
-	if normalizeMonitorPrimaryModel(p.Provider, p.PrimaryModel) == "" {
-		return ErrChannelMonitorMissingPrimaryModel
-	}
-	if p.AccountID != nil {
-		if *p.AccountID <= 0 {
-			return ErrChannelMonitorInvalidAccount
+	usesQuota := monitorCheckModeUsesQuota(checkMode)
+	if checkMode != MonitorCheckModeQuota {
+		if err := validateEndpoint(p.Endpoint); err != nil {
+			return err
 		}
-		return nil
-	}
-	if err := validateEndpoint(p.Endpoint); err != nil {
-		return err
+		if strings.TrimSpace(p.APIKey) == "" && p.AccountID == nil {
+			return ErrChannelMonitorMissingAPIKey
+		}
 	}
 	if usesQuota && (p.AccountID == nil || *p.AccountID <= 0) {
 		return ErrChannelMonitorAccountRequired
+	}
+	if normalizeMonitorPrimaryModel(p.Provider, checkMode, p.PrimaryModel) == "" {
+		return ErrChannelMonitorMissingPrimaryModel
 	}
 	return nil
 }
@@ -612,15 +614,8 @@ func (s *ChannelMonitorService) RunCheck(ctx context.Context, id int64) ([]*Chec
 	if err != nil {
 		return nil, err
 	}
-	if m.AccountID != nil {
-		results, runErr := s.runAccountChecks(ctx, m)
-		if runErr != nil {
-			return nil, runErr
-		}
-		s.persistCheckResults(ctx, m, results)
-		return results, nil
-	}
-	if m.APIKeyDecryptFailed {
+	checkMode := defaultCheckMode(m.CheckMode)
+	if checkMode != MonitorCheckModeQuota && m.APIKeyDecryptFailed {
 		return nil, ErrChannelMonitorAPIKeyDecryptFailed
 	}
 
@@ -665,6 +660,34 @@ func (s *ChannelMonitorService) runAccountChecks(ctx context.Context, m *Channel
 		results = append(results, &CheckResult{Model: model, Status: status, LatencyMs: &latencyMs, Message: message, CheckedAt: checkedAt})
 	}
 	return results, nil
+}
+
+// runQuotaOnlyCheck quota 模式只抓取一次关联账号快照。
+func (s *ChannelMonitorService) runQuotaOnlyCheck(ctx context.Context, m *ChannelMonitor) []*CheckResult {
+	snapshot := s.fetchQuotaSnapshot(ctx, m)
+	result := deriveQuotaCheckResult(snapshot, m.PrimaryModel, time.Now())
+	result.Quota = snapshot
+	return []*CheckResult{result}
+}
+
+func (s *ChannelMonitorService) fetchQuotaSnapshot(ctx context.Context, m *ChannelMonitor) *domain.MonitorQuotaSnapshot {
+	if m.AccountID == nil {
+		return quotaErrorSnapshot("usage", "linked account not found", time.Now())
+	}
+	if s.quotaFetcher == nil {
+		return quotaErrorSnapshot("usage", "quota fetcher is not configured", time.Now())
+	}
+	return s.quotaFetcher.Fetch(ctx, *m.AccountID)
+}
+
+func attachQuotaSnapshot(results []*CheckResult, snapshot *domain.MonitorQuotaSnapshot) {
+	if len(results) == 0 || snapshot == nil {
+		return
+	}
+	results[0].Quota = snapshot
+	if !snapshot.Success && strings.TrimSpace(results[0].Message) == "" {
+		results[0].Message = truncateMessage("quota fetch failed: " + snapshot.Error)
+	}
 }
 
 // persistCheckResults 写入本次检测的历史记录并更新 last_checked_at。
@@ -919,7 +942,7 @@ func applyMonitorUpdate(existing *ChannelMonitor, p ChannelMonitorUpdateParams) 
 		if err := validateEndpoint(*p.Endpoint); err != nil {
 			return err
 		}
-		existing.CheckMode = mode
+		existing.Endpoint = normalizeEndpoint(*p.Endpoint)
 	}
 	if p.AccountID != nil {
 		if *p.AccountID > 0 {

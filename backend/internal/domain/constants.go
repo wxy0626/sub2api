@@ -23,8 +23,26 @@ const (
 	PlatformGemini      = "gemini"
 	PlatformAntigravity = "antigravity"
 	PlatformGrok        = "grok"
-	PlatformDeepSeek    = "deepseek"
-	PlatformComposite   = "composite"
+	// 国产 OpenAI 兼容供应商。
+	PlatformKimi     = "kimi"
+	PlatformZhipu    = "zhipu"
+	PlatformDeepseek = "deepseek"
+	// PlatformDeepSeek 保留为旧代码兼容别名。
+	PlatformDeepSeek  = PlatformDeepseek
+	PlatformComposite = "composite"
+)
+
+// Account mode constants for Chinese model providers.
+const (
+	AccountModePayG   = "payg"
+	AccountModeCoding = "coding"
+)
+
+// API protocol constants for Chinese model providers.
+const (
+	APIProtocolChatCompletions = "chat_completions"
+	APIProtocolAnthropic       = "anthropic"
+	APIProtocolResponses       = "responses"
 )
 
 // Account type constants

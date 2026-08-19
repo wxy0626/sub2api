@@ -120,6 +120,20 @@ func (s *CNProviderQuotaService) queryUsage(ctx context.Context, accountID int64
 		return nil, err
 	}
 
+	// 先校验由账号 base_url 派生的出站地址，确保策略拒绝优先于
+	// Coding Plan 供应商识别错误，且被拒绝时 API Key 不会出站。
+	if account.Platform == PlatformKimi || account.Platform == PlatformZhipu {
+		var probeURL string
+		if account.Platform == PlatformKimi {
+			probeURL = kimiQuotaURL(account.GetOpenAIBaseURL())
+		} else {
+			probeURL = zhipuQuotaURL(account.GetOpenAIBaseURL())
+		}
+		if _, validateErr := cnValidateProbeURL(s.cfg, probeURL); validateErr != nil {
+			return nil, infraerrors.New(http.StatusForbidden, "CN_QUOTA_URL_REJECTED", validateErr.Error())
+		}
+	}
+
 	provider := account.GetCodingPlanProvider()
 	if provider != PlatformKimi && provider != PlatformZhipu {
 		return nil, infraerrors.New(http.StatusBadRequest, "CN_QUOTA_NOT_CODING_PLAN", "account is not a kimi/zhipu coding plan account")

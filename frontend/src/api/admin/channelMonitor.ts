@@ -17,6 +17,36 @@ export type Provider =
 export type MonitorStatus = 'operational' | 'degraded' | 'failed' | 'error'
 export type BodyOverrideMode = 'off' | 'merge' | 'replace'
 export type APIMode = 'chat_completions' | 'responses'
+/** probe = LLM 探活；quota = 仅查关联账号用量；quota_probe = 探活并附带配额快照。 */
+export type CheckMode = 'probe' | 'quota' | 'quota_probe'
+
+export interface MonitorQuotaTier {
+  window: string
+  label?: string
+  used_percent: number
+  used?: number
+  limit?: number
+  reset_at?: string
+}
+
+export interface MonitorBalance {
+  currency: string
+  balance: number
+}
+
+export interface MonitorQuotaSnapshot {
+  source: string
+  success: boolean
+  tiers?: MonitorQuotaTier[]
+  balance?: number | null
+  balances?: MonitorBalance[]
+  currency?: string
+  plan_level?: string
+  credential_invalid?: boolean
+  error?: string
+  fetched_at: string
+}
+
 export type MonitorSourceType = 'external' | 'account'
 
 export interface ChannelMonitor {
@@ -66,7 +96,6 @@ export interface ChannelMonitor {
   /** 检测模式：probe（默认）/ quota / quota_probe */
   check_mode: CheckMode
   /** 配额模式关联的账号 ID；探活模式为 null */
-  account_id: number | null
   /** 主模型最近一次配额快照（配额模式；无历史时为 null） */
   latest_quota?: MonitorQuotaSnapshot | null
 }
@@ -99,6 +128,7 @@ export interface CreateParams {
   api_mode?: APIMode
   /** 探活模式必填（base origin）；quota 模式可留空 */
   endpoint: string
+  source_type?: MonitorSourceType
   account_id?: number | null
   /** 通过“使用我的 Key”选择的 API Key ID，仅用于编辑界面展示。 */
   api_key_id?: number | null
@@ -106,7 +136,6 @@ export interface CreateParams {
   /** 缺省 probe；antigravity 仅支持 quota */
   check_mode?: CheckMode
   /** 配额模式必填：数据源账号（provider 需与账号平台一致） */
-  account_id?: number | null
   primary_model: string
   extra_models?: string[]
   group_name?: string
