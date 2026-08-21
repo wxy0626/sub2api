@@ -4423,7 +4423,6 @@ import type {
   SubscriptionType,
 } from "@/types";
 import {
-  CONCRETE_PLATFORM_OPTIONS,
   GROUP_PLATFORM_OPTIONS,
 } from "@/constants/platforms";
 import type { Column } from "@/components/common/types";

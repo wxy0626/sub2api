@@ -34,7 +34,6 @@
             v-model="editBaseUrl"
             type="text"
             class="input"
-            data-testid="account-base-url-input"
             :placeholder="
               account.platform === 'openai'
                 ? 'https://api.openai.com'
@@ -44,8 +43,6 @@
                     ? 'https://cloudcode-pa.googleapis.com'
                     : account.platform === 'grok'
                       ? 'https://api.x.ai/v1'
-                      : account.platform === 'deepseek'
-                        ? 'https://api.deepseek.com'
                       : 'https://api.anthropic.com'
             "
           />
@@ -123,94 +120,26 @@
         </div>
         <div>
           <label class="input-label">{{ t('admin.accounts.apiKey') }}</label>
-          <div class="relative">
-            <input
-              v-model="editApiKey"
-              :type="apiKeyVisible ? 'text' : 'password'"
-              class="input w-full pr-10 font-mono"
-              data-testid="account-api-key-input"
-              autocomplete="new-password"
-              data-1p-ignore
-              data-lpignore="true"
-              data-bwignore="true"
-              :placeholder="
-                account.platform === 'openai'
-                  ? 'sk-proj-...'
-                  : account.platform === 'gemini'
-                    ? 'AIza...'
-                    : account.platform === 'antigravity'
-                      ? 'sk-...'
-                      : account.platform === 'grok'
-                        ? 'xai-...'
-                        : account.platform === 'deepseek'
-                          ? 'sk-...'
-                        : 'sk-ant-...'
-              "
-            />
-            <button
-              type="button"
-              class="absolute inset-y-0 right-0 flex items-center px-3 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
-              :aria-label="apiKeyVisible ? t('admin.accounts.hideApiKey') : t('admin.accounts.showApiKey')"
-              :title="apiKeyVisible ? t('admin.accounts.hideApiKey') : t('admin.accounts.showApiKey')"
-              :disabled="apiKeyLoading"
-              @click="toggleApiKeyVisibility"
-            >
-              <svg
-                v-if="apiKeyLoading"
-                class="h-4 w-4 animate-spin"
-                fill="none"
-                viewBox="0 0 24 24"
-              >
-                <circle
-                  class="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  stroke-width="4"
-                />
-                <path
-                  class="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                />
-              </svg>
-              <svg
-                v-else-if="apiKeyVisible"
-                class="h-4 w-4"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"
-                />
-              </svg>
-              <svg
-                v-else
-                class="h-4 w-4"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-                />
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
-                />
-              </svg>
-            </button>
-          </div>
+          <input
+            v-model="editApiKey"
+            type="password"
+            class="input font-mono"
+            autocomplete="new-password"
+            data-1p-ignore
+            data-lpignore="true"
+            data-bwignore="true"
+            :placeholder="
+              account.platform === 'openai'
+                ? 'sk-proj-...'
+                : account.platform === 'gemini'
+                  ? 'AIza...'
+                  : account.platform === 'antigravity'
+                    ? 'sk-...'
+                    : account.platform === 'grok'
+                      ? 'xai-...'
+                      : 'sk-ant-...'
+            "
+          />
           <p class="input-hint">{{ t('admin.accounts.leaveEmptyToKeep') }}</p>
         </div>
 
@@ -284,7 +213,7 @@
 
             <!-- Whitelist Mode -->
             <div v-if="modelRestrictionMode === 'whitelist'">
-              <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" :account-type="account?.type" :sync-credentials="editSyncPreviewCredentials" />
+              <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" />
               <p class="text-xs text-gray-500 dark:text-gray-400">
                 {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
                 <span v-if="allowedModels.length === 0 && modelMappings.length === 0">{{
@@ -713,7 +642,7 @@
 
           <!-- Whitelist Mode -->
           <div v-if="modelRestrictionMode === 'whitelist'">
-            <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" :account-type="account?.type" :sync-credentials="editSyncPreviewCredentials" />
+            <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" />
             <p class="text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
               <span v-if="allowedModels.length === 0 && modelMappings.length === 0">{{
@@ -816,77 +745,12 @@
         </div>
         <div>
           <label class="input-label">{{ t('admin.accounts.upstream.apiKey') }}</label>
-          <div class="relative">
-            <input
-              v-model="editApiKey"
-              :type="apiKeyVisible ? 'text' : 'password'"
-              class="input w-full pr-10 font-mono"
-              placeholder="sk-..."
-            />
-            <button
-              type="button"
-              class="absolute inset-y-0 right-0 flex items-center px-3 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
-              :aria-label="apiKeyVisible ? t('admin.accounts.hideApiKey') : t('admin.accounts.showApiKey')"
-              :title="apiKeyVisible ? t('admin.accounts.hideApiKey') : t('admin.accounts.showApiKey')"
-              :disabled="apiKeyLoading"
-              @click="toggleApiKeyVisibility"
-            >
-              <svg
-                v-if="apiKeyLoading"
-                class="h-4 w-4 animate-spin"
-                fill="none"
-                viewBox="0 0 24 24"
-              >
-                <circle
-                  class="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  stroke-width="4"
-                />
-                <path
-                  class="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                />
-              </svg>
-              <svg
-                v-else-if="apiKeyVisible"
-                class="h-4 w-4"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"
-                />
-              </svg>
-              <svg
-                v-else
-                class="h-4 w-4"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-                />
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
-                />
-              </svg>
-            </button>
-          </div>
+          <input
+            v-model="editApiKey"
+            type="password"
+            class="input font-mono"
+            placeholder="sk-..."
+          />
           <p class="input-hint">{{ t('admin.accounts.leaveEmptyToKeep') }}</p>
         </div>
       </div>
@@ -990,7 +854,7 @@
 
           <!-- Whitelist Mode -->
           <div v-if="modelRestrictionMode === 'whitelist'">
-            <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" :account-type="account?.type" :sync-credentials="editSyncPreviewCredentials" />
+            <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" />
             <p class="text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
               <span v-if="allowedModels.length === 0 && modelMappings.length === 0">{{
@@ -2908,9 +2772,6 @@
     @confirm="handleMixedChannelConfirm"
     @cancel="handleMixedChannelCancel"
   />
-
-  <!-- Step-up 2FA 弹窗：查看明文 API Key 时可能触发 TOTP 验证 -->
-  <TotpStepUpDialog :controller="apiKeyStepUp" />
 </template>
 
 <script setup lang="ts">
@@ -2920,7 +2781,6 @@ import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { adminAPI } from '@/api/admin'
 import { useQuotaNotifyState } from '@/composables/useQuotaNotifyState'
-import { useStepUp, isStepUpCancelled, isStepUpBlocked, stepUpBlockReason } from '@/composables/useStepUp'
 import type {
   Account,
   Proxy,
@@ -2945,7 +2805,6 @@ import GrokBaseUrlPresets from '@/components/account/GrokBaseUrlPresets.vue'
 import CnBaseUrlPresets from '@/components/account/CnBaseUrlPresets.vue'
 import HeaderOverrideEditor from '@/components/account/HeaderOverrideEditor.vue'
 import OllamaCloudUsageSettings from '@/components/account/OllamaCloudUsageSettings.vue'
-import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 import {
   applyAntigravityProjectID,
   applyHeaderOverride,
@@ -2984,7 +2843,6 @@ import {
   getPresetMappingsByPlatform,
   commonErrorCodes,
   buildModelMappingObject,
-  getDefaultModelWhitelist,
   splitModelMappingObject,
   isValidWildcardPattern
 } from '@/composables/useModelWhitelist'
@@ -3024,7 +2882,6 @@ const baseUrlHint = computed(() => {
   if (props.account.platform === 'openai') return t('admin.accounts.openai.baseUrlHint')
   if (props.account.platform === 'gemini') return t('admin.accounts.gemini.baseUrlHint')
   if (props.account.platform === 'grok') return ''
-  if (props.account.platform === 'deepseek') return t('admin.accounts.deepseek.baseUrlHint')
   return t('admin.accounts.baseUrlHint')
 })
 
@@ -3048,78 +2905,119 @@ interface TempUnschedRuleForm {
 const submitting = ref(false)
 const editBaseUrl = ref('https://api.anthropic.com')
 const editApiKey = ref('')
-const API_KEY_MASK = '••••••••••••••••'
-const apiKeyVisible = ref(false)
-const apiKeyRevealed = ref(false)
-const apiKeyLoading = ref(false)
-const apiKeyOriginalValue = ref('')
 
-// 国产供应商账号的模式与协议可在编辑时修正，并同步对应默认端点。
-const isCNApiKeyAccount = computed(() =>
-  props.account?.type === 'apikey' &&
-  (props.account.platform === 'kimi' || props.account.platform === 'zhipu' || props.account.platform === 'deepseek'),
+// ── 国产供应商（Kimi / Zhipu / DeepSeek）account_mode / api_protocol 编辑 ──
+// account_mode 决定额度/余额监控路径，api_protocol 决定转发端点与格式；
+// 二者均可修正（早期创建的账号可能存错默认值），切换时重置 base_url 预置。
+const isCNApiKeyAccount = computed(
+  () =>
+    props.account?.type === 'apikey' &&
+    (props.account.platform === 'kimi' ||
+      props.account.platform === 'zhipu' ||
+      props.account.platform === 'deepseek')
 )
+// CnBaseUrlPresets 的 platform prop 是平台字面量联合类型，模板里不能写
+// `as` 断言（其中的 `|` 会被 eslint 误判为 Vue2 filter 语法），经此 computed 传递。
 const cnPresetPlatform = computed<'kimi' | 'zhipu' | 'deepseek'>(() => {
   const platform = props.account?.platform
-  return platform === 'kimi' || platform === 'zhipu' || platform === 'deepseek' ? platform : 'kimi'
+  if (platform === 'kimi' || platform === 'zhipu' || platform === 'deepseek') {
+    return platform
+  }
+  return 'kimi'
 })
 const editApiProtocol = ref<CnApiProtocol>('adaptive')
 const editAccountMode = ref<CnAccountMode>('payg')
+const editAdaptiveBaseUrls = ref<Record<CnNativeApiProtocol, string>>({
+  chat_completions: '',
+  anthropic: '',
+  responses: ''
+})
+// 回填窗口标志：syncFormFromAccount 会同步改写 editAccountMode / editApiProtocol，
+// 而 watcher（pre-flush）在同步代码执行完之后才触发——若不抑制，会把刚恢复的
+// 存储版 base_url（可能是用户自定义/中转地址）覆盖为官方预设并在下次保存时持久化。
+// nextTick 后解除，此后用户主动切换模式/协议仍正常联动重置。
 const syncingForm = ref(false)
-const cnAccountModeOptions = computed<Array<{ value: CnAccountMode; labelKey: 'payg' | 'coding' }>>(() =>
-  props.account?.platform === 'deepseek'
-    ? [{ value: 'payg', labelKey: 'payg' }]
-    : [{ value: 'payg', labelKey: 'payg' }, { value: 'coding', labelKey: 'coding' }],
+const cnAccountModeOptions = computed<Array<{ value: CnAccountMode; labelKey: 'payg' | 'coding' }>>(
+  () => {
+    // DeepSeek 无 coding 套餐（与创建弹窗一致），仅保留按量付费。
+    if (props.account?.platform === 'deepseek') {
+      return [{ value: 'payg', labelKey: 'payg' }]
+    }
+    return [
+      { value: 'payg', labelKey: 'payg' },
+      { value: 'coding', labelKey: 'coding' }
+    ]
+  }
 )
 const cnProtocolOptions = computed<Array<{ value: CnApiProtocol; labelKey: string }>>(() => {
-  const options: Array<{ value: CnApiProtocol; labelKey: string }> = [
+  const opts: Array<{ value: CnApiProtocol; labelKey: string }> = [
+    { value: 'adaptive', labelKey: 'adaptive' },
     { value: 'chat_completions', labelKey: 'chatCompletions' },
-    { value: 'anthropic', labelKey: 'anthropic' },
+    { value: 'anthropic', labelKey: 'anthropic' }
   ]
-  if (props.account?.platform === 'deepseek') options.push({ value: 'responses', labelKey: 'responses' })
-  return options
+  if (props.account?.platform === 'deepseek') {
+    opts.push({ value: 'responses', labelKey: 'responses' })
+  }
+  return opts
 })
-watch(editApiProtocol, (protocol) => {
-  if (!isCNApiKeyAccount.value || syncingForm.value || !props.account) return
-  editBaseUrl.value = defaultCNBaseUrl(props.account.platform, editAccountMode.value, protocol)
+const editAdaptiveProtocolOptions = computed<Array<{ value: CnNativeApiProtocol; labelKey: string }>>(() => {
+  const opts: Array<{ value: CnNativeApiProtocol; labelKey: string }> = [
+    { value: 'chat_completions', labelKey: 'chatCompletions' },
+    { value: 'anthropic', labelKey: 'anthropic' }
+  ]
+  if (props.account?.platform === 'deepseek') opts.push({ value: 'responses', labelKey: 'responses' })
+  return opts
 })
-watch(editAccountMode, (mode) => {
-  if (!isCNApiKeyAccount.value || syncingForm.value || !props.account) return
-  const effectiveMode = props.account.platform === 'deepseek' ? 'payg' : mode
+watch(editApiProtocol, (protocol, previousProtocol) => {
+  if (!isCNApiKeyAccount.value || syncingForm.value) return
+  if (protocol === 'adaptive') {
+    const defaults = defaultCNAdaptiveBaseUrls(cnPresetPlatform.value, editAccountMode.value)
+    for (const item of editAdaptiveProtocolOptions.value) {
+      if (!editAdaptiveBaseUrls.value[item.value]) editAdaptiveBaseUrls.value[item.value] = defaults[item.value]
+    }
+    if (previousProtocol !== 'adaptive' && editBaseUrl.value.trim()) {
+      editAdaptiveBaseUrls.value[previousProtocol] = editBaseUrl.value.trim()
+    }
+    editBaseUrl.value = editAdaptiveBaseUrls.value.chat_completions
+    return
+  }
+  if (previousProtocol === 'adaptive') {
+    editBaseUrl.value = editAdaptiveBaseUrls.value[protocol] ||
+      defaultCNBaseUrl(props.account!.platform, editAccountMode.value, protocol)
+    return
+  }
+  editBaseUrl.value = defaultCNBaseUrl(props.account!.platform, editAccountMode.value, protocol)
+})
+watch(editAccountMode, (mode, previousMode) => {
+  if (!isCNApiKeyAccount.value || syncingForm.value) return
+  // deepseek 无 coding 套餐：防御性回退（UI 已隐藏该选项）。
+  const effectiveMode = props.account!.platform === 'deepseek' && mode === 'coding' ? 'payg' : mode
   if (effectiveMode !== mode) {
     editAccountMode.value = effectiveMode
     return
   }
-  editBaseUrl.value = defaultCNBaseUrl(props.account.platform, mode, editApiProtocol.value)
+  if (editApiProtocol.value === 'adaptive') {
+    const previousDefaults = defaultCNAdaptiveBaseUrls(cnPresetPlatform.value, previousMode)
+    const nextDefaults = defaultCNAdaptiveBaseUrls(cnPresetPlatform.value, mode)
+    for (const item of editAdaptiveProtocolOptions.value) {
+      if (!editAdaptiveBaseUrls.value[item.value] || editAdaptiveBaseUrls.value[item.value] === previousDefaults[item.value]) {
+        editAdaptiveBaseUrls.value[item.value] = nextDefaults[item.value]
+      }
+    }
+    editBaseUrl.value = editAdaptiveBaseUrls.value.chat_completions
+    return
+  }
+  editBaseUrl.value = defaultCNBaseUrl(props.account!.platform, mode, editApiProtocol.value)
 })
 const cnProtocolDescKey = computed(
-  () => cnProtocolOptions.value.find((option) => option.value === editApiProtocol.value)?.labelKey ?? 'chatCompletions',
+  () => cnProtocolOptions.value.find(o => o.value === editApiProtocol.value)?.labelKey ?? 'chatCompletions'
 )
+// 点击预设端点：回填 base url 与对应模式/协议。
 function onCnPresetSelect(preset: { mode: CnAccountMode; protocol: CnApiProtocol; url: string }) {
   editAccountMode.value = preset.mode
   editApiProtocol.value = preset.protocol
   editBaseUrl.value = preset.url
 }
-
-// 查看明文 API Key 属于敏感读取，需要 step-up 2FA 验证（后端路由已用 stepUpAuth 保护）。
-const apiKeyStepUp = useStepUp()
-
-// editSyncPreviewCredentials 携带表单内（尚未保存的）API Key / Base URL，
-// 供“同步上游支持的模型”在编辑时直接使用新凭据，无需先保存、关闭再重新打开。
-// 仅当用户实际输入了新的 API Key 时才携带覆盖凭据：OAuth 账号没有可输入的 Key，
-// 会回退到已保存账号（避免用默认 Base URL 误覆盖 OAuth 账号的转发端点）。
-const editSyncPreviewCredentials = computed(() => {
-  const key = editApiKey.value.trim()
-  // 未输入新 key，或输入框仍显示掩码占位符时，不携带 api_key 覆盖项，
-  // 否则会把掩码字符串当成真实 key 发给上游，导致 401 身份验证失败。
-  if (!key || key === API_KEY_MASK) return undefined
-  return {
-    platform: props.account?.platform || 'anthropic',
-    type: props.account?.type || 'apikey',
-    base_url: editBaseUrl.value.trim() || undefined,
-    api_key: key
-  }
-})
 // Bedrock credentials
 const editBedrockAccessKeyId = ref('')
 const editBedrockSecretAccessKey = ref('')
@@ -3515,10 +3413,6 @@ const openAIResponsesStatusKey = computed(() => {
 const openAICompactStatusKey = computed(() => {
   const extra = props.account?.extra as Record<string, unknown> | undefined
   if (!props.account || props.account.platform !== 'openai') return ''
-  // Compact 属于 Responses 能力，已确认不支持时优先显示能力状态。
-  if (extra?.openai_responses_supported === false) {
-    return 'admin.accounts.openai.compactResponsesUnsupported'
-  }
   const mode = typeof extra?.openai_compact_mode === 'string' ? extra.openai_compact_mode : 'auto'
   if (mode === 'force_on') return 'admin.accounts.openai.compactSupported'
   if (mode === 'force_off') return 'admin.accounts.openai.compactUnsupported'
@@ -3567,7 +3461,15 @@ const defaultBaseUrl = computed(() => {
   if (props.account?.platform === 'openai') return 'https://api.openai.com'
   if (props.account?.platform === 'gemini') return 'https://generativelanguage.googleapis.com'
   if (props.account?.platform === 'grok') return 'https://api.x.ai/v1'
-  if (props.account?.platform === 'deepseek') return 'https://api.deepseek.com'
+  // CN 供应商：按当前模式/协议回落到官方预设（清空输入框提交时使用），
+  // 不能落到 anthropic 默认值（会被当 CC base 拼出错误端点）。
+  if (
+    props.account?.platform === 'kimi' ||
+    props.account?.platform === 'zhipu' ||
+    props.account?.platform === 'deepseek'
+  ) {
+    return defaultCNBaseUrl(props.account.platform, editAccountMode.value, editApiProtocol.value)
+  }
   return 'https://api.anthropic.com'
 })
 
@@ -3582,7 +3484,7 @@ const form = reactive({
   name: '',
   notes: '',
   proxy_id: null as number | null,
-  concurrency: 5,
+  concurrency: 1,
   load_factor: null as number | null,
   priority: 1,
   rate_multiplier: 1,
@@ -3638,12 +3540,9 @@ const normalizePoolModeRetryCount = (value: number) => {
   return normalized
 }
 
-// loadModelRestrictionFromMapping 从账号映射恢复编辑状态；无 OpenAI 白名单时采用 GPT-5.6 与 GPT Image 2 默认集。
 const loadModelRestrictionFromMapping = (rawMapping?: Record<string, unknown>) => {
   const parsed = splitModelMappingObject(rawMapping)
-  allowedModels.value = parsed.allowedModels.length > 0 || parsed.modelMappings.length > 0
-    ? parsed.allowedModels
-    : getDefaultModelWhitelist(props.account?.platform || '')
+  allowedModels.value = parsed.allowedModels
   modelMappings.value = parsed.modelMappings
   modelRestrictionMode.value =
     parsed.modelMappings.length > 0 && parsed.allowedModels.length === 0
@@ -3693,8 +3592,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   form.name = newAccount.name
   form.notes = newAccount.notes || ''
   form.proxy_id = newAccount.proxy_id
-  // 编辑账号时统一以 5 作为并发初始值，保存后会覆盖旧的并发配置。
-  form.concurrency = 5
+  form.concurrency = newAccount.concurrency
   form.load_factor = newAccount.load_factor ?? null
   form.priority = newAccount.priority
   form.rate_multiplier = newAccount.rate_multiplier ?? 1
@@ -3981,10 +3879,14 @@ const syncFormFromAccount = (newAccount: Account | null) => {
           ? 'https://generativelanguage.googleapis.com'
           : newAccount.platform === 'grok'
             ? 'https://api.x.ai/v1'
-            : newAccount.platform === 'deepseek'
-              ? 'https://api.deepseek.com'
-            : 'https://api.anthropic.com'
-    editBaseUrl.value = (credentials.base_url as string) || platformDefaultUrl
+            : newAccount.platform === 'kimi' ||
+                newAccount.platform === 'zhipu' ||
+                newAccount.platform === 'deepseek'
+              ? defaultCNBaseUrl(newAccount.platform, editAccountMode.value, editApiProtocol.value)
+              : 'https://api.anthropic.com'
+    editBaseUrl.value = isCNApiKeyAccount.value && editApiProtocol.value === 'adaptive'
+      ? editAdaptiveBaseUrls.value.chat_completions
+      : (credentials.base_url as string) || platformDefaultUrl
 
     // Load model mappings and detect mode
     loadModelRestrictionFromMapping(credentials.model_mapping as Record<string, unknown> | undefined)
@@ -4054,8 +3956,6 @@ const syncFormFromAccount = (newAccount: Account | null) => {
           ? 'https://generativelanguage.googleapis.com'
           : newAccount.platform === 'grok'
             ? 'https://api.x.ai/v1'
-            : newAccount.platform === 'deepseek'
-              ? 'https://api.deepseek.com'
             : 'https://api.anthropic.com'
     editBaseUrl.value = platformDefaultUrl
 
@@ -4074,60 +3974,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     customErrorCodesEnabled.value = false
     selectedErrorCodes.value = []
   }
-
-  // 若账号已配置 api_key，编辑时显示掩码占位符；真实值需点击眼睛图标按需获取。
-  const hasApiKey =
-    newAccount.credentials_status?.has_api_key ??
-    Boolean((newAccount.credentials as Record<string, unknown>)?.api_key)
-  editApiKey.value = hasApiKey ? API_KEY_MASK : ''
-  apiKeyVisible.value = false
-  apiKeyRevealed.value = false
-  apiKeyOriginalValue.value = ''
-}
-
-async function toggleApiKeyVisibility() {
-  if (!props.account) return
-  // 在闭包外捕获 accountId，避免 TS 在异步回调里丢失 props.account 的非空收窄。
-  const accountId = props.account.id
-
-  // 已经揭示过真实值，只做显示/隐藏切换
-  if (apiKeyRevealed.value) {
-    apiKeyVisible.value = !apiKeyVisible.value
-    return
-  }
-
-  // 当前为掩码占位符且未揭示过，调用后端接口获取明文（敏感读取，需 step-up 2FA）
-  if (editApiKey.value === API_KEY_MASK) {
-    apiKeyLoading.value = true
-    try {
-      const { value } = await apiKeyStepUp.run(() =>
-        adminAPI.accounts.getCredential(accountId, 'api_key')
-      )
-      editApiKey.value = value
-      apiKeyOriginalValue.value = value
-      apiKeyRevealed.value = true
-      apiKeyVisible.value = true
-    } catch (error) {
-      if (isStepUpCancelled(error)) {
-        // 用户主动取消 step-up 验证，静默返回，不弹错误提示、也不改变掩码状态。
-      } else if (isStepUpBlocked(error)) {
-        appStore.showError(
-          stepUpBlockReason(error) === 'STEP_UP_ADMIN_API_KEY_FORBIDDEN'
-            ? t('stepUp.adminApiKeyForbidden')
-            : t('stepUp.notEnabled')
-        )
-      } else {
-        const message = error instanceof Error ? error.message : t('admin.accounts.apiKeyRevealFailed')
-        appStore.showError(t('admin.accounts.apiKeyRevealError', { message }))
-      }
-    } finally {
-      apiKeyLoading.value = false
-    }
-    return
-  }
-
-  // 用户已手动输入新值，仅切换显示/隐藏
-  apiKeyVisible.value = !apiKeyVisible.value
+  editApiKey.value = ''
 }
 
 async function loadTLSProfiles() {
@@ -4201,13 +4048,7 @@ const syncAntigravityUpstreamModels = async () => {
 
   isSyncingAntigravityUpstream.value = true
   try {
-    // 若表单内提供了尚未保存的 API Key，则作为覆盖项传给后端，
-    // 使“修改 Key 后直接获取上游模型”无需先保存、关闭再重新打开。
-    const override = editSyncPreviewCredentials.value
-    const result = await adminAPI.accounts.syncUpstreamModels(
-      props.account.id,
-      override ? { api_key: override.api_key, base_url: override.base_url } : undefined
-    )
+    const result = await adminAPI.accounts.syncUpstreamModels(props.account.id)
     const upstreamModels = result.models.map((model) => model.trim()).filter(Boolean)
     if (upstreamModels.length === 0) {
       appStore.showInfo(t('admin.accounts.syncUpstreamModelsEmpty'))
@@ -4737,11 +4578,9 @@ const handleSubmit = async () => {
       // 两者都无才报错。
       const hasExistingApiKey =
         props.account.credentials_status?.has_api_key ?? Boolean(currentCredentials.api_key)
-      const apiKeyInput = editApiKey.value.trim()
-      // 掩码占位符或未改动的原始值都表示用户未修改已有密钥，不应作为新值提交。
-      if (apiKeyInput && apiKeyInput !== API_KEY_MASK && apiKeyInput !== apiKeyOriginalValue.value) {
-        newCredentials.api_key = apiKeyInput
-      } else if (!hasExistingApiKey && !apiKeyInput) {
+      if (editApiKey.value.trim()) {
+        newCredentials.api_key = editApiKey.value.trim()
+      } else if (!hasExistingApiKey) {
         appStore.showError(t('admin.accounts.apiKeyIsRequired'))
         return
       }
@@ -4818,9 +4657,8 @@ const handleSubmit = async () => {
 
       newCredentials.base_url = editBaseUrl.value.trim()
 
-      const upstreamApiKeyInput = editApiKey.value.trim()
-      if (upstreamApiKeyInput && upstreamApiKeyInput !== API_KEY_MASK && upstreamApiKeyInput !== apiKeyOriginalValue.value) {
-        newCredentials.api_key = upstreamApiKeyInput
+      if (editApiKey.value.trim()) {
+        newCredentials.api_key = editApiKey.value.trim()
       }
 
       // Add intercept warmup requests setting
