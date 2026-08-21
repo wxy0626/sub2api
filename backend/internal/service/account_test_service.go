@@ -301,8 +301,13 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 	}()
 
 	// Route to platform-specific test method
-	if account.IsCNProvider() && account.GetAPIProtocol() == APIProtocolChatCompletions {
-		return s.testCNProviderChatCompletionsConnection(c, account, modelID, prompt)
+	if account.IsCNProvider() {
+		switch account.GetAPIProtocol() {
+		case APIProtocolAdaptive:
+			return s.testCNProviderAdaptiveConnection(c, account, modelID, prompt)
+		case APIProtocolChatCompletions:
+			return s.testCNProviderChatCompletionsConnection(c, account, modelID, prompt)
+		}
 	}
 
 	if account.IsOpenAI() {
@@ -3324,6 +3329,13 @@ func (s *AccountTestService) processDeepSeekResponsesBody(c *gin.Context, body i
 }
 
 func (s *AccountTestService) sendEvent(c *gin.Context, event TestEvent) {
+	if event.Type == "test_complete" {
+		if suppress, ok := c.Get(accountTestSuppressCompletionContextKey); ok {
+			if suppressCompletion, _ := suppress.(bool); suppressCompletion {
+				return
+			}
+		}
+	}
 	eventJSON, _ := json.Marshal(event)
 	if _, err := fmt.Fprintf(c.Writer, "data: %s\n\n", eventJSON); err != nil {
 		log.Printf("failed to write SSE event: %v", err)

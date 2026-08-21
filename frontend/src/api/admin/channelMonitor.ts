@@ -148,7 +148,8 @@ export interface CreateParams {
   body_override?: Record<string, unknown> | null
 }
 
-// Update request: api_key 空串 = 不修改；clear_template=true 时把 template_id 置空
+// Update request: api_key 空串 = 不修改；clear_template=true 时把 template_id 置空；
+// account_id=0 显式解绑关联账号（null = 不动，见 CreateParams 注释）
 export type UpdateParams = Partial<CreateParams> & {
   /** 切换回第三方 API 时清除已保存的账号来源。 */
   clear_account?: boolean

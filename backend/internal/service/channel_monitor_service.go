@@ -543,6 +543,15 @@ func (s *ChannelMonitorService) revalidateLinkedAccount(ctx context.Context, m *
 		m.AccountID = nil
 		return nil
 	}
+	// 能力失配（如 deepseek coding / zhipu payg / API-Key 型海外账号）：
+	// quota 模式显式报错（有该类存量监控时编辑会被拦，出路是换账号或切 probe），
+	// probe 模式账号无用途，静默解绑。
+	if err := monitorAccountQuotaCapability(account); err != nil {
+		if usesQuota {
+			return err
+		}
+		m.AccountID = nil
+	}
 	return nil
 }
 

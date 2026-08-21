@@ -1,7 +1,11 @@
 // Package model 定义服务层使用的数据模型。
 package model
 
-import "time"
+import (
+	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/domain"
+)
 
 // ErrorPassthroughRule 全局错误透传规则
 // 用于控制上游错误如何返回给客户端
