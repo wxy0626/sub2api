@@ -43,6 +43,7 @@ const (
 	APIProtocolChatCompletions = "chat_completions"
 	APIProtocolAnthropic       = "anthropic"
 	APIProtocolResponses       = "responses"
+	APIProtocolAdaptive        = "adaptive" // 按入站协议优先选择供应商原生端点
 )
 
 // Account type constants

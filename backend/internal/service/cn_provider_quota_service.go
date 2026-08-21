@@ -109,7 +109,7 @@ func (s *CNProviderQuotaService) QueryUsageForAccount(ctx context.Context, accou
 	resultCh := s.flight.DoChan(key, func() (any, error) {
 		probeCtx, cancel := context.WithTimeout(context.Background(), cnQuotaUpstreamTimeout+5*time.Second)
 		defer cancel()
-		return s.queryUsageForAccount(probeCtx, account)
+		return s.queryUsage(probeCtx, account.ID)
 	})
 	select {
 	case <-ctx.Done():
