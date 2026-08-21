@@ -104,6 +104,8 @@ export default {
         },
         apiProtocol: {
           title: 'API 协议',
+          adaptive: '自适应协议',
+          adaptiveDesc: '根据请求类型自动选择对应的兼容接口。',
           chatCompletions: 'Chat Completions 协议',
           chatCompletionsDesc: '使用 OpenAI 兼容的 Chat Completions 接口。',
           chat_completions: 'Chat Completions',
@@ -111,7 +113,9 @@ export default {
           anthropic: 'Anthropic Messages 协议',
           anthropicDesc: '使用 Anthropic Messages 兼容接口。',
           responses: 'Responses 协议',
-          responsesDesc: '使用 Responses 接口，支持原生响应式请求。'
+          responsesDesc: '使用 Responses 接口，支持原生响应式请求。',
+          endpoints: '协议端点',
+          responsesFallbackDesc: '当前平台不支持原生 Responses 接口，将自动使用兼容协议。'
         },
         balance: '余额',
         balanceLow: '余额偏低',
@@ -119,7 +123,8 @@ export default {
         probeTooltip: '查询账号配额',
         window5h: '5 小时',
         windowWeekly: '每周',
-        resetSoon: '即将重置'
+        resetSoon: '即将重置',
+        apiKeyHint: '填写对应平台的 API Key。'
       },
       // Schedulable toggle
       schedulable: '参与调度',

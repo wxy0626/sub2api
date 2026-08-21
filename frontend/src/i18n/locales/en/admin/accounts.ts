@@ -104,6 +104,8 @@ export default {
         },
         apiProtocol: {
           title: 'API protocol',
+          adaptive: 'Adaptive protocol',
+          adaptiveDesc: 'Automatically select the compatible endpoint for each request type.',
           chatCompletions: 'Chat Completions',
           chatCompletionsDesc: 'Use the OpenAI-compatible Chat Completions endpoint.',
           chat_completions: 'Chat Completions',
@@ -111,7 +113,9 @@ export default {
           anthropic: 'Anthropic Messages',
           anthropicDesc: 'Use the Anthropic Messages-compatible endpoint.',
           responses: 'Responses',
-          responsesDesc: 'Use the Responses endpoint with native response-style requests.'
+          responsesDesc: 'Use the Responses endpoint with native response-style requests.',
+          endpoints: 'Protocol endpoints',
+          responsesFallbackDesc: 'This platform does not support native Responses and will use compatible protocols automatically.'
         },
         balance: 'Balance',
         balanceLow: 'Low balance',
@@ -119,7 +123,8 @@ export default {
         probeTooltip: 'Query account quota',
         window5h: '5-hour',
         windowWeekly: 'Weekly',
-        resetSoon: 'Resetting soon'
+        resetSoon: 'Resetting soon',
+        apiKeyHint: 'Enter the API key for the selected platform.'
       },
       setupToken: 'Setup Token',
       apiKey: 'API Key',

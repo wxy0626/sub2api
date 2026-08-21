@@ -557,7 +557,7 @@
             type="button"
             @click="apiProtocol = opt.value"
             :class="[
-              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
+              'flex min-w-0 items-start gap-3 rounded-lg border-2 p-3 text-left transition-all',
               apiProtocol === opt.value
                 ? cnAccentActiveClass
                 : 'border-gray-200 hover:border-gray-400 dark:border-dark-600 dark:hover:border-gray-600'
@@ -573,9 +573,9 @@
             >
               <Icon :name="opt.value === 'adaptive' ? 'swap' : opt.value === 'anthropic' ? 'sparkles' : opt.value === 'responses' ? 'terminal' : 'chat'" size="sm" />
             </div>
-            <div>
-              <span class="block text-sm font-medium text-gray-900 dark:text-white">{{ t(`admin.accounts.cnProviders.apiProtocol.${opt.labelKey}`) }}</span>
-              <span class="text-xs text-gray-500 dark:text-gray-400">{{ t(`admin.accounts.cnProviders.apiProtocol.${opt.labelKey}Desc`) }}</span>
+            <div class="min-w-0">
+              <span class="block break-words text-sm font-medium text-gray-900 dark:text-white">{{ t(`admin.accounts.cnProviders.apiProtocol.${opt.labelKey}`) }}</span>
+              <span class="block break-words text-xs text-gray-500 dark:text-gray-400">{{ t(`admin.accounts.cnProviders.apiProtocol.${opt.labelKey}Desc`) }}</span>
             </div>
           </button>
         </div>
@@ -3970,6 +3970,7 @@ const apiKeyHint = computed(() => {
   if (form.platform === 'gemini') return t('admin.accounts.gemini.apiKeyHint')
   if (form.platform === 'grok') return ''
   if (form.platform === 'deepseek') return t('admin.accounts.deepseek.apiKeyHint')
+  if (isCNPlatform.value) return t('admin.accounts.cnProviders.apiKeyHint')
   return t('admin.accounts.apiKeyHint')
 })
 
