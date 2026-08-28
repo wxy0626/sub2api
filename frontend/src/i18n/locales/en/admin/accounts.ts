@@ -120,6 +120,7 @@ export default {
         balance: 'Balance',
         balanceLow: 'Low balance',
         noBalanceEndpoint: 'No balance endpoint is available for this account.',
+        probe: 'Probe',
         probeTooltip: 'Query account quota',
         window5h: '5-hour',
         windowWeekly: 'Weekly',

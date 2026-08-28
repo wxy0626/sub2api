@@ -120,6 +120,7 @@ export default {
         balance: '余额',
         balanceLow: '余额偏低',
         noBalanceEndpoint: '当前账号没有可用的余额查询地址。',
+        probe: '探测',
         probeTooltip: '查询账号配额',
         window5h: '5 小时',
         windowWeekly: '每周',
