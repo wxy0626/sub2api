@@ -94,6 +94,32 @@ describe('PlatformTypeBadge Grok plans', () => {
   })
 })
 
+describe('PlatformTypeBadge CN platforms', () => {
+  it('shows the correct label for Zhipu instead of the Gemini fallback', () => {
+    const wrapper = mount(PlatformTypeBadge, {
+      props: {
+        platform: 'zhipu',
+        type: 'apikey',
+      },
+    })
+
+    expect(wrapper.text()).toContain('Zhipu GLM')
+    expect(wrapper.text()).not.toContain('Gemini')
+  })
+
+  it('shows the correct label for Kimi', () => {
+    const wrapper = mount(PlatformTypeBadge, {
+      props: {
+        platform: 'kimi',
+        type: 'apikey',
+      },
+    })
+
+    expect(wrapper.text()).toContain('Kimi')
+    expect(wrapper.text()).not.toContain('Gemini')
+  })
+})
+
 describe('PlatformTypeBadge OpenAI authentication modes', () => {
   it('distinguishes Agent Identity, PAT, and OAuth accounts', async () => {
     const wrapper = mount(PlatformTypeBadge, {
