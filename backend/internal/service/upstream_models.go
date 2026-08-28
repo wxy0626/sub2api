@@ -119,12 +119,13 @@ func (s *AccountTestService) FetchUpstreamSupportedModels(ctx context.Context, a
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, upstreamModelsBodyLimit+1))
+	bodyLimit := resolveModelsListReadLimit(s.cfg)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, bodyLimit+1))
 	if err != nil {
 		return nil, newUpstreamModelSyncUpstreamError("Failed to read upstream model list", err)
 	}
-	if int64(len(body)) > upstreamModelsBodyLimit {
-		return nil, newUpstreamModelSyncUpstreamError("Upstream model list response is too large", fmt.Errorf("response exceeds %d bytes", upstreamModelsBodyLimit))
+	if int64(len(body)) > bodyLimit {
+		return nil, newUpstreamModelSyncUpstreamError("Upstream model list response is too large", fmt.Errorf("response exceeds %d bytes", bodyLimit))
 	}
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
@@ -411,6 +412,9 @@ func (s *AccountTestService) buildAntigravityAPIKeyModelsRequest(ctx context.Con
 }
 
 func (s *AccountTestService) buildOpenAIUpstreamModelsRequest(ctx context.Context, account *Account) (*http.Request, error) {
+	if account.IsOpenAIOAuth() {
+		return s.buildOpenAIOAuthUpstreamModelsRequest(ctx, account)
+	}
 	if account.Type != AccountTypeAPIKey {
 		return nil, newUpstreamModelSyncUnsupportedError(
 			fmt.Sprintf("Unsupported OpenAI account type for upstream model sync: %s", account.Type), nil,
@@ -594,7 +598,12 @@ func (s *AccountTestService) fetchAntigravityOAuthUpstreamModels(ctx context.Con
 	if err != nil {
 		return nil, newUpstreamModelSyncConfigError("Failed to configure Antigravity client", err)
 	}
-	modelsResp, _, err := client.FetchAvailableModels(ctx, accessToken, strings.TrimSpace(account.GetCredential("project_id")))
+	modelsResp, _, err := client.FetchAvailableModels(
+		ctx,
+		accessToken,
+		strings.TrimSpace(account.GetCredential("project_id")),
+		resolveModelsListReadLimit(s.cfg),
+	)
 	if err != nil {
 		return nil, newUpstreamModelSyncUpstreamError("Failed to fetch Antigravity available models", err)
 	}
@@ -651,6 +660,7 @@ func buildGeminiModelsURL(base string) string {
 
 type upstreamModelEntry struct {
 	ID           string          `json:"id"`
+	Slug         string          `json:"slug"`
 	Model        string          `json:"model"`
 	ModelID      string          `json:"modelId"`
 	ModelIDSnake string          `json:"model_id"`
@@ -714,6 +724,9 @@ func extractUpstreamModelIDsWithSelector(body []byte, selectID func(upstreamMode
 
 func upstreamModelEntryID(entry upstreamModelEntry) string {
 	modelID := strings.TrimSpace(entry.ID)
+	if modelID == "" {
+		modelID = strings.TrimSpace(entry.Slug)
+	}
 	if modelID == "" {
 		modelID = strings.TrimSpace(entry.Name)
 	}

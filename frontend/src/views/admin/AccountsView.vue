@@ -830,7 +830,7 @@ const columnSettingsDropdownStyle = computed(() => ({
   width: `${columnSettingsPosition.width}px`
 }))
 const hiddenColumns = reactive<Set<string>>(new Set())
-const DEFAULT_HIDDEN_COLUMNS = ['today_stats', 'proxy', 'notes', 'priority', 'scheduler_score', 'rate_multiplier']
+const DEFAULT_HIDDEN_COLUMNS = ['today_stats', 'proxy', 'notes', 'scheduler_score', 'rate_multiplier']
 const HIDDEN_COLUMNS_KEY = 'account-hidden-columns'
 // 列顺序与隐藏状态分开保存，避免改变显示开关时丢失用户已经调整的顺序。
 const ACCOUNT_COLUMN_ORDER_KEY = 'account-column-order'
