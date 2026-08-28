@@ -1314,7 +1314,9 @@ func (a *Account) GetOpenAIBaseURL() string {
 	if a.IsDeepSeek() {
 		return a.GetDeepSeekBaseURL()
 	}
-	if !a.IsOpenAI() {
+	// Kimi / Zhipu 也是 OpenAI 兼容账号，必须进入同一套 base_url 解析，
+	// 否则其 Coding Plan 额度探测会拿到空地址并误报账号类型不匹配。
+	if !a.IsOpenAI() && !a.IsCNProvider() {
 		return ""
 	}
 	if a.IsCNProvider() && a.IsAdaptiveAPIProtocol() {
@@ -1346,6 +1348,21 @@ func (a *Account) GetOpenAIBaseURL() string {
 	default:
 		return "https://api.openai.com"
 	}
+}
+
+// GetOpenAIImageBaseURL 返回 OpenAI 图片请求使用的独立 Base URL。
+// image_base_url 只影响图片生成/编辑，不改变 Chat、Responses 等普通请求。
+// 未配置时回退到原有 base_url，保证旧账号无需迁移即可继续工作。
+func (a *Account) GetOpenAIImageBaseURL() string {
+	if a == nil || !a.IsOpenAI() {
+		return ""
+	}
+	if a.Type == AccountTypeAPIKey || a.Type == AccountTypeUpstream {
+		if imageBaseURL := strings.TrimSpace(a.GetCredential("image_base_url")); imageBaseURL != "" {
+			return imageBaseURL
+		}
+	}
+	return a.GetOpenAIBaseURL()
 }
 
 // GetAccountMode 返回国产供应商账号的接入模式（payg / coding）；非国产供应商或未设置时
@@ -1521,19 +1538,18 @@ func (a *Account) GetCNAPIKey() string {
 	return a.GetCredential("api_key")
 }
 
-// GetCodingPlanProvider 根据 base_url 识别 Coding Plan 供应商（kimi / zhipu），
-// 用于路由到对应的额度查询端点。非 coding 模式或无法识别时返回空串。
-// 判定规则与 cc-switch coding_plan.rs::detect_provider 保持一致。
+// GetCodingPlanProvider 返回 Coding Plan 账号的平台，用于路由额度查询端点。
+// 平台字段是账号创建时明确选择的供应商，优先于 base_url；否则用户使用自定义
+// 转发地址或 adaptive 多协议地址时，会被错误判定为“不是 kimi/zhipu coding plan”。
+// 非国产供应商或非 coding 模式返回空串，避免普通 PayG 账号误走额度查询。
 func (a *Account) GetCodingPlanProvider() string {
 	if a == nil || a.GetAccountMode() != AccountModeCoding {
 		return ""
 	}
-	baseURL := strings.ToLower(a.GetOpenAIBaseURL())
-	switch {
-	case strings.Contains(baseURL, "api.kimi.com/coding"):
-		return PlatformKimi
-	case strings.Contains(baseURL, "bigmodel.cn"), strings.Contains(baseURL, "api.z.ai"):
-		return PlatformZhipu
+	// 账号平台是稳定的供应商标识，不应因自定义域名而丢失额度查询能力。
+	switch a.Platform {
+	case PlatformKimi, PlatformZhipu:
+		return a.Platform
 	default:
 		return ""
 	}

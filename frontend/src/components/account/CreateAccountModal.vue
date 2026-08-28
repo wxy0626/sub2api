@@ -1355,6 +1355,18 @@
             {{ t('admin.accounts.cnProviders.apiProtocol.responsesFallbackDesc') }}
           </p>
         </div>
+        <!-- OpenAI API Key 可为图片请求单独指定上游 Base URL；留空时回退普通 base_url。 -->
+        <div v-if="form.platform === 'openai'">
+          <label class="input-label">{{ t('admin.accounts.openai.imageBaseUrl') }}</label>
+          <input
+            v-model="apiKeyImageBaseUrl"
+            type="text"
+            class="input"
+            data-testid="account-image-base-url-input"
+            :placeholder="t('admin.accounts.openai.imageBaseUrlPlaceholder')"
+          />
+          <p class="input-hint">{{ t('admin.accounts.openai.imageBaseUrlDesc') }}</p>
+        </div>
         <div>
           <label class="input-label">{{ t('admin.accounts.apiKeyRequired') }}</label>
           <div class="relative">
@@ -4054,6 +4066,8 @@ const submitting = ref(false)
 const accountCategory = ref<'oauth-based' | 'apikey' | 'bedrock' | 'service_account'>('oauth-based') // UI selection for account category
 const addMethod = ref<AddMethod>('oauth') // For oauth-based: 'oauth' or 'setup-token'
 const apiKeyBaseUrl = ref('https://api.anthropic.com')
+// OpenAI API Key 图片专用 Base URL；空值表示沿用普通 base_url。
+const apiKeyImageBaseUrl = ref('')
 const apiKeyValue = ref('')
 // 创建账号时，敏感凭据默认以 password 显示；提供眼睛图标按需切换明文，避免输错却看不到内容。
 const secretVisible = ref({
@@ -4716,6 +4730,7 @@ watch(
             : newPlatform === 'deepseek'
               ? 'https://api.deepseek.com'
             : 'https://api.anthropic.com'
+    apiKeyImageBaseUrl.value = ''
     // Clear model-related settings
     allowedModels.value = []
     modelMappings.value = []
@@ -5169,6 +5184,7 @@ const resetForm = () => {
   apiProtocol.value = 'adaptive'
   adaptiveBaseUrls.value = { chat_completions: '', anthropic: '', responses: '' }
   apiKeyBaseUrl.value = 'https://api.anthropic.com'
+  apiKeyImageBaseUrl.value = ''
   apiKeyValue.value = ''
   upstreamBillingAutoProbeEnabled.value = true
   editQuotaLimit.value = null
@@ -5627,6 +5643,9 @@ const handleSubmit = async () => {
   const credentials: Record<string, unknown> = {
     base_url: apiKeyBaseUrl.value.trim() || defaultBaseUrl,
     api_key: apiKeyValue.value.trim()
+  }
+  if (form.platform === 'openai' && apiKeyImageBaseUrl.value.trim()) {
+    credentials.image_base_url = apiKeyImageBaseUrl.value.trim()
   }
   if (form.platform === 'gemini') {
     credentials.tier_id = geminiTierAIStudio.value

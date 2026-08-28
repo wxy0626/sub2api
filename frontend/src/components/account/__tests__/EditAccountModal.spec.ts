@@ -364,6 +364,40 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[0]?.[1]?.concurrency).toBe(5)
   })
 
+  it('loads and submits the OpenAI image base URL independently from the chat base URL', async () => {
+    const account = buildAccount()
+    account.credentials.image_base_url = 'https://old-image.example.com/v1'
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+
+    const wrapper = mountModal(account)
+    const imageBaseUrl = wrapper.get<HTMLInputElement>('[data-testid="edit-image-base-url-input"]')
+    expect(imageBaseUrl.element.value).toBe('https://old-image.example.com/v1')
+
+    await imageBaseUrl.setValue('  https://new-image.example.com/v1  ')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).toMatchObject({
+      base_url: 'https://api.openai.com',
+      image_base_url: 'https://new-image.example.com/v1'
+    })
+  })
+
+  it('removes the OpenAI image base URL when the edit field is cleared', async () => {
+    const account = buildAccount()
+    account.credentials.image_base_url = 'https://old-image.example.com/v1'
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+
+    const wrapper = mountModal(account)
+    await wrapper.get('[data-testid="edit-image-base-url-input"]').setValue('')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).not.toHaveProperty('image_base_url')
+  })
+
   it('编辑没有模型映射的 OpenAI 账号时默认开放 GPT-5.6 和 GPT Image 2', async () => {
     const account = buildAccount()
     delete account.credentials.model_mapping

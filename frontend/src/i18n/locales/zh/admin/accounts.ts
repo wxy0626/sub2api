@@ -637,6 +637,9 @@ export default {
       openai: {
         baseUrlHint: '留空使用官方 OpenAI API',
         apiKeyHint: '您的 OpenAI API Key',
+        imageBaseUrl: '图片 Base URL',
+        imageBaseUrlDesc: '仅用于 OpenAI 图片生成和编辑请求；留空时沿用上方的 Base URL。',
+        imageBaseUrlPlaceholder: 'https://api.openai.com',
         oauthPassthrough: '自动透传（仅替换认证）',
         oauthPassthroughDesc:
           '开启后，该 OpenAI 账号将自动透传请求与响应，仅替换认证并保留计费/并发/审计及必要安全过滤；如遇兼容性问题可随时关闭回滚。',

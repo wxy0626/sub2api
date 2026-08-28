@@ -527,6 +527,38 @@ func TestAdaptiveProtocolBaseURLs(t *testing.T) {
 	}
 }
 
+// TestGetCodingPlanProviderUsesPlatformForCustomAndAdaptiveURLs 验证 Coding Plan
+// 额度查询使用账号平台识别供应商，不再依赖可被自定义转发地址覆盖的 base_url。
+func TestGetCodingPlanProviderUsesPlatformForCustomAndAdaptiveURLs(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name     string
+		platform string
+		baseURL  string
+		baseURLs map[string]any
+		want     string
+	}{
+		{name: "zhipu custom base url", platform: PlatformZhipu, baseURL: "https://relay.example.com/glm", want: PlatformZhipu},
+		{name: "zhipu adaptive custom base url", platform: PlatformZhipu, baseURLs: map[string]any{APIProtocolChatCompletions: "https://relay.example.com/chat"}, want: PlatformZhipu},
+		{name: "kimi custom base url", platform: PlatformKimi, baseURL: "https://relay.example.com/kimi", want: PlatformKimi},
+		{name: "deepseek coding unsupported", platform: PlatformDeepseek, baseURL: DefaultDeepseekBaseURL, want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			credentials := map[string]any{"account_mode": AccountModeCoding}
+			if tc.baseURL != "" {
+				credentials["base_url"] = tc.baseURL
+			}
+			if tc.baseURLs != nil {
+				credentials["api_protocol"] = APIProtocolAdaptive
+				credentials["api_base_urls"] = tc.baseURLs
+			}
+			account := &Account{Platform: tc.platform, Type: AccountTypeAPIKey, Credentials: credentials}
+			require.Equal(t, tc.want, account.GetCodingPlanProvider())
+		})
+	}
+}
+
 func TestAdaptiveProtocolBaseURLOverrides(t *testing.T) {
 	t.Parallel()
 

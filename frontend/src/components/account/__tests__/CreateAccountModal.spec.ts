@@ -251,6 +251,24 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     expect(createAccountMock.mock.calls[0]?.[0]?.concurrency).toBe(5)
   })
 
+  it('submits a separate image base URL for OpenAI API key accounts', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await selectButtonByText(wrapper, 'API Key')
+
+    await wrapper.get('[data-testid="account-image-base-url-input"]').setValue('  https://image.example.com/v1  ')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('OpenAI image account')
+    await wrapper.get('form#create-account-form input[type="password"]').setValue('test-api-key')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    expect(createAccountMock.mock.calls[0]?.[0]?.credentials).toMatchObject({
+      base_url: 'https://api.openai.com',
+      image_base_url: 'https://image.example.com/v1'
+    })
+  })
+
   it('uses the OAuth proxy priority and clears it for API key accounts', async () => {
     const wrapper = mountModal([
       { id: 2, name: '新加坡家宽', status: 'active' },

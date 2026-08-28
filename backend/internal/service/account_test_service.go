@@ -3047,16 +3047,16 @@ func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader,
 func (s *AccountTestService) testOpenAIImageAPIKey(c *gin.Context, ctx context.Context, account *Account, modelID, prompt string) error {
 	authToken := account.GetOpenAIApiKey()
 	if authToken == "" {
-		return s.sendErrorAndEnd(c, "No API key available")
+		return s.sendErrorAndEnd(c, "图片生成测试无法开始：账号未配置 API Key，请在 credentials.api_key 中填写密钥。")
 	}
 
-	baseURL := account.GetOpenAIBaseURL()
+	baseURL := account.GetOpenAIImageBaseURL()
 	if baseURL == "" {
 		baseURL = "https://api.openai.com"
 	}
 	normalizedBaseURL, err := s.validateUpstreamBaseURL(baseURL)
 	if err != nil {
-		return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
+		return s.sendErrorAndEnd(c, fmt.Sprintf("图片生成测试无法开始：图片 Base URL 无效，请检查 credentials.image_base_url 或 credentials.base_url。原始技术详情：%s", err.Error()))
 	}
 	apiURL := buildOpenAIImagesURL(normalizedBaseURL, openAIImagesGenerationsEndpoint)
 
@@ -3077,11 +3077,14 @@ func (s *AccountTestService) testOpenAIImageAPIKey(c *gin.Context, ctx context.C
 	}
 	payloadBytes, _ := json.Marshal(payload)
 
-	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(payloadBytes))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(payloadBytes))
 	if err != nil {
-		return s.sendErrorAndEnd(c, "Failed to create request")
+		return s.sendErrorAndEnd(c, fmt.Sprintf("图片生成测试无法创建请求：原始技术详情：%s", err.Error()))
 	}
-	req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
+	requestContext := WithHTTPUpstreamRedirectsDisabled(
+		WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI),
+	)
+	req = req.WithContext(requestContext)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+authToken)
 
@@ -3093,19 +3096,24 @@ func (s *AccountTestService) testOpenAIImageAPIKey(c *gin.Context, ctx context.C
 		proxyURL = account.Proxy.URL()
 	}
 
+	// 记录路径和状态码，避免图片测试失败后只看到 status_code=0 而无法判断真实请求。
+	beginAccountTestUsageRequest(c, modelID, openAIImagesGenerationsEndpoint)
 	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 	if err != nil {
-		return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
+		return s.sendErrorAndEnd(c, fmt.Sprintf("图片生成测试请求失败：无法连接图片上游，请检查图片 Base URL、代理和网络配置。原始技术详情：%s", accountTestErrorDetail(account, err.Error(), authToken)))
 	}
 	defer func() { _ = resp.Body.Close() }()
+	recordAccountTestUsageStatus(c, resp.StatusCode)
+	logOpenAIImageTestEndpoint(account.ID, apiURL, resp)
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to read response: %s", err.Error()))
+		return s.sendErrorAndEnd(c, fmt.Sprintf("图片生成测试读取上游响应失败：原始技术详情：%s", err.Error()))
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
+		errorDetail := accountTestErrorDetail(account, string(body), authToken)
+		return s.sendErrorAndEnd(c, fmt.Sprintf("图片生成测试失败：图片上游返回 HTTP %d。请检查 credentials.image_base_url；未配置时请检查 credentials.base_url 是否仍指向可用的图片接口。原始技术详情：%s", resp.StatusCode, errorDetail))
 	}
 
 	// Parse {"data": [{"b64_json": "...", "revised_prompt": "..."}]}
@@ -3116,11 +3124,11 @@ func (s *AccountTestService) testOpenAIImageAPIKey(c *gin.Context, ctx context.C
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
-		return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to parse response: %s", err.Error()))
+		return s.sendErrorAndEnd(c, fmt.Sprintf("图片生成测试解析上游响应失败：请确认图片接口返回 OpenAI Images API JSON。原始技术详情：%s", err.Error()))
 	}
 
 	if len(result.Data) == 0 {
-		return s.sendErrorAndEnd(c, "No images returned from API")
+		return s.sendErrorAndEnd(c, "图片生成测试失败：上游返回成功状态但没有图片数据，请检查模型 ID、图片权限和响应格式。")
 	}
 
 	for _, item := range result.Data {
@@ -3265,6 +3273,28 @@ func (s *AccountTestService) testOpenAIImageOAuth(c *gin.Context, ctx context.Co
 
 	s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
 	return nil
+}
+
+// logOpenAIImageTestEndpoint 只记录图片测试的 host/path、状态码和重定向位置，禁止写入查询参数或凭据。
+func logOpenAIImageTestEndpoint(accountID int64, originalURL string, resp *http.Response) {
+	statusCode := 0
+	finalURL := originalURL
+	redirectLocation := ""
+	if resp != nil {
+		statusCode = resp.StatusCode
+		if resp.Request != nil && resp.Request.URL != nil {
+			finalURL = resp.Request.URL.String()
+		}
+		redirectLocation = resp.Header.Get("Location")
+	}
+	log.Printf(
+		"OpenAI image test endpoint: account_id=%d original=%s final=%s status=%d redirect=%s",
+		accountID,
+		safeUpstreamURL(originalURL),
+		safeUpstreamURL(finalURL),
+		statusCode,
+		safeUpstreamURL(redirectLocation),
+	)
 }
 
 // firstDeepSeekAccount 返回可选参数中的 DeepSeek 账号，用于只对 DeepSeek 定制诊断文案。

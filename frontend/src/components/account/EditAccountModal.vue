@@ -76,6 +76,18 @@
             {{ t('admin.accounts.cnProviders.apiProtocol.responsesFallbackDesc') }}
           </p>
         </div>
+        <!-- OpenAI API Key 可为图片请求单独指定上游 Base URL；留空时回退普通 base_url。 -->
+        <div v-if="account.platform === 'openai'">
+          <label class="input-label">{{ t('admin.accounts.openai.imageBaseUrl') }}</label>
+          <input
+            v-model="editImageBaseUrl"
+            type="text"
+            class="input"
+            data-testid="edit-image-base-url-input"
+            :placeholder="t('admin.accounts.openai.imageBaseUrlPlaceholder')"
+          />
+          <p class="input-hint">{{ t('admin.accounts.openai.imageBaseUrlDesc') }}</p>
+        </div>
         <!-- Account Mode Selection (CN providers) -->
         <div v-if="isCNApiKeyAccount">
           <label class="input-label">{{ t('admin.accounts.cnProviders.accountMode.title') }}</label>
@@ -2904,6 +2916,8 @@ interface TempUnschedRuleForm {
 // State
 const submitting = ref(false)
 const editBaseUrl = ref('https://api.anthropic.com')
+// OpenAI API Key 图片专用 Base URL；空值表示沿用普通 base_url。
+const editImageBaseUrl = ref('')
 const editApiKey = ref('')
 
 // ── 国产供应商（Kimi / Zhipu / DeepSeek）account_mode / api_protocol 编辑 ──
@@ -3887,6 +3901,9 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     editBaseUrl.value = isCNApiKeyAccount.value && editApiProtocol.value === 'adaptive'
       ? editAdaptiveBaseUrls.value.chat_completions
       : (credentials.base_url as string) || platformDefaultUrl
+    editImageBaseUrl.value = newAccount.platform === 'openai' && typeof credentials.image_base_url === 'string'
+      ? credentials.image_base_url.trim()
+      : ''
 
     // Load model mappings and detect mode
     loadModelRestrictionFromMapping(credentials.model_mapping as Record<string, unknown> | undefined)
@@ -3940,6 +3957,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   } else if (newAccount.type === 'upstream' && newAccount.credentials) {
     const credentials = newAccount.credentials as Record<string, unknown>
     editBaseUrl.value = (credentials.base_url as string) || ''
+    editImageBaseUrl.value = ''
   } else if ((newAccount.platform === 'gemini' || newAccount.platform === 'anthropic') && newAccount.type === 'service_account' && newAccount.credentials) {
     const credentials = newAccount.credentials as Record<string, unknown>
     editVertexProjectId.value = (credentials.project_id as string) || ''
@@ -3958,6 +3976,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
             ? 'https://api.x.ai/v1'
             : 'https://api.anthropic.com'
     editBaseUrl.value = platformDefaultUrl
+    editImageBaseUrl.value = ''
 
     // Load model mappings for OpenAI/Grok OAuth accounts
     if ((newAccount.platform === 'openai' || newAccount.platform === 'grok') && newAccount.credentials) {
@@ -4552,6 +4571,14 @@ const handleSubmit = async () => {
       const newCredentials: Record<string, unknown> = {
         ...currentCredentials,
         base_url: newBaseUrl
+      }
+      if (props.account.platform === 'openai') {
+        const imageBaseUrl = editImageBaseUrl.value.trim()
+        if (imageBaseUrl) {
+          newCredentials.image_base_url = imageBaseUrl
+        } else {
+          delete newCredentials.image_base_url
+        }
       }
 
       // 国产供应商：模式与协议写入凭据（决定额度/余额探测与转发端点/格式）。

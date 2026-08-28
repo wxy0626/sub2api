@@ -80,6 +80,53 @@ func TestGetBaseURL(t *testing.T) {
 	}
 }
 
+// TestGetOpenAIImageBaseURL 验证图片专用地址优先于普通地址，且旧账号继续回退普通地址。
+func TestGetOpenAIImageBaseURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		account  Account
+		expected string
+	}{
+		{
+			name: "apikey prefers image base url",
+			account: Account{
+				Type:     AccountTypeAPIKey,
+				Platform: PlatformOpenAI,
+				Credentials: map[string]any{
+					"base_url":       "https://chat.example.com/v1",
+					"image_base_url": "https://image.example.com/v1",
+				},
+			},
+			expected: "https://image.example.com/v1",
+		},
+		{
+			name: "apikey falls back to base url",
+			account: Account{
+				Type:        AccountTypeAPIKey,
+				Platform:    PlatformOpenAI,
+				Credentials: map[string]any{"base_url": "https://chat.example.com/v1"},
+			},
+			expected: "https://chat.example.com/v1",
+		},
+		{
+			name:     "oauth ignores api key image override",
+			account:  Account{Type: AccountTypeOAuth, Platform: PlatformOpenAI, Credentials: map[string]any{"image_base_url": "https://image.example.com/v1"}},
+			expected: "https://api.openai.com",
+		},
+		{
+			name:     "non-openai returns empty",
+			account:  Account{Type: AccountTypeAPIKey, Platform: PlatformAnthropic, Credentials: map[string]any{"image_base_url": "https://image.example.com/v1"}},
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.expected, tt.account.GetOpenAIImageBaseURL())
+		})
+	}
+}
+
 func TestGetGeminiBaseURL(t *testing.T) {
 	const defaultGeminiURL = "https://generativelanguage.googleapis.com"
 

@@ -38,6 +38,20 @@ describe('CNProviderQuotaCell', () => {
     queryQuota.mockReset()
   })
 
+  it('does not render for a normal Zhipu PayG account', () => {
+    const wrapper = mount(CNProviderQuotaCell, {
+      props: {
+        account: {
+          ...account,
+          credentials: { account_mode: 'payg' }
+        }
+      }
+    })
+
+    expect(wrapper.find('[data-test="cn-provider-quota"]').exists()).toBe(false)
+    expect(queryQuota).not.toHaveBeenCalled()
+  })
+
   it('keeps the compact quota stack readable inside the account table cell', async () => {
     queryQuota.mockResolvedValue({
       success: true,
