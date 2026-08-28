@@ -447,6 +447,67 @@ func (s *AccountTestService) buildOpenAIUpstreamModelsRequest(ctx context.Contex
 	return req, nil
 }
 
+// buildOpenAIOAuthUpstreamModelsRequest 构造 OpenAI OAuth 账号的 Codex 模型清单请求。
+// OAuth 账号不提供公开的 /v1/models，因此必须使用 ChatGPT 的模型清单接口。
+func (s *AccountTestService) buildOpenAIOAuthUpstreamModelsRequest(ctx context.Context, account *Account) (*http.Request, error) {
+	credentialAccount, err := resolveCredentialAccount(ctx, s.accountRepo, account)
+	if err != nil {
+		return nil, newUpstreamModelSyncConfigError("Failed to resolve OpenAI account credentials", err)
+	}
+	if !credentialAccount.IsOpenAIOAuth() {
+		return nil, newUpstreamModelSyncUnsupportedError(
+			fmt.Sprintf("Unsupported OpenAI account type for upstream model sync: %s", credentialAccount.Type), nil,
+		)
+	}
+
+	modelsURL, err := buildCodexModelsManifestURL(
+		chatgptCodexModelsURL,
+		false,
+		CodexCanonicalClientVersion(),
+	)
+	if err != nil {
+		return nil, newUpstreamModelSyncConfigError("Invalid OpenAI Codex model list URL", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, modelsURL.String(), nil)
+	if err != nil {
+		return nil, newUpstreamModelSyncConfigError("Invalid OpenAI Codex model list request", err)
+	}
+
+	if credentialAccount.IsOpenAIAgentIdentity() {
+		authHeaders, authErr := buildAgentIdentityAuthenticationHeaders(
+			ctx,
+			s.accountRepo,
+			s.agentIdentityWS,
+			&s.agentIdentityTaskMu,
+			credentialAccount,
+		)
+		if authErr != nil {
+			return nil, newUpstreamModelSyncUpstreamError("Failed to build OpenAI Agent Identity authentication", authErr)
+		}
+		for key, values := range authHeaders {
+			for _, value := range values {
+				req.Header.Add(key, value)
+			}
+		}
+	} else {
+		accessToken := strings.TrimSpace(credentialAccount.GetOpenAIAccessToken())
+		if accessToken == "" {
+			return nil, newUpstreamModelSyncConfigError("No OpenAI access token is available", nil)
+		}
+		req.Header.Set("Authorization", "Bearer "+accessToken)
+	}
+
+	identity := resolveCodexOutboundIdentity(credentialAccount.GetOpenAIUserAgent())
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Originator", identity.originator)
+	req.Header.Set("User-Agent", identity.userAgent)
+	req.Header.Set("Version", identity.version)
+	setOpenAIChatGPTAccountHeaders(req.Header, credentialAccount)
+	credentialAccount.ApplyHeaderOverrides(req.Header)
+	enforceCodexIdentityHeadersWithUA(req.Header, credentialAccount.GetOpenAIUserAgent())
+	return req, nil
+}
+
 // buildDeepSeekUpstreamModelsRequest 构造 DeepSeek API Key 的模型列表请求。
 func (s *AccountTestService) buildDeepSeekUpstreamModelsRequest(ctx context.Context, account *Account) (*http.Request, error) {
 	if account == nil || account.Type != AccountTypeAPIKey {

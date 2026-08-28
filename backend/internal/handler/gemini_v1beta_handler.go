@@ -567,6 +567,13 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
 		// ForceCacheBilling 提前拍成标量，避免 worker 闭包保活 failover 状态里的响应体。
 		forceCacheBilling := fs.ForceCacheBilling
+		// 长上下文规则与模型广场/计费服务保持同源，避免入口重复维护阈值。
+		var longContextThreshold int
+		var longContextMultiplier float64
+		if rule := h.gatewayService.LegacyLongContextRule(service.PlatformGemini); rule != nil {
+			longContextThreshold = rule.Threshold
+			longContextMultiplier = rule.Multiplier
+		}
 		quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 		sessionID := service.ExtractClientSessionID(c)
 		// Gemini 成功入口只把已读取请求体的大小和生效上限传入异步任务。

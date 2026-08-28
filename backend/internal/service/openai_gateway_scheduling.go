@@ -259,6 +259,32 @@ func (s *OpenAIGatewayService) SelectAccountForModelWithExclusions(ctx context.C
 	return s.selectAccountForModelWithExclusions(s.withOpenAIQuotaAutoPauseContext(ctx), groupID, PlatformOpenAI, sessionHash, requestedModel, excludedIDs, false, 0, "", false)
 }
 
+// SelectAccountForTokenCount 为不计费的 token 统计请求选择账号，不占用生成并发槽位。
+// 仍复用平台、模型、能力和运行态资格校验，避免 token 统计绕过正常调度约束。
+func (s *OpenAIGatewayService) SelectAccountForTokenCount(
+	ctx context.Context,
+	groupID *int64,
+	sessionHash string,
+	requestedModel string,
+	requiredCapability OpenAIEndpointCapability,
+	platform string,
+) (*Account, error) {
+	ctx = WithOpenAIProfitControlSuppressed(ctx)
+	ctx = s.withOpenAIQuotaAutoPauseContext(ctx)
+	return s.selectAccountForModelWithExclusions(
+		ctx,
+		groupID,
+		platform,
+		sessionHash,
+		requestedModel,
+		nil,
+		false,
+		0,
+		requiredCapability,
+		false,
+	)
+}
+
 // NormalizeOpenAICompatiblePlatform 保留 Grok 与国产 OpenAI 兼容平台，其他平台归一为 OpenAI。
 func NormalizeOpenAICompatiblePlatform(platform string) string {
 	switch platform {

@@ -47,6 +47,8 @@ var accountTestCredentialTextPattern = regexp.MustCompile(`(?i)(\b(?:authorizati
 const (
 	testClaudeAPIURL   = "https://api.anthropic.com/v1/messages?beta=true"
 	chatgptCodexAPIURL = "https://chatgpt.com/backend-api/codex/responses"
+	// defaultAntigravityTestModel 是 Antigravity 账号未指定模型时的测试模型。
+	defaultAntigravityTestModel = "claude-sonnet-4-6"
 	// openAIWorkspaceDeactivatedErrorMessage 是管理员界面展示的工作区停用说明。
 	openAIWorkspaceDeactivatedErrorMessage = "ChatGPT 工作区已停用（402）：该工作区已被停用"
 )
