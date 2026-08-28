@@ -1133,6 +1133,24 @@ export interface Account {
     upstream_billing_probe_enabled?: boolean
     upstream_billing_rate_sync_enabled?: boolean
     upstream_billing_probe?: UpstreamBillingProbeSnapshot
+    // Codex 重置额度快照，用于页面展示可用额度及过期时间。
+    codex_reset_credit_snapshot?: {
+      available_count?: number
+      credits?: { expires_at?: string }[]
+    }
+    // OpenAI OAuth 自动重置额度配置与运行状态。
+    auto_reset_credit_enabled?: boolean
+    auto_reset_credit_5h_threshold?: number
+    auto_reset_credit_7d_threshold?: number
+    codex_auto_reset_credit_state?: {
+      status?: 'checking' | 'available' | 'resetting' | 'success' | 'no_credit' | 'failed'
+      trigger_window?: string
+      available_count?: number
+      checked_at?: string
+      last_result_at?: string
+      error_code?: string
+    }
+    // 管理员账号测试时选择的探测模式。
     account_test_mode?: 'default' | 'responses' | 'compact' | 'workspace'
   } & Record<string, unknown>)
   proxy_id: number | null
