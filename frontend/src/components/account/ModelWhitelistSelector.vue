@@ -14,7 +14,11 @@
           >
             <span class="flex items-center gap-1 truncate">
               <ModelIcon :model="model" size="14px" />
-              <span class="truncate">{{ model }}</span>
+              <span
+                class="cursor-pointer truncate hover:text-primary-600 hover:underline"
+                :title="`${t('common.copy')} ${model}`"
+                @click.stop="copyModelId(model)"
+              >{{ model }}</span>
             </span>
             <button
               type="button"

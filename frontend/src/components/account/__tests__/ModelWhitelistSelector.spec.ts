@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { ref } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import ModelWhitelistSelector from '../ModelWhitelistSelector.vue'
 
-const { syncPricingModelsMock, syncUpstreamModelsMock, showErrorMock, showSuccessMock } = vi.hoisted(() => ({
+const { syncPricingModelsMock, syncUpstreamModelsMock, showErrorMock, showSuccessMock, copyToClipboardMock } = vi.hoisted(() => ({
   syncPricingModelsMock: vi.fn(),
   syncUpstreamModelsMock: vi.fn(),
   showErrorMock: vi.fn(),
-  showSuccessMock: vi.fn()
+  showSuccessMock: vi.fn(),
+  copyToClipboardMock: vi.fn()
 }))
 
 vi.mock('@/stores/app', () => ({
@@ -29,6 +31,13 @@ vi.mock('@/api/admin/channels', () => ({
   syncPricingModels: syncPricingModelsMock
 }))
 
+vi.mock('@/composables/useClipboard', () => ({
+  useClipboard: () => ({
+    copied: ref(false),
+    copyToClipboard: copyToClipboardMock
+  })
+}))
+
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
   return {
@@ -43,6 +52,7 @@ describe('ModelWhitelistSelector', () => {
     syncUpstreamModelsMock.mockReset()
     showErrorMock.mockReset()
     showSuccessMock.mockReset()
+    copyToClipboardMock.mockReset()
   })
 
   it('同步最新支持模型会从实时目录替换旧值，并过滤不允许的系列', async () => {
@@ -233,5 +243,45 @@ describe('ModelWhitelistSelector', () => {
     expect(wrapper.findAll('[data-testid="model-option"]').map(option => option.text())).toEqual(
       expect.arrayContaining(['grok-live-only', 'grok-4.5'])
     )
+  })
+
+  it('点击已选模型名复制模型名且不下拉展开列表', async () => {
+    copyToClipboardMock.mockResolvedValue(true)
+    const wrapper = mount(ModelWhitelistSelector, {
+      props: { modelValue: ['gpt-5.2'], platform: 'openai' },
+      global: { stubs: { Icon: true, ModelIcon: true } }
+    })
+
+    const modelNameSpan = wrapper.findAll('span.cursor-pointer')
+      .find(span => span.text() === 'gpt-5.2')
+    expect(modelNameSpan).toBeDefined()
+    await modelNameSpan!.trigger('click')
+
+    expect(copyToClipboardMock).toHaveBeenCalledWith('gpt-5.2')
+    expect(wrapper.find('[data-testid="model-option"]').exists()).toBe(false)
+  })
+
+  it('点击 X 按钮从白名单移除该模型', async () => {
+    const wrapper = mount(ModelWhitelistSelector, {
+      props: { modelValue: ['gpt-5.2', 'gpt-5.4'], platform: 'openai' },
+      global: { stubs: { Icon: true, ModelIcon: true } }
+    })
+
+    const removeButtons = wrapper.findAll('span.inline-flex > button')
+    expect(removeButtons.length).toBe(2)
+    await removeButtons[0].trigger('click')
+
+    expect(wrapper.emitted('update:modelValue')?.[0]).toEqual([['gpt-5.4']])
+  })
+
+  it('点击下拉区域展开模型列表', async () => {
+    const wrapper = mount(ModelWhitelistSelector, {
+      props: { modelValue: ['gpt-5.2'], platform: 'openai' },
+      global: { stubs: { Icon: true, ModelIcon: true } }
+    })
+
+    expect(wrapper.find('[data-testid="model-option"]').exists()).toBe(false)
+    await wrapper.find('div.cursor-pointer').trigger('click')
+    expect(wrapper.find('[data-testid="model-option"]').exists()).toBe(true)
   })
 })

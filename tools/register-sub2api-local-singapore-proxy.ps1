@@ -80,7 +80,25 @@ function 测试Sub2API容器新加坡代理 {
 function 确保本地新加坡代理已登记 {
     $数据库用户 = 获取容器环境变量值 -容器名称 $数据库容器名称 -变量名 'POSTGRES_USER'
     $数据库名称 = 获取容器环境变量值 -容器名称 $数据库容器名称 -变量名 'POSTGRES_DB'
+    # 幂等登记：先软删除重复行（仅保留 id 最小的一行），再 upsert 该唯一行，最后由验证查询确认恰好一行且名称/状态正确。
+    # 修复历史上偶发出现的「登记后状态异常」：proxies 表中出现重复行或名称不匹配导致校验不通过。
     $登记SQL = @'
+WITH target AS (
+    SELECT id FROM proxies
+    WHERE deleted_at IS NULL
+      AND protocol = :'proxy_protocol'
+      AND host = :'proxy_host'
+      AND port = :proxy_port
+    ORDER BY id LIMIT 1
+)
+UPDATE proxies
+SET deleted_at = NOW()
+WHERE deleted_at IS NULL
+  AND protocol = :'proxy_protocol'
+  AND host = :'proxy_host'
+  AND port = :proxy_port
+  AND id NOT IN (SELECT id FROM target);
+
 WITH existing_proxy AS (
     UPDATE proxies
     SET name = :'proxy_name',

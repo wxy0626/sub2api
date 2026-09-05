@@ -28,6 +28,8 @@ $状态文件 = Join-Path $日志目录 'sub2api-singapore-proxy-state.json'
 $标准输出日志 = Join-Path $日志目录 'sub2api-singapore-mihomo.out.log'
 # 专用实例标准错误日志。
 $标准错误日志 = Join-Path $日志目录 'sub2api-singapore-mihomo.err.log'
+# 配置语法校验专用错误日志：与运行中的实例错误日志分离，避免多节点循环时文件被占用导致校验失败。
+$配置测试错误文件 = Join-Path $运行目录 'sub2api-singapore-mihomo-test.err.log'
 # 专用节点探测日志：保存每个候选节点是否通过 ChatGPT TLS 验证。
 $探测日志 = Join-Path $日志目录 'sub2api-singapore-proxy-probe.log'
 
@@ -221,7 +223,7 @@ function 启动新加坡专用Mihomo {
         throw "未找到 Mihomo 程序：$Mihomo程序。请确认 Clash Verge 安装目录。"
     }
 
-    & $Mihomo程序 -t -d $ClashVerge数据目录 -f $运行配置文件 *> $标准错误日志
+    & $Mihomo程序 -t -d $ClashVerge数据目录 -f $运行配置文件 *> $配置测试错误文件
     if ($LASTEXITCODE -ne 0) {
         throw "新加坡专用 Mihomo 配置校验失败。请查看日志：$标准错误日志"
     }
