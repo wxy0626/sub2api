@@ -22,6 +22,125 @@ import (
 
 const upstreamModelsBodyLimit int64 = 8 << 20
 
+// 上游 v0.2.0 引入的模型目录元数据常量（models.dev 注册表与快照键）。
+const (
+	modelsDevRegistryURL                = "https://models.dev/api.json"
+	modelsDevRegistryTTL                = 6 * time.Hour
+	UpstreamModelMetadataExtraKey       = "upstream_model_metadata"
+	UpstreamModelMetadataIncompleteCode = "upstream_model_metadata_incomplete"
+)
+
+// UpstreamModelMetadata 描述单个上游模型的展示与能力元数据。
+type UpstreamModelMetadata struct {
+	ID                       string   `json:"id"`
+	DisplayName              string   `json:"display_name,omitempty"`
+	Description              string   `json:"description,omitempty"`
+	Reasoning                *bool    `json:"reasoning,omitempty"`
+	DefaultReasoningLevel    string   `json:"default_reasoning_level,omitempty"`
+	SupportedReasoningLevels []string `json:"supported_reasoning_levels,omitempty"`
+	InputModalities          []string `json:"input_modalities,omitempty"`
+	ContextWindow            int64    `json:"context_window,omitempty"`
+	MaxOutputTokens          int64    `json:"max_output_tokens,omitempty"`
+}
+
+// UpstreamModelMetadataSnapshot 是持久化到账号 extra 的元数据快照。
+type UpstreamModelMetadataSnapshot struct {
+	Source   string                           `json:"source"`
+	SyncedAt string                           `json:"synced_at"`
+	Models   map[string]UpstreamModelMetadata `json:"models"`
+}
+
+// UpstreamModelCatalog 是同步返回的模型目录与元数据集合。
+type UpstreamModelCatalog struct {
+	Models   []string                         `json:"models"`
+	Metadata map[string]UpstreamModelMetadata `json:"metadata,omitempty"`
+	Warnings []UpstreamModelSyncWarning       `json:"warnings,omitempty"`
+}
+
+// UpstreamModelSyncWarning 是同步过程中产生的非致命告警。
+type UpstreamModelSyncWarning struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+// modelsDevProvider 是 models.dev 注册表中的供应商条目。
+type modelsDevProvider struct {
+	ID     string                    `json:"id"`
+	Name   string                    `json:"name"`
+	API    string                    `json:"api"`
+	Models map[string]modelsDevModel `json:"models"`
+}
+
+// modelsDevModel 是 models.dev 注册表中的模型条目。
+type modelsDevModel struct {
+	ID               string                     `json:"id"`
+	Name             string                     `json:"name"`
+	Description      string                     `json:"description"`
+	Reasoning        *bool                      `json:"reasoning"`
+	ReasoningOptions []modelsDevReasoningOption `json:"reasoning_options"`
+	Modalities       modelsDevModalities        `json:"modalities"`
+	Limit            modelsDevLimit             `json:"limit"`
+}
+
+// modelsDevReasoningOption 描述模型的推理选项。
+type modelsDevReasoningOption struct {
+	Type   string `json:"type"`
+	Values []any  `json:"values"`
+}
+
+// modelsDevModalities 描述模型的输入/输出模态。
+type modelsDevModalities struct {
+	Input  []string `json:"input"`
+	Output []string `json:"output"`
+}
+
+// modelsDevLimit 描述模型的上下文与输出 token 上限。
+type modelsDevLimit struct {
+	Context int64 `json:"context"`
+	Output  int64 `json:"output"`
+}
+
+// SetUpstreamModelMetadataSnapshot 把元数据快照写入账号 extra。
+func (a *Account) SetUpstreamModelMetadataSnapshot(snapshot UpstreamModelMetadataSnapshot) {
+	if a == nil {
+		return
+	}
+	if a.Extra == nil {
+		a.Extra = make(map[string]any)
+	}
+	a.Extra[UpstreamModelMetadataExtraKey] = snapshot
+}
+
+// GetUpstreamModelMetadataSnapshot 从账号 extra 读取元数据快照。
+func (a *Account) GetUpstreamModelMetadataSnapshot() *UpstreamModelMetadataSnapshot {
+	if a == nil || a.Extra == nil {
+		return nil
+	}
+	raw, ok := a.Extra[UpstreamModelMetadataExtraKey]
+	if !ok || raw == nil {
+		return nil
+	}
+	body, err := json.Marshal(raw)
+	if err != nil {
+		return nil
+	}
+	var snapshot UpstreamModelMetadataSnapshot
+	if err := json.Unmarshal(body, &snapshot); err != nil || len(snapshot.Models) == 0 {
+		return nil
+	}
+	return &snapshot
+}
+
+// GetUpstreamModelMetadata 按模型 ID 读取元数据。
+func (a *Account) GetUpstreamModelMetadata(modelID string) (UpstreamModelMetadata, bool) {
+	snapshot := a.GetUpstreamModelMetadataSnapshot()
+	if snapshot == nil {
+		return UpstreamModelMetadata{}, false
+	}
+	metadata, ok := snapshot.Models[strings.TrimSpace(modelID)]
+	return metadata, ok
+}
+
 // syncedGPTModelVersionPattern 匹配可比较版本号的 GPT 模型，并要求后缀以连字符分隔。
 var syncedGPTModelVersionPattern = regexp.MustCompile(`^gpt-(\d+)(?:\.(\d))?(?:-|$)`)
 
@@ -85,6 +204,11 @@ func newUpstreamModelSyncUnsupportedError(message string, err error) error {
 
 func newUpstreamModelSyncUpstreamError(message string, err error) error {
 	return &UpstreamModelSyncError{Kind: UpstreamModelSyncErrorUpstream, Message: message, Err: err}
+}
+
+// newUpstreamModelSyncInternalError 标记"上游应答有效但本地持久化失败"的内部错误。
+func newUpstreamModelSyncInternalError(message string, err error) error {
+	return &UpstreamModelSyncError{Kind: UpstreamModelSyncErrorInternal, Message: message, Err: err}
 }
 
 // FetchUpstreamSupportedModels fetches the live model list from the account's upstream API format.
@@ -478,10 +602,7 @@ func (s *AccountTestService) fetchUpstreamModelList(ctx context.Context, account
 
 	if account.Platform == PlatformAntigravity && account.Type != AccountTypeAPIKey {
 		models, err := s.fetchAntigravityOAuthUpstreamModels(ctx, account)
-		if err != nil {
-			return nil, err
-		}
-		return filterSyncedModelIDs(models), nil
+		return models, nil, err
 	}
 
 	if s.httpUpstream == nil {
@@ -531,12 +652,12 @@ func (s *AccountTestService) fetchUpstreamModelList(ctx context.Context, account
 	}
 
 	if account.IsOpenAI() && isOfficialOpenAIUpstream(account) {
-		return filterSyncedModelIDs(models), nil
+		return filterSyncedModelIDs(models), body, nil
 	}
 
 	// Grok、Gemini 和 Anthropic 的模型命名不遵循 OpenAI GPT 白名单，保留其上游结果。
 	// 自定义 base_url 的 OpenAI 兼容端点同理：上游返回什么就作为可用模型目录。
-	return dedupeAndSortModelIDs(models), nil
+	return dedupeAndSortModelIDs(models), body, nil
 }
 
 // officialOpenAIUpstreamHostSuffixes 是 OpenAI 官方模型目录的域名后缀。

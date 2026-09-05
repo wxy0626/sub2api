@@ -59,9 +59,10 @@ func newAvailableModelsAccountTestService(upstream service.HTTPUpstream) *servic
 }
 
 type syncUpstreamHTTPUpstream struct {
-	resp    *http.Response
-	err     error
-	lastReq *http.Request
+	resp      *http.Response
+	err       error
+	lastReq   *http.Request
+	responses []*http.Response
 }
 
 func (u *syncUpstreamHTTPUpstream) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {

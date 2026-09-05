@@ -3150,7 +3150,8 @@ func (h *AccountHandler) SyncUpstreamModels(c *gin.Context) {
 		return
 	}
 
-	models, err := h.accountTestService.FetchUpstreamSupportedModels(c.Request.Context(), target)
+	// v0.2.0：同步时同时拉取模型列表与能力元数据并持久化快照。
+	catalog, err := h.accountTestService.SyncUpstreamModelCatalog(c.Request.Context(), target)
 	if err != nil {
 		if target.Platform == service.PlatformDeepSeek {
 			respondDeepSeekAvailableModelsError(c, target, err)

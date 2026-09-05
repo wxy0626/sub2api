@@ -1117,6 +1117,72 @@ image_edit_model_override = "grok-imagine-edit"
   ]
 }
 
+// 按分组平台生成 Codex CLI 的路由配置文件（v0.2.0：composite/多平台分组复用同一套模板）。
+function generateRoutedCodexFiles(
+  baseUrl: string,
+  apiKey: string,
+  platform: GroupPlatform
+): FileConfig[] {
+  const isWindows = activeTab.value === 'windows'
+  const configDir = isWindows ? '%userprofile%\\.codex' : '~/.codex'
+  const preferredModels: Partial<Record<GroupPlatform, string>> = {
+    openai: 'gpt-5.5',
+    anthropic: 'claude-sonnet-4-6',
+    gemini: 'gemini-2.5-pro',
+    antigravity: 'claude-sonnet-4-6',
+    grok: 'grok-4.5',
+    kimi: 'kimi-k2.5',
+    zhipu: 'glm-4.7',
+    deepseek: 'deepseek-v4-pro',
+    composite: 'gpt-5.5'
+  }
+  const preferredModel = preferredModels[platform] || ''
+  const model = selectCodexCatalogModel(preferredModel)
+  const labels: Record<GroupPlatform, string> = {
+    anthropic: 'Anthropic',
+    openai: 'OpenAI',
+    gemini: 'Gemini',
+    antigravity: 'Antigravity',
+    grok: 'Grok',
+    kimi: 'Kimi',
+    zhipu: 'Zhipu',
+    deepseek: 'DeepSeek',
+    composite: 'Composite'
+  }
+  const label = labels[platform]
+  const envContent = isWindows
+    ? `$env:SUB2API_API_KEY="${apiKey}"`
+    : `export SUB2API_API_KEY="${apiKey}"`
+
+  const configContent = `# Codex CLI -> Sub2API ${label} group
+model_provider = "sub2api"
+model = "${model}"
+review_model = "${model}"
+disable_response_storage = true
+model_catalog_json = "${escapeTomlBasicString(codexModelCatalogPath.value)}"
+
+[model_providers.sub2api]
+name = "Sub2API ${label}"
+base_url = "${baseUrl}"
+env_key = "SUB2API_API_KEY"
+wire_api = "responses"
+requires_openai_auth = false
+supports_websockets = false`
+
+  return [
+    { path: isWindows ? 'PowerShell' : 'Terminal', content: envContent },
+    {
+      path: joinConfigPath(configDir, 'config.toml', isWindows),
+      content: configContent,
+      hint: t(
+        platform === 'deepseek' || platform === 'composite'
+          ? `keys.useKeyModal.${platform}.codexConfigTomlHint`
+          : 'keys.useKeyModal.routedCodex.configTomlHint'
+      )
+    }
+  ]
+}
+
 function generateGrokCodexFiles(baseUrl: string, apiKey: string): FileConfig[] {
   // Codex config reference: wire_api = "responses" only; prefer env_key over experimental_bearer_token.
   // Non-OpenAI gateways should set supports_websockets = false (HTTP/SSE).

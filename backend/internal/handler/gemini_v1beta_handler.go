@@ -567,13 +567,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
 		// ForceCacheBilling 提前拍成标量，避免 worker 闭包保活 failover 状态里的响应体。
 		forceCacheBilling := fs.ForceCacheBilling
-		// 长上下文规则与模型广场/计费服务保持同源，避免入口重复维护阈值。
-		var longContextThreshold int
-		var longContextMultiplier float64
-		if rule := h.gatewayService.LegacyLongContextRule(service.PlatformGemini); rule != nil {
-			longContextThreshold = rule.Threshold
-			longContextMultiplier = rule.Multiplier
-		}
+		// v0.2.0 起长上下文阈值与倍率由渠道定价层自动计算，无需入口维护。
 		quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 		sessionID := service.ExtractClientSessionID(c)
 		// Gemini 成功入口只把已读取请求体的大小和生效上限传入异步任务。
@@ -581,26 +575,24 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		maxRequestBodyBytes := gatewayMaxBodySize(h.cfg)
 		h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 			if err := h.gatewayService.RecordUsageWithLongContext(ctx, &service.RecordUsageLongContextInput{
-				Result:                result,
-				QuotaPlatform:         quotaPlatform,
-				APIKey:                apiKey,
-				User:                  apiKey.User,
-				Account:               account,
-				Subscription:          subscription,
-				PricingAt:             pricingAt,
-				InboundEndpoint:       inboundEndpoint,
-				UpstreamEndpoint:      upstreamEndpoint,
-				UserAgent:             userAgent,
-				IPAddress:             clientIP,
-				RequestPayloadHash:    requestPayloadHash,
-				LongContextThreshold:  longContextThreshold,
-				LongContextMultiplier: longContextMultiplier,
-				ForceCacheBilling:     forceCacheBilling,
-				APIKeyService:         h.apiKeyService,
-				SessionID:             sessionID,
-				RequestBodyBytes:      requestBodyBytes,
-				MaxRequestBodyBytes:   maxRequestBodyBytes,
-				ChannelUsageFields:    clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel),
+				Result:              result,
+				QuotaPlatform:       quotaPlatform,
+				APIKey:              apiKey,
+				User:                apiKey.User,
+				Account:             account,
+				Subscription:        subscription,
+				PricingAt:           pricingAt,
+				InboundEndpoint:     inboundEndpoint,
+				UpstreamEndpoint:    upstreamEndpoint,
+				UserAgent:           userAgent,
+				IPAddress:           clientIP,
+				RequestPayloadHash:  requestPayloadHash,
+				ForceCacheBilling:   forceCacheBilling,
+				APIKeyService:       h.apiKeyService,
+				SessionID:           sessionID,
+				RequestBodyBytes:    requestBodyBytes,
+				MaxRequestBodyBytes: maxRequestBodyBytes,
+				ChannelUsageFields:  clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel),
 			}); err != nil {
 				logger.L().With(
 					zap.String("component", "handler.gemini_v1beta.models"),

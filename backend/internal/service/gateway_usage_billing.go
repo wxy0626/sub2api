@@ -620,7 +620,7 @@ func (s *GatewayService) RecordUsage(ctx context.Context, input *RecordUsageInpu
 		APIKeyService:       input.APIKeyService,
 		QuotaPlatform:       input.QuotaPlatform,
 		ChannelUsageFields:  input.ChannelUsageFields,
-	}, &recordUsageOpts{})
+	})
 }
 
 // RecordUsageLongContextInput 记录使用量的输入参数（支持长上下文双倍计费）
@@ -649,6 +649,8 @@ type RecordUsageLongContextInput struct {
 }
 
 // RecordUsageWithLongContext 记录使用量并扣费，支持长上下文双倍计费（用于 Gemini）
+// v0.2.0 起长上下文阈值与倍率由渠道定价层（billing_service）自动计算，
+// 此处仅透传基础计费字段，保持旧调用签名兼容。
 func (s *GatewayService) RecordUsageWithLongContext(ctx context.Context, input *RecordUsageLongContextInput) error {
 	return s.recordUsageCore(ctx, &recordUsageCoreInput{
 		Result:              input.Result,
@@ -669,9 +671,6 @@ func (s *GatewayService) RecordUsageWithLongContext(ctx context.Context, input *
 		APIKeyService:       input.APIKeyService,
 		QuotaPlatform:       input.QuotaPlatform,
 		ChannelUsageFields:  input.ChannelUsageFields,
-	}, &recordUsageOpts{
-		LongContextThreshold:  input.LongContextThreshold,
-		LongContextMultiplier: input.LongContextMultiplier,
 	})
 }
 

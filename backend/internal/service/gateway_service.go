@@ -1537,6 +1537,62 @@ func gatewayExplicitModelMapping(account *Account) (map[string]string, bool) {
 	}
 }
 
+// resolveCompositeModelOwnership 解析目标分组内"显式 model_mapping 声明该模型"
+// 的账号集合：唯一平台命中返回 Matched，多平台命中返回 Ambiguous。
+func (s *GatewayService) resolveCompositeModelOwnership(ctx context.Context, groupID int64, model string) (CompositeModelOwnership, error) {
+	model = strings.TrimSpace(model)
+	if s == nil || s.accountRepo == nil || groupID <= 0 || model == "" {
+		return CompositeModelOwnership{}, nil
+	}
+
+	cacheKey := compositeModelOwnershipCacheKey(groupID, model)
+	if s.modelsListCache != nil {
+		if cached, found := s.modelsListCache.Get(cacheKey); found {
+			if ownership, ok := cached.(CompositeModelOwnership); ok {
+				return ownership, nil
+			}
+		}
+	}
+
+	accounts, err := s.accountRepo.ListSchedulableByGroupID(ctx, groupID)
+	if err != nil {
+		return CompositeModelOwnership{}, err
+	}
+
+	platforms := make(map[string]struct{})
+	for _, account := range accounts {
+		platform := strings.TrimSpace(account.Platform)
+		if !isConcreteRequestPlatform(platform) || !explicitModelMappingClaims(account, model) {
+			continue
+		}
+		platforms[platform] = struct{}{}
+	}
+
+	ownership := CompositeModelOwnership{}
+	if len(platforms) == 1 {
+		for platform := range platforms {
+			ownership.TargetPlatform = platform
+		}
+		ownership.Matched = true
+	} else if len(platforms) > 1 {
+		ownership.Ambiguous = true
+	}
+
+	if s.modelsListCache != nil {
+		s.modelsListCache.Set(cacheKey, ownership, s.modelsListCacheTTL)
+	}
+	return ownership, nil
+}
+
+// explicitModelMappingClaims 判断账号凭据中的 model_mapping 是否显式声明了该模型。
+func explicitModelMappingClaims(account Account, model string) bool {
+	if account.Credentials == nil || model == "" {
+		return false
+	}
+	mapped, ok := stringMappingFromRaw(account.Credentials["model_mapping"])[model]
+	return ok && strings.TrimSpace(mapped) != ""
+}
+
 // GetSchedulablePlatforms returns the concrete platforms that currently have
 // schedulable accounts in the target group.
 func (s *GatewayService) GetSchedulablePlatforms(ctx context.Context, groupID *int64) map[string]struct{} {

@@ -1160,6 +1160,7 @@ export async function refreshOllamaCloudUsage(id: number): Promise<OllamaCloudUs
 export const accountsAPI = {
   list,
   listWithEtag,
+  getUpstreamBillingRatesWithEtag,
   getFilterOptions,
   getById,
   getCredential,
