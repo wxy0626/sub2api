@@ -8,11 +8,18 @@ import (
 )
 
 type CompositeRouteResolver struct {
-	repo CompositeModelRouteRepository
+	repo                   CompositeModelRouteRepository
+	modelOwnershipResolver CompositeModelOwnershipResolver
 }
 
 func NewCompositeRouteResolver(repo CompositeModelRouteRepository) *CompositeRouteResolver {
 	return &CompositeRouteResolver{repo: repo}
+}
+
+func (r *CompositeRouteResolver) SetModelOwnershipResolver(resolver CompositeModelOwnershipResolver) {
+	if r != nil {
+		r.modelOwnershipResolver = resolver
+	}
 }
 
 func (r *CompositeRouteResolver) Resolve(ctx context.Context, groupID int64, model, endpoint string) (CompositeRouteDecision, error) {

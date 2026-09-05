@@ -657,6 +657,9 @@ func parseVersion(v string) [3]int {
 	// 本地版本采用 local-X.Y.Z 命名，比较更新时仍按 X.Y.Z 的发布基础版本处理。
 	v = strings.TrimPrefix(v, "local-")
 	v = strings.TrimPrefix(v, "v")
+	if idx := strings.IndexByte(v, '-'); idx != -1 {
+		v = v[:idx]
+	}
 	parts := strings.Split(v, ".")
 	result := [3]int{0, 0, 0}
 	for i := 0; i < len(parts) && i < 3; i++ {

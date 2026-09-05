@@ -71,8 +71,9 @@ const (
 )
 
 const (
-	cacheTTLTarget5m = "5m"
-	cacheTTLTarget1h = "1h"
+	cacheTTLTarget5m                   = "5m"
+	cacheTTLTarget1h                   = "1h"
+	compositeModelOwnershipCachePrefix = "composite-owner|"
 )
 
 // ForceCacheBillingContextKey 强制缓存计费上下文键
@@ -528,6 +529,10 @@ func modelsListCacheKey(groupID *int64, platform string) string {
 	return fmt.Sprintf("%d|%s", derefGroupID(groupID), strings.TrimSpace(platform))
 }
 
+func compositeModelOwnershipCacheKey(groupID int64, model string) string {
+	return fmt.Sprintf("%s%d|%s", compositeModelOwnershipCachePrefix, groupID, strings.TrimSpace(model))
+}
+
 func prefetchedStickyGroupIDFromContext(ctx context.Context) (int64, bool) {
 	return PrefetchedStickyGroupIDFromContext(ctx)
 }
@@ -622,6 +627,8 @@ type ForwardResult struct {
 	FirstTokenMs                *int // 首字时间（流式请求）
 	ClientDisconnect            bool // 客户端是否在流式传输过程中断开
 	ReasoningEffort             *string
+	// RequestedReasoningEffort is the client-requested effort before mapping.
+	RequestedReasoningEffort *string
 	// ServiceTier records the tier requested by the client. OpenAI uses
 	// service_tier; Anthropic speed=fast is normalized to "fast". Usage recording
 	// lowers it to UpstreamResponseServiceTier when the upstream reports a
@@ -875,6 +882,9 @@ func NewGatewayService(
 		compositeResolver:     compositeResolver,
 		balanceNotifyService:  balanceNotifyService,
 		userPlatformQuotaRepo: userPlatformQuotaRepo,
+	}
+	if compositeResolver != nil {
+		compositeResolver.SetModelOwnershipResolver(svc.resolveCompositeModelOwnership)
 	}
 	svc.userGroupRateResolver = newUserGroupRateResolver(
 		userGroupRateRepo,
@@ -1559,6 +1569,7 @@ func (s *GatewayService) InvalidateAvailableModelsCache(groupID *int64, platform
 	if s == nil || s.modelsListCache == nil {
 		return
 	}
+	s.invalidateCompositeModelOwnershipCache(groupID)
 
 	normalizedPlatform := strings.TrimSpace(platform)
 	// 完整匹配时精准失效；否则按维度批量失效。
@@ -1584,6 +1595,26 @@ func (s *GatewayService) InvalidateAvailableModelsCache(groupID *int64, platform
 			continue
 		}
 		s.modelsListCache.Delete(key)
+	}
+}
+
+func (s *GatewayService) invalidateCompositeModelOwnershipCache(groupID *int64) {
+	for key := range s.modelsListCache.Items() {
+		if !strings.HasPrefix(key, compositeModelOwnershipCachePrefix) {
+			continue
+		}
+		if groupID == nil {
+			s.modelsListCache.Delete(key)
+			continue
+		}
+		parts := strings.SplitN(strings.TrimPrefix(key, compositeModelOwnershipCachePrefix), "|", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		cachedGroupID, err := strconv.ParseInt(parts[0], 10, 64)
+		if err == nil && cachedGroupID == *groupID {
+			s.modelsListCache.Delete(key)
+		}
 	}
 }
 

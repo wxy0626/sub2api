@@ -53,6 +53,9 @@ const messages: Record<string, string> = {
   'usage.ws': 'WS',
   'usage.stream': 'Stream',
   'usage.sync': 'Sync',
+  'usage.compactionFilter': 'Request Kind',
+  'usage.allCompactionTypes': 'All Requests',
+  'usage.compactionOnly': 'Compaction Only',
   'usage.exporting': 'Exporting',
   'usage.exportCsv': 'Export CSV',
   'usage.failedToLoad': 'Failed to load',
@@ -125,6 +128,7 @@ const usageLog = {
   billing_mode: 'token',
   request_type: 'sync',
   stream: false,
+  native_compaction_v2: false,
 }
 
 function mountUsageView() {
@@ -220,6 +224,7 @@ describe('user UsageView', () => {
   it('exports csv with current filters and without admin-only fields', async () => {
     const wrapper = mountUsageView()
     await flushPromises()
+    ;(wrapper.vm as any).filters.native_compaction_v2 = true
 
     let exportedBlob: Blob | null = null
     let csvContent = ''
@@ -244,6 +249,7 @@ describe('user UsageView', () => {
       page_size: 100,
       sort_by: 'created_at',
       sort_order: 'desc',
+      native_compaction_v2: true,
     }))
     expect(clickSpy).toHaveBeenCalled()
     expect(showSuccess).toHaveBeenCalled()

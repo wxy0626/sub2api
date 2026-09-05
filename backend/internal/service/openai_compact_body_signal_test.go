@@ -13,6 +13,15 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+func TestIsOpenAINativeCompactionV2ReadsOnlyRequestMarker(t *testing.T) {
+	c, _ := gin.CreateTestContext(nil)
+	require.False(t, IsOpenAINativeCompactionV2(c))
+
+	MarkOpenAINativeCompactionV2(c)
+	require.True(t, IsOpenAINativeCompactionV2(c))
+	require.False(t, IsOpenAINativeCompactionV2(nil))
+}
+
 func TestHasCompactionTriggerInInput_DetectsCompactSignal(t *testing.T) {
 	body := []byte(`{
 		"model":"gpt-5.5",
