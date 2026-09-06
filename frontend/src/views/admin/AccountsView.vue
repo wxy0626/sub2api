@@ -396,7 +396,7 @@
           </template>
           <template #cell-groups="{ row }">
             <AccountGroupsCell
-              :groups="row.groups"
+              :groups="accountGroupsForRow(row)"
               :group-ids="row.group_ids"
               :available-groups="groups"
               :platform="row.platform"
@@ -655,6 +655,15 @@ const authStore = useAuthStore()
 
 const proxies = ref<AccountProxy[]>([])
 const groups = ref<AdminGroup[]>([])
+// 分组 ID → 分组对象映射：lite 列表只返回 group_ids，用它还原分组标签。
+const groupsByID = computed<Map<number, AdminGroup>>(() => new Map(groups.value.map(group => [group.id, group])))
+// 行分组对象：优先用接口返回的 groups，缺失（lite 模式）时按 group_ids 映射补齐。
+const accountGroupsForRow = (account: Pick<AccountListItem, 'group_ids'> & { groups?: AdminGroup[] }): AdminGroup[] => {
+  if (account.groups && account.groups.length > 0) return account.groups
+  const groupIDs = account.group_ids ?? []
+  if (groupIDs.length === 0) return []
+  return groupIDs.map(id => groupsByID.value.get(id)).filter((group): group is AdminGroup => Boolean(group))
+}
 // 正在通过列表快捷保存分组的账号 ID。
 const savingGroupAccountID = ref<number | null>(null)
 // 可用代理下拉选项：仅暴露启用中的代理，首项用于清除账号代理绑定。
