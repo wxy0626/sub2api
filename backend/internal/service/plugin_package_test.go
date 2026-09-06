@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -33,7 +34,11 @@ func TestPluginPackageInstallerInstallUnsignedDevelopmentPackage(t *testing.T) {
 	assert.FileExists(t, installation.ArtifactPath)
 	info, statErr := os.Stat(installation.BinaryPath)
 	require.NoError(t, statErr)
-	assert.NotZero(t, info.Mode()&0o100)
+	// Windows 的 os.Stat 只对 .exe/.bat 等扩展名报告执行位，无扩展名二进制
+	// （bin/plugin）恒为 0666，执行位断言仅在 POSIX 平台有意义。
+	if runtime.GOOS != "windows" {
+		assert.NotZero(t, info.Mode()&0o100)
+	}
 	assert.Contains(t, installation.InstallPath, filepath.Join("installed", "com.example.openai-transport"))
 }
 
