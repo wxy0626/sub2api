@@ -383,22 +383,9 @@ func TestProviderProbeCapabilityMatrix(t *testing.T) {
 
 // --- 关联账号校验 ---
 
-func TestValidateLinkedAccount_Matrix(t *testing.T) {
-	svc := NewChannelMonitorService(nil, nil)
-	fetcher := newQuotaModeFetcher(map[int64]*Account{
-		1: {ID: 1, Platform: domain.PlatformKimi},
-	}, nil)
-	svc.SetQuotaFetcher(fetcher)
-
-	require.NoError(t, svc.validateLinkedAccount(context.Background(), MonitorProviderKimi, nil))
-	require.NoError(t, svc.validateLinkedAccount(context.Background(), MonitorProviderKimi, int64Ptr(0)))
-	require.NoError(t, svc.validateLinkedAccount(context.Background(), MonitorProviderKimi, int64Ptr(1)))
-	require.ErrorIs(t, svc.validateLinkedAccount(context.Background(), MonitorProviderZhipu, int64Ptr(1)), ErrChannelMonitorProviderIncompatible)
-	require.ErrorIs(t, svc.validateLinkedAccount(context.Background(), MonitorProviderKimi, int64Ptr(404)), ErrChannelMonitorAccountRequired)
-
-	noFetcher := NewChannelMonitorService(nil, nil)
-	require.ErrorIs(t, noFetcher.validateLinkedAccount(context.Background(), MonitorProviderKimi, int64Ptr(1)), ErrChannelMonitorAccountRequired)
-}
+// 注：原 TestValidateLinkedAccount_Matrix 随 validateLinkedAccount 方法被
+// revalidateLinkedAccount 重构取代而删除，写入时校验语义由
+// TestRevalidateLinkedAccount_* 系列测试覆盖。
 
 func TestRevalidateLinkedAccount_QuotaErrorsProbeUnbinds(t *testing.T) {
 	fetcher := newQuotaModeFetcher(nil, nil) // 账号一律加载失败
@@ -517,16 +504,6 @@ func TestMonitorAccountQuotaCapability_Matrix(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestValidateLinkedAccount_CapabilityRejected(t *testing.T) {
-	svc := NewChannelMonitorService(nil, nil)
-	svc.SetQuotaFetcher(newQuotaModeFetcher(map[int64]*Account{
-		1: {ID: 1, Platform: domain.PlatformDeepseek, Credentials: map[string]any{"account_mode": AccountModeCoding}},
-	}, nil))
-
-	err := svc.validateLinkedAccount(context.Background(), MonitorProviderDeepseek, int64Ptr(1))
-	require.ErrorIs(t, err, ErrChannelMonitorAccountNotSupportable)
 }
 
 func TestRevalidateLinkedAccount_Capability(t *testing.T) {
