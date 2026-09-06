@@ -805,8 +805,15 @@ func (s *AccountTestService) fetchUpstreamModelList(ctx context.Context, account
 		return filterSyncedModelIDs(models), body, nil
 	}
 
+	if account.IsOpenAI() {
+		// 自定义 base_url 的 OpenAI 兼容中转：部分站点（如 sub2api 站）的 /v1/models
+		// 会返回内置目录全集，包含官方早已淘汰的旧版 GPT。gpt-* 模型沿用官方
+		// 同步白名单（5.6+/gpt-image-2）；非 gpt 前缀的第三方模型（glm-/kimi-/
+		// minimax- 等）是中转真实提供的能力，直接放行。
+		return filterOpenAICompatibleSyncedModelIDs(models), body, nil
+	}
+
 	// Grok、Gemini 和 Anthropic 的模型命名不遵循 OpenAI GPT 白名单，保留其上游结果。
-	// 自定义 base_url 的 OpenAI 兼容端点同理：上游返回什么就作为可用模型目录。
 	return dedupeAndSortModelIDs(models), body, nil
 }
 
@@ -1718,6 +1725,22 @@ func filterSyncedModelIDs(models []string) []string {
 		if isSyncedModelAllowed(normalizedModel) {
 			filteredModels = append(filteredModels, normalizedModel)
 		}
+	}
+	return dedupeAndSortModelIDs(filteredModels)
+}
+
+// filterOpenAICompatibleSyncedModelIDs 过滤 OpenAI 兼容中转的同步目录：
+// gpt-* 模型沿用官方同步白名单（GPT-5.6+ 与 GPT Image 2），
+// 非 gpt 前缀的第三方模型（glm-/kimi-/minimax-/deepseek- 等）按中转实际目录保留。
+func filterOpenAICompatibleSyncedModelIDs(models []string) []string {
+	filteredModels := make([]string, 0, len(models))
+	for _, model := range models {
+		normalizedModel := strings.TrimSpace(model)
+		// 仅对 gpt 前缀应用官方白名单门槛，其余前缀视为中转自有模型放行。
+		if strings.HasPrefix(strings.ToLower(normalizedModel), "gpt-") && !isSyncedModelAllowed(normalizedModel) {
+			continue
+		}
+		filteredModels = append(filteredModels, normalizedModel)
 	}
 	return dedupeAndSortModelIDs(filteredModels)
 }

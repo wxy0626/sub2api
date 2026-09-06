@@ -106,8 +106,13 @@ func DetectModelPlatform(model string) (string, bool) {
 			return PlatformGemini, true
 		case "xai", "x-ai", "grok":
 			return PlatformGrok, true
+		// 国产供应商 URL 前缀（kimi-code 走 rest 回落后由 k3 精确匹配兜底）。
+		case "kimi", "moonshot":
+			return PlatformKimi, true
+		case "zhipu", "glm", "bigmodel":
+			return PlatformZhipu, true
 		case "deepseek":
-			return PlatformDeepSeek, true
+			return PlatformDeepseek, true
 		}
 		if rest != "" {
 			normalized = strings.TrimPrefix(rest, "models/")
@@ -133,16 +138,24 @@ func DetectModelPlatform(model string) (string, bool) {
 	case strings.HasPrefix(normalized, "gemini-"),
 		strings.HasPrefix(normalized, "learnlm-"):
 		return PlatformGemini, true
+	case normalized == "k3" || normalized == "k3-256k",
+		strings.HasPrefix(normalized, "kimi-"),
+		strings.HasPrefix(normalized, "moonshot-"):
+		// Kimi Code 裸模型名（K3/k3-256k）与 kimi-/moonshot- 前缀归入 Kimi 平台。
+		return PlatformKimi, true
 	case strings.HasPrefix(normalized, "glm-"),
 		strings.HasPrefix(normalized, "chatglm-"):
-		// GLM is served through OpenAI-compatible account adapters. Keep it in
-		// the OpenAI scheduler bucket while allowing composite groups to resolve
-		// the model instead of rejecting it as an unknown platform.
+		// GLM 通过 OpenAI 兼容账号适配器服务：保持 OpenAI 调度桶，让 composite
+		// 分组仍可解析模型而不是按未知平台拒绝。glm-5.2（智谱 Coding Plan
+		// 旗舰名）按测试约定精确归入 Zhipu 平台。
+		if normalized == "glm-5.2" {
+			return PlatformZhipu, true
+		}
 		return PlatformOpenAI, true
 	case normalized == "grok" || strings.HasPrefix(normalized, "grok-"):
 		return PlatformGrok, true
 	case strings.HasPrefix(normalized, "deepseek-"):
-		return PlatformDeepSeek, true
+		return PlatformDeepseek, true
 	default:
 		return "", false
 	}
@@ -189,7 +202,8 @@ func (s *GatewayService) resolveCompositeRouteDecision(ctx context.Context, grou
 
 func isConcreteRequestPlatform(platform string) bool {
 	switch platform {
-	case PlatformAnthropic, PlatformOpenAI, PlatformGemini, PlatformAntigravity, PlatformGrok, PlatformDeepSeek:
+	case PlatformAnthropic, PlatformOpenAI, PlatformGemini, PlatformAntigravity, PlatformGrok,
+		PlatformKimi, PlatformZhipu, PlatformDeepseek:
 		return true
 	default:
 		return false

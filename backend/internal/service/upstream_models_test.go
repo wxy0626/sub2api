@@ -225,7 +225,8 @@ func TestFetchUpstreamSupportedModelsParsesOpenAIOAuthManifest(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	require.Equal(t, []string{"gpt-5.5-codex", "gpt-5.6-sol"}, models)
+	// 官方端点走 GPT-5.6+ 同步白名单：gpt-5.5-codex 低于门槛被裁，仅保留 5.6+。
+	require.Equal(t, []string{"gpt-5.6-sol"}, models)
 	require.Equal(t, "Bearer openai-oauth-token", upstream.lastReq.Header.Get("Authorization"))
 }
 
@@ -1081,7 +1082,8 @@ func TestFetchUpstreamSupportedModelsKeepsFullCatalogForOpenAICompatibleProxy(t 
 		},
 	})
 	require.NoError(t, err)
-	require.Equal(t, []string{"claude-sonnet-4-6", "gemini-3-pro-preview", "gpt-4o", "gpt-5.6-luna"}, models)
+	// gpt-4o 低于 GPT-5.6 白名单门槛被裁掉；非 gpt 前缀的第三方模型放行。
+	require.Equal(t, []string{"claude-sonnet-4-6", "gemini-3-pro-preview", "gpt-5.6-luna"}, models)
 	require.Equal(t, "https://proxy.example.com/v1/models", upstream.lastReq.URL.String())
 	require.Equal(t, "Bearer proxy-key", upstream.lastReq.Header.Get("Authorization"))
 }
@@ -1271,7 +1273,7 @@ func TestSyncUpstreamModelCatalogAstraPartialRefreshPreservesKnownCapabilities(t
 	upstream := &httpUpstreamRecorder{responses: []*http.Response{
 		{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"data":[
 			{"id":"gpt-6-astra","supports_search_tool":false,"apply_patch_tool_type":null},
-			{"id":"still-listed"},{"id":"gpt-image-2"}
+			{"id":"gpt-5.6-still-listed"},{"id":"gpt-image-2"}
 		]}`))},
 		{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"openai":{"id":"openai","models":{
 			"gpt-6-astra":{"reasoning":true,"reasoning_options":[{"type":"effort","values":["low","medium","high","xhigh","max"]}],"modalities":{"input":["text","image"]},"limit":{"context":1050000,"output":128000}},
@@ -1285,9 +1287,10 @@ func TestSyncUpstreamModelCatalogAstraPartialRefreshPreservesKnownCapabilities(t
 		Credentials: map[string]any{"api_key": "test", "base_url": "https://api.openai.com/v1",
 			"model_mapping": map[string]any{"public-model": "mapped-only"}},
 	}
-	old := UpstreamModelMetadata{ID: "still-listed", ContextWindow: 256000}
+	// 载体用带版本号的 gpt-5.6-* 以通过同步白名单（无版本号模型会被裁掉，测试前提失效）。
+	old := UpstreamModelMetadata{ID: "gpt-5.6-still-listed", ContextWindow: 256000}
 	account.SetUpstreamModelMetadataSnapshot(UpstreamModelMetadataSnapshot{Models: map[string]UpstreamModelMetadata{
-		"still-listed": old, "removed": {ID: "removed", ContextWindow: 128000},
+		"gpt-5.6-still-listed": old, "removed": {ID: "removed", ContextWindow: 128000},
 		"gpt-6-astra": {ID: "gpt-6-astra", CodexToolCapabilities: map[string]json.RawMessage{
 			"supports_search_tool": json.RawMessage("true"), "apply_patch_tool_type": json.RawMessage(`"freeform"`),
 			"comp_hash": json.RawMessage(`"3000"`),
@@ -1299,7 +1302,7 @@ func TestSyncUpstreamModelCatalogAstraPartialRefreshPreservesKnownCapabilities(t
 	require.Equal(t, UpstreamModelMetadataPartialCode, catalog.Warnings[0].Code)
 	require.NotContains(t, catalog.Models, "mapped-only", "capability enrichment must not change discovery")
 	snapshot := account.GetUpstreamModelMetadataSnapshot()
-	require.Equal(t, old, snapshot.Models["still-listed"])
+	require.Equal(t, old, snapshot.Models["gpt-5.6-still-listed"])
 	require.NotContains(t, snapshot.Models, "removed")
 	require.NotContains(t, snapshot.Models, "gpt-image-2")
 	require.Contains(t, snapshot.Models, "mapped-only")

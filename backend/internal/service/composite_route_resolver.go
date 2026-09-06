@@ -58,20 +58,49 @@ func (r *CompositeRouteResolver) Resolve(ctx context.Context, groupID int64, mod
 		}
 	}
 
-	// OpenAI-compatible endpoints must not infer a vendor from the model ID.
-	// A private OpenAI-compatible upstream may expose Gemini, GLM, Qwen, Llama,
-	// or any other model name. The account's model_mapping is the authority for
-	// eligibility; composite routing only needs to select the OpenAI scheduler.
+	// 账号归属（model_mapping 是权威）：识别模型由哪个平台的账号显式声明。
+	// 目录暂时不可用时，可被内置检测器识别的模型仍走 detector；未知别名不能瞎猜。
+	if r != nil && r.modelOwnershipResolver != nil && groupID > 0 {
+		ownership, err := r.modelOwnershipResolver(ctx, groupID, model)
+		if err != nil {
+			if _, detectable := DetectModelPlatform(model); !detectable {
+				return decision, fmt.Errorf("resolve account model ownership: %w", err)
+			}
+		} else if ownership.Ambiguous {
+			decision.Reason = "model is exposed by multiple provider platforms"
+			return decision, nil
+		} else if ownership.Matched {
+			platform := strings.TrimSpace(ownership.TargetPlatform)
+			if !isConcreteRequestPlatform(platform) {
+				decision.Reason = "account model ownership has no concrete target platform"
+				return decision, nil
+			}
+			return CompositeRouteDecision{
+				Matched:        true,
+				Source:         CompositeRouteSourceAccount,
+				GroupID:        groupID,
+				PublicModel:    model,
+				TargetPlatform: platform,
+				UpstreamModel:  model,
+				Endpoint:       endpoint,
+			}, nil
+		}
+	}
+
+	// OpenAI 兼容端点兜底：ownership 未接线/未命中且模型不可被内置检测器识别时，
+	// 不猜厂商，直接进入 OpenAI 调度桶（私有兼容上游可能暴露任意模型名）。
 	if isOpenAICompatibleCompositeEndpoint(endpoint) {
-		return CompositeRouteDecision{
-			Matched:        true,
-			Source:         CompositeRouteSourceDetector,
-			GroupID:        groupID,
-			PublicModel:    model,
-			TargetPlatform: PlatformOpenAI,
-			UpstreamModel:  model,
-			Endpoint:       endpoint,
-		}, nil
+		if _, detectable := DetectModelPlatform(model); !detectable {
+			return CompositeRouteDecision{
+				Matched:        true,
+				Source:         CompositeRouteSourceDetector,
+				GroupID:        groupID,
+				PublicModel:    model,
+				TargetPlatform: PlatformOpenAI,
+				UpstreamModel:  model,
+				Endpoint:       endpoint,
+			}, nil
+		}
 	}
 
 	if platform, ok := DetectModelPlatform(model); ok {
@@ -89,6 +118,7 @@ func (r *CompositeRouteResolver) Resolve(ctx context.Context, groupID int64, mod
 	return decision, nil
 }
 
+// isOpenAICompatibleCompositeEndpoint 判断端点是否为 OpenAI 兼容协议（可安全进入 OpenAI 调度桶）。
 func isOpenAICompatibleCompositeEndpoint(endpoint string) bool {
 	switch normalizeCompositeRouteEndpoint(endpoint) {
 	case CompositeRouteEndpointChatCompletions, CompositeRouteEndpointResponses, CompositeRouteEndpointEmbeddings:
