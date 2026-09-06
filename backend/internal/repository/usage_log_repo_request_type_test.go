@@ -963,6 +963,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullInt64{}, // request_body_bytes
 			sql.NullInt64{}, // max_request_body_bytes
 			sql.NullString{},
+			sql.NullString{}, // upstream_request_id
 			false, // native_compaction_v2
 			now,
 		}})
@@ -1044,6 +1045,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullInt64{},   // request_body_bytes
 			sql.NullInt64{},   // max_request_body_bytes
 			sql.NullString{},  // session_id
+			sql.NullString{},  // upstream_request_id
 			false,             // native_compaction_v2
 			now,
 		}})
@@ -1108,6 +1110,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullInt64{},   // request_body_bytes
 			sql.NullInt64{},   // max_request_body_bytes
 			sql.NullString{},  // session_id
+			sql.NullString{},  // upstream_request_id
 			true,              // native_compaction_v2
 			now,
 		}})
@@ -1173,6 +1176,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullInt64{},   // request_body_bytes
 			sql.NullInt64{},   // max_request_body_bytes
 			sql.NullString{},  // session_id
+			sql.NullString{},  // upstream_request_id
 			false,             // native_compaction_v2
 			now,
 		}})
@@ -1185,9 +1189,9 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 
 // TestUsageLogSelectColumnsMatchesScannerContract 防止查询列清单与扫描顺序再次漂移。
 func TestUsageLogSelectColumnsMatchesScannerContract(t *testing.T) {
-	// 查询字段顺序必须与 scanUsageLog 的 62 个接收目标保持一致。
+	// 查询字段顺序必须与 scanUsageLog 的 65 个接收目标保持一致。
 	columns := strings.Split(usageLogSelectColumns, ", ")
-	require.Len(t, columns, 62)
+	require.Len(t, columns, 65)
 	require.Equal(t, []string{
 		"upstream_model",
 		"upstream_response_model",
