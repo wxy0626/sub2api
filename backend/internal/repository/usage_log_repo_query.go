@@ -707,6 +707,9 @@ func scanUsageLog(scanner interface{ Scan(...any) error }) (*service.UsageLog, e
 	if sessionID.Valid {
 		log.SessionID = &sessionID.String
 	}
+	if upstreamRequestID.Valid {
+		log.UpstreamRequestID = &upstreamRequestID.String
+	}
 
 	return log, nil
 }

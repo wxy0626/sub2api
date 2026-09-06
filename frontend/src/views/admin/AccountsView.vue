@@ -1294,7 +1294,7 @@ const {
   debouncedReload: baseDebouncedReload,
   handlePageChange: baseHandlePageChange,
   handlePageSizeChange: baseHandlePageSizeChange
-} = useTableLoader<Account, any>({
+} = useTableLoader<AccountListItem, any>({
   fetchFn: adminAPI.accounts.list,
   initialParams: {
     platform: '',
@@ -1302,6 +1302,7 @@ const {
     group: '',
     proxy_id: '',
     search: '',
+    lite: '1',
     include_scheduler_score: shouldIncludeSchedulerScore() ? '1' : '0',
     sort_by: sortState.sort_by,
     sort_order: sortState.sort_order
@@ -1322,7 +1323,7 @@ const {
   toggleVisible,
   selectVisible: selectCurrentPage,
   batchUpdate
-} = useTableSelection<Account>({
+} = useTableSelection<AccountListItem>({
   rows: accounts,
   getId: (account) => account.id
 })
@@ -1365,8 +1366,6 @@ const resetAutoRefreshCache = () => {
   upstreamBillingRateETag.value = null
 }
 
-const isFirstLoad = ref(true)
-
 type AccountLoadOptions = {
   refreshTodayStats?: boolean
 }
@@ -1377,14 +1376,8 @@ const load = async (options: AccountLoadOptions = {}) => {
   hasPendingListSync.value = false
   resetAutoRefreshCache()
   pendingTodayStatsRefresh.value = false
-  if (isFirstLoad.value) {
-    requestParams.lite = '1'
-  }
+  requestParams.lite = '1'
   await baseLoad()
-  if (isFirstLoad.value) {
-    isFirstLoad.value = false
-    delete requestParams.lite
-  }
   if (options.refreshTodayStats !== false) await refreshTodayStatsBatch()
 }
 
@@ -2147,7 +2140,27 @@ const cols = computed(() =>
   )
 )
 
-const handleEdit = (a: Account) => { edAcc.value = a; showEdit.value = true }
+const accountDetailLoading = new Set<number>()
+const loadAccountDetails = async (account: Pick<AccountListItem, 'id'>): Promise<Account | null> => {
+  if (accountDetailLoading.has(account.id)) return null
+  accountDetailLoading.add(account.id)
+  try {
+    return await adminAPI.accounts.getById(account.id)
+  } catch (error) {
+    console.error('Failed to load account details:', error)
+    appStore.showError(extractApiErrorMessage(error, t('common.error')))
+    return null
+  } finally {
+    accountDetailLoading.delete(account.id)
+  }
+}
+
+const handleEdit = async (a: AccountListItem) => {
+  const account = await loadAccountDetails(a)
+  if (!account) return
+  edAcc.value = account
+  showEdit.value = true
+}
 const openMenu = (a: Account, e: MouseEvent) => {
   menu.acc = a
 

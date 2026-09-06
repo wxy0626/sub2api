@@ -29,8 +29,20 @@ function onEnter() {
   openTooltip()
 }
 
-function onLeave() {
+function isInside(container: HTMLElement | null, target: EventTarget | null): boolean {
+  return target instanceof Node && !!container?.contains(target)
+}
+
+// 悬停模式下指针在触发图标与提示框之间往返时保持打开，便于选中提示里的文字。
+function onLeave(event: MouseEvent) {
   if (props.trigger !== 'hover') return
+  if (isInside(tooltipRef.value, event.relatedTarget)) return
+  closeTooltip()
+}
+
+function onTooltipLeave(event: MouseEvent) {
+  if (props.trigger !== 'hover') return
+  if (isInside(triggerRef.value, event.relatedTarget)) return
   closeTooltip()
 }
 
@@ -116,6 +128,7 @@ onBeforeUnmount(() => {
 
     <!-- Teleport to body to escape modal overflow clipping -->
     <Teleport to="body">
+      <!-- before: 伪元素向下延伸一段透明区域，盖住提示框与触发图标之间的空隙，让指针能连续移入提示框。 -->
       <div
         ref="tooltip"
         v-show="show"
