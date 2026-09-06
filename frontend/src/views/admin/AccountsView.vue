@@ -642,7 +642,7 @@ import { buildGrokUsageRefreshKey, buildOpenAIUsageRefreshKey } from '@/utils/ac
 import { formatDateTime, formatRelativeTime } from '@/utils/format'
 import { proxyExpiryBadgeClass, proxyExpiryLabelKey } from '@/utils/proxyExpiry'
 import { extractApiErrorMessage } from '@/utils/apiError'
-import { resolveAccountTestModeForModel, resolveAccountTestModelSelection } from '@/utils/accountTestModelSelection'
+import { collectAccountMappingModelIDs, resolveAccountTestModeForModel, resolveAccountTestModelSelection } from '@/utils/accountTestModelSelection'
 import type { AccountTestMode } from '@/api/admin/accounts'
 import { sanitizeUrl } from '@/utils/url'
 import { getFloatingPanelPosition } from '@/utils/floatingPanel'
@@ -2329,7 +2329,14 @@ const testAccountWithSelectedModel = async (account: Account | undefined, accoun
     throw new Error('模型检测无法开始：未能读取账号信息，请刷新列表后重试。技术详情：account metadata unavailable')
   }
   const models = await adminAPI.accounts.getAvailableModels(accountID)
-  const selection = resolveAccountTestModelSelection(account.platform, models)
+  // 账号 credentials.model_mapping 的源模型（白名单/映射）在过滤中放行，与测试弹窗下拉保持一致。
+  const selection = resolveAccountTestModelSelection(
+    account.platform,
+    models,
+    collectAccountMappingModelIDs(
+      account.credentials?.model_mapping as Record<string, unknown> | undefined
+    )
+  )
   if (!selection.modelId) {
     throw new Error('模型检测无法开始：账号未返回可用于测试的模型，请检查账号授权、模型映射或上游权限。技术详情：available_models is empty after test-model filtering')
   }

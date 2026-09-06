@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { resolveAccountTestModeForModel, resolveAccountTestModelSelection } from '@/utils/accountTestModelSelection'
+import {
+  collectAccountMappingModelIDs,
+  resolveAccountTestModeForModel,
+  resolveAccountTestModelSelection
+} from '@/utils/accountTestModelSelection'
 import type { ClaudeModel } from '@/types'
 
 // createModel 构造账号模型接口返回的最小完整模型数据，便于验证纯预填规则。
@@ -134,5 +138,54 @@ describe('accountTestModelSelection', () => {
     expect(resolveAccountTestModeForModel('deepseek', 'DeepSeek-V4-Flash')).toBe('responses')
     expect(resolveAccountTestModeForModel('deepseek', 'deepseek-chat')).toBe('default')
     expect(resolveAccountTestModeForModel('openai', 'deepseek-v4-flash')).toBe('default')
+  })
+
+  it('OpenAI 账号白名单（model_mapping）中的模型即使未标记 upstream 也全部放行', () => {
+    const selection = resolveAccountTestModelSelection(
+      'openai',
+      [
+        createModel('gpt-5.6-sol'),
+        createModel('gpt-5.6-luna'),
+        createModel('gpt-6'),
+        createModel('my-custom-proxy-model')
+      ],
+      collectAccountMappingModelIDs({
+        'gpt-5.6-sol': 'gpt-5.6-sol',
+        'gpt-5.6-luna': 'gpt-5.6-luna',
+        'gpt-6': 'gpt-6',
+        'my-custom-proxy-model': 'my-custom-proxy-model'
+      })
+    )
+
+    // 未传入白名单时 gpt-6 与自定义模型会被原过滤规则滤掉；传入后必须全部保留。
+    expect(selection.models.map((model) => model.id)).toEqual([
+      'gpt-5.6-sol',
+      'gpt-5.6-luna',
+      'gpt-6',
+      'my-custom-proxy-model'
+    ])
+    expect(selection).toMatchObject({ modelId: 'gpt-5.6-luna', mode: 'default' })
+  })
+
+  it('OpenAI 白名单外且未标记 upstream 的模型仍被过滤，白名单只放行自身条目', () => {
+    const selection = resolveAccountTestModelSelection(
+      'openai',
+      [createModel('gpt-6'), createModel('unlisted-model')],
+      collectAccountMappingModelIDs({ 'gpt-6': 'gpt-6' })
+    )
+
+    expect(selection.models.map((model) => model.id)).toEqual(['gpt-6'])
+  })
+
+  it('collectAccountMappingModelIDs 提取映射源模型并忽略空白键', () => {
+    expect(
+      collectAccountMappingModelIDs({
+        'gpt-6': 'gpt-6',
+        'request-model': 'upstream-model',
+        '  ': 'ignored'
+      })
+    ).toEqual(['gpt-6', 'request-model'])
+    expect(collectAccountMappingModelIDs(undefined)).toEqual([])
+    expect(collectAccountMappingModelIDs(null)).toEqual([])
   })
 })

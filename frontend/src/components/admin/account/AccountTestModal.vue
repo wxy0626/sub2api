@@ -377,7 +377,7 @@ import { buildApiUrl } from '@/api/client'
 import { ADMIN_UI_REQUEST_HEADER } from '@/api/adminUIRequest'
 import { adminAPI } from '@/api/admin'
 import { normalizeDisplayErrorMessage } from '@/utils/errorMessage'
-import { resolveAccountTestModeForModel, resolveAccountTestModelSelection } from '@/utils/accountTestModelSelection'
+import { collectAccountMappingModelIDs, resolveAccountTestModeForModel, resolveAccountTestModelSelection } from '@/utils/accountTestModelSelection'
 import type { AccountTestMode } from '@/api/admin/accounts'
 import type { Account, ClaudeModel } from '@/types'
 
@@ -856,7 +856,14 @@ const loadAvailableModels = async () => {
   try {
     const models = await adminAPI.accounts.getAvailableModels(props.account.id)
     // 弹窗与状态栏快捷检测必须共享同一预填模型，避免同账号检测到不同模型。
-    const selection = resolveAccountTestModelSelection(props.account.platform, models)
+    // 账号 credentials.model_mapping 的源模型（白名单/映射）在过滤中放行，保证白名单模型必出现在下拉中。
+    const selection = resolveAccountTestModelSelection(
+      props.account.platform,
+      models,
+      collectAccountMappingModelIDs(
+        props.account.credentials?.model_mapping as Record<string, unknown> | undefined
+      )
+    )
     availableModels.value = selection.models
     selectedModelId.value = selection.modelId
     // 未保存模式的 DeepSeek 账号让 V4 Flash 直接使用 Responses，其余模型使用 Chat。

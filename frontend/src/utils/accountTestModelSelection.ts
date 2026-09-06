@@ -19,15 +19,30 @@ const openAINonOpenAITestModelPatterns = ['gemini-*', 'gemini:*']
 const upstreamCatalogOwner = 'upstream'
 
 // matchesOpenAITestModel 判断 OpenAI 平台下某模型是否可用于测试：
-// 上游实时目录模型全部放行；否则命中白名单固定 ID，或命中非 OpenAI 第三方模型前缀（仅尾部 * 通配）。
-function matchesOpenAITestModel(model: ClaudeModel): boolean {
+// 上游实时目录模型全部放行；账号 model_mapping（模型白名单/映射）中的源模型一律放行——
+// 管理员在白名单里配置的模型必须出现在测试下拉中；否则命中白名单固定 ID，
+// 或命中非 OpenAI 第三方模型前缀（仅尾部 * 通配）。
+function matchesOpenAITestModel(model: ClaudeModel, allowedIDs: Set<string>): boolean {
   if (model.owned_by === upstreamCatalogOwner) return true
+  if (allowedIDs.has(model.id)) return true
   const modelID = model.id
   if (openAITestModelIDs.has(modelID)) return true
   return openAINonOpenAITestModelPatterns.some((pattern) => {
     if (!pattern.endsWith('*')) return modelID === pattern
     return modelID.startsWith(pattern.slice(0, -1))
   })
+}
+
+// collectAccountMappingModelIDs 提取账号 model_mapping 的源模型 ID 列表。
+// 账号的"模型白名单"与"模型映射"统一存放在 model_mapping 中：白名单条目 from === to，
+// 映射条目 from 是请求侧模型。这些源模型都是管理员明确允许该账号使用的模型。
+export function collectAccountMappingModelIDs(
+  modelMapping?: Record<string, unknown> | null
+): string[] {
+  if (!modelMapping || typeof modelMapping !== 'object') return []
+  return Object.keys(modelMapping)
+    .map(modelID => modelID.trim())
+    .filter(modelID => modelID.length > 0)
 }
 
 // 账号连接测试的统一首选模型 ID：可用列表含 Luna 时优先使用。
@@ -91,17 +106,22 @@ function sortDeepSeekTestModels(models: ClaudeModel[]): ClaudeModel[] {
 }
 
 // resolveAccountTestModelSelection 复用模型测试弹窗的过滤、排序及单一预填模型选择规则。
+// allowedModelIDs 是账号 model_mapping 的源模型 ID（collectAccountMappingModelIDs 的结果），
+// 这些模型在 OpenAI 平台过滤中一律放行，保证"白名单里配置的模型都能在测试下拉中选择"。
 export function resolveAccountTestModelSelection(
   platform: AccountPlatform,
-  models: ClaudeModel[]
+  models: ClaudeModel[],
+  allowedModelIDs: string[] = []
 ): AccountTestModelSelection {
   // OpenAI 测试模型白名单只影响管理员模型测试，不改变账号模型映射或网关模型列表。
   // 后端标记为上游实时目录（owned_by='upstream'）的模型全部放行：只要端点兼容 OpenAI 协议，
   // 上游返回什么模型就能测什么，不再限制为 GPT 模型。
+  // 账号 model_mapping 中的源模型（模型白名单/映射）同样全部放行。
   // 内置默认模型集仍保持原白名单限制，并继续放行 gemini-* 等已知非 OpenAI 前缀。
   // 若全部被滤空（上游只返回其它未放开前缀的模型），回退到上游返回的全部模型，保证仍可测试。
+  const allowedIDSet = new Set(allowedModelIDs)
   let filteredModels = platform === 'openai'
-    ? models.filter((model) => matchesOpenAITestModel(model))
+    ? models.filter((model) => matchesOpenAITestModel(model, allowedIDSet))
     : models
   if (platform === 'openai' && filteredModels.length === 0) {
     filteredModels = models

@@ -252,7 +252,7 @@ import { useClipboard } from '@/composables/useClipboard'
 import { buildApiUrl } from '@/api/client'
 import { adminAPI } from '@/api/admin'
 import { normalizeDisplayErrorMessage } from '@/utils/errorMessage'
-import { resolveAccountTestModelSelection } from '@/utils/accountTestModelSelection'
+import { collectAccountMappingModelIDs, resolveAccountTestModelSelection } from '@/utils/accountTestModelSelection'
 import type { Account, ClaudeModel } from '@/types'
 
 const { t } = useI18n()
@@ -341,7 +341,14 @@ const loadAvailableModels = async () => {
   try {
     const models = await adminAPI.accounts.getAvailableModels(props.account.id)
     // 统一复用账号测试模型选择规则，DeepSeek 会优先选择 deepseek-v4-flash。
-    const selection = resolveAccountTestModelSelection(props.account.platform, models)
+    // 账号 credentials.model_mapping 的源模型（白名单/映射）在过滤中放行，保证白名单模型必出现在下拉中。
+    const selection = resolveAccountTestModelSelection(
+      props.account.platform,
+      models,
+      collectAccountMappingModelIDs(
+        props.account.credentials?.model_mapping as Record<string, unknown> | undefined
+      )
+    )
     availableModels.value = selection.models
     selectedModelId.value = selection.modelId
   } catch (error) {
