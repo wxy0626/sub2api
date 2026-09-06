@@ -204,9 +204,17 @@ func (s *AccountTestService) ProbeOpenAIAPIKeyResponsesSupport(ctx context.Conte
 		return
 	}
 
-	// 临时服务端错误不能作为能力证据；保留已有结果，避免将 503 固化为支持。
-	if !shouldPersistResponsesProbeSupport(resp.StatusCode) {
-		logger.LegacyPrintf("service.openai_probe", "probe_result_transient: account_id=%d status=%d action=preserve_existing", accountID, resp.StatusCode)
+	// 本次响应不足以下结论时保持 unknown，与网络层失败、响应体读取失败一致：
+	// 标记一旦写成 false 就会一直粘住（只有下次账号创建/更新才重探），网关会静默
+	// 改走 /v1/chat/completions —— 对 Codex 客户端意味着 prompt 缓存前缀被打散。
+	// 宁可不写，让请求继续走既有的 Responses 路径。
+	if !responsesProbeVerdictIsConclusive(resp.StatusCode, bodyBytes) {
+		logger.LegacyPrintf("service.openai_probe",
+			"probe_inconclusive_keep_unknown: account_id=%d base_url=%s probe_model=%s status=%d response_status=%s reason=%s",
+			accountID, normalizedBaseURL, probeModel, resp.StatusCode,
+			gjson.GetBytes(bodyBytes, "status").String(),
+			gjson.GetBytes(bodyBytes, "incomplete_details.reason").String(),
+		)
 		return
 	}
 
@@ -287,12 +295,6 @@ func isResponsesEndpointSupportedByStatus(status int) bool {
 	return true
 }
 
-// shouldPersistResponsesProbeSupport 判断探测响应是否足以覆盖已有 Responses 能力标记。
-// 5xx 仅表示上游暂时不可用，写入 true 会把故障误固化为“支持”。
-func shouldPersistResponsesProbeSupport(status int) bool {
-	return status < http.StatusInternalServerError
-}
-
 // decideResponsesProbeSupport 依据探测响应判定上游 /v1/responses 是否真正可用于
 // 携带工具的请求。
 //
@@ -305,7 +307,7 @@ func shouldPersistResponsesProbeSupport(status int) bool {
 //     输出项才算真正可用；否则（如火山方舟 coding/v3 × kimi-k2.6 仅回 reasoning）
 //     判为 false，使网关改走 /v1/chat/completions 直转路径。
 //
-// 调用方必须先使用 shouldPersistResponsesProbeSupport 过滤 5xx 响应。
+// 调用方必须先用 responsesProbeVerdictIsConclusive 过滤不可下结论的响应。
 func decideResponsesProbeSupport(status int, body []byte) bool {
 	if status == http.StatusNotFound || status == http.StatusMethodNotAllowed {
 		return false
