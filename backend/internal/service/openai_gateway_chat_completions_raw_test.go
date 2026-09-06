@@ -1190,16 +1190,62 @@ func TestEnsureOpenAIChatStreamUsage(t *testing.T) {
 	require.True(t, gjson.GetBytes(body, "stream_options.include_usage").Bool())
 }
 
-func TestEnsureOpenAIChatStreamUsageForModelSkipsGLMStreamOptions(t *testing.T) {
+func TestEnsureOpenAIChatStreamUsageForAccountSkipsGLMAndRelayAstraStreamOptions(t *testing.T) {
 	t.Parallel()
 
-	body, err := ensureOpenAIChatStreamUsageForModel([]byte(`{"model":"glm-5.2","messages":[],"stream":true}`), "glm-5.2")
+	// GLM：所有端点均跳过注入（历史行为）。
+	body, err := ensureOpenAIChatStreamUsageForAccount([]byte(`{"model":"glm-5.2","messages":[],"stream":true}`), nil, "glm-5.2")
 	require.NoError(t, err)
 	require.False(t, gjson.GetBytes(body, "stream_options").Exists())
 
-	body, err = ensureOpenAIChatStreamUsageForModel([]byte(`{"model":"gpt-5.4","messages":[],"stream":true}`), "gpt-5.4")
+	// 普通模型：非官方端点照常注入。
+	relay := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"base_url": "https://napi.origintask.cn/v1"}}
+	body, err = ensureOpenAIChatStreamUsageForAccount([]byte(`{"model":"gpt-5.4","messages":[],"stream":true}`), relay, "gpt-5.4")
 	require.NoError(t, err)
 	require.True(t, gjson.GetBytes(body, "stream_options.include_usage").Bool())
+
+	// astra + 非官方端点：跳过注入（该类中转携带 stream_options 会挂起并丢内容）。
+	body, err = ensureOpenAIChatStreamUsageForAccount([]byte(`{"model":"gpt-6-astra","messages":[],"stream":true}`), relay, "gpt-6-astra")
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(body, "stream_options").Exists())
+
+	// astra 变体名（gpt-6 别名 / 路径前缀）同样跳过。
+	for _, model := range []string{"gpt-6", "openai/gpt-6-astra"} {
+		body, err = ensureOpenAIChatStreamUsageForAccount([]byte(`{"model":"`+model+`","messages":[],"stream":true}`), relay, model)
+		require.NoError(t, err)
+		require.False(t, gjson.GetBytes(body, "stream_options").Exists(), "model=%s", model)
+	}
+
+	// astra + 官方端点：官方支持该字段，照常注入保证计费。
+	official := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"base_url": "https://api.openai.com/v1"}}
+	body, err = ensureOpenAIChatStreamUsageForAccount([]byte(`{"model":"gpt-6-astra","messages":[],"stream":true}`), official, "gpt-6-astra")
+	require.NoError(t, err)
+	require.True(t, gjson.GetBytes(body, "stream_options.include_usage").Bool())
+
+	// 非 astra 模型 + 非官方端点不受跳过规则影响（luna 实测正常）。
+	body, err = ensureOpenAIChatStreamUsageForAccount([]byte(`{"model":"gpt-5.6-luna","messages":[],"stream":true}`), relay, "gpt-5.6-luna")
+	require.NoError(t, err)
+	require.True(t, gjson.GetBytes(body, "stream_options.include_usage").Bool())
+}
+
+func TestShouldSkipCCStreamUsageInjection_AccountVariants(t *testing.T) {
+	t.Parallel()
+
+	astra := "gpt-6-astra"
+	require.True(t, shouldSkipCCStreamUsageInjection(nil, astra), "无账号信息按非官方处理")
+	require.False(t, shouldSkipCCStreamUsageInjection(nil, "gpt-5.4"))
+
+	oauthChatGPT := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"base_url": "https://chatgpt.com/backend-api/codex"}}
+	require.False(t, shouldSkipCCStreamUsageInjection(oauthChatGPT, astra), "OAuth chatgpt.com 官方端点不跳过")
+
+	defaultOfficial := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	require.False(t, shouldSkipCCStreamUsageInjection(defaultOfficial, astra), "未配置 base_url 默认官方端点，不跳过")
+
+	grok := &Account{Platform: PlatformGrok, Type: AccountTypeAPIKey}
+	require.False(t, shouldSkipCCStreamUsageInjection(grok, astra), "grok 平台不适用 openai 官方判定之外的场景——保持注入")
+
+	cn := &Account{Platform: PlatformDeepseek, Type: AccountTypeAPIKey, Credentials: map[string]any{"base_url": "https://api.deepseek.com"}}
+	require.True(t, shouldSkipCCStreamUsageInjection(cn, astra), "非官方端点 astra 跳过")
 }
 
 func TestBufferRawChatCompletions_RejectsOversizedResponse(t *testing.T) {

@@ -71,13 +71,19 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	// 国产模型默认 effort 补充：需要 mappedModel 判定，推迟到 billingModel 算出之后。
 	reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, body, billingModel)
 	chatReq.Model = upstreamModel
-	if clientStream {
-		chatReq.StreamOptions = &apicompat.ChatStreamOptions{IncludeUsage: true}
-	}
 
 	chatBody, err := json.Marshal(chatReq)
 	if err != nil {
 		return nil, fmt.Errorf("marshal chat completions fallback request: %w", err)
+	}
+	// 流式注入 stream_options.include_usage 前先过账号感知跳过逻辑：
+	// 部分 astra 中转对该字段直接走坏（挂起+丢内容），见
+	// ensureOpenAIChatStreamUsageForAccount。
+	if clientStream {
+		chatBody, err = ensureOpenAIChatStreamUsageForAccount(chatBody, account, upstreamModel)
+		if err != nil {
+			return nil, fmt.Errorf("enable stream usage: %w", err)
+		}
 	}
 	chatBody, err = s.applyOpenAIFastPolicyToBody(ctx, account, upstreamModel, chatBody)
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -143,7 +144,7 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 
 	if clientStream {
 		var usageErr error
-		upstreamBody, usageErr = ensureOpenAIChatStreamUsageForModel(upstreamBody, upstreamModel)
+		upstreamBody, usageErr = ensureOpenAIChatStreamUsageForAccount(upstreamBody, account, upstreamModel)
 		if usageErr != nil {
 			return nil, fmt.Errorf("enable stream usage: %w", usageErr)
 		}
@@ -459,17 +460,53 @@ func ensureOpenAIChatStreamUsage(body []byte) ([]byte, error) {
 	return updated, nil
 }
 
-// ensureOpenAIChatStreamUsageForModel 为兼容上游选择流式 usage 策略。
+// ensureOpenAIChatStreamUsageForAccount 为兼容上游选择流式 usage 策略（账号感知）。
 //
-// GLM OpenAI 兼容端点（尤其是第三方中转）可能返回 422 拒绝
-// stream_options.include_usage；后台连通性测试只发送 model/messages/stream，
-// 因此真实网关请求与测试请求会出现额外字段差异。GLM 的 usage 可从普通内容
-// chunk 中获取不到时仍会返回响应，避免为了计费字段破坏请求兼容性。
-func ensureOpenAIChatStreamUsageForModel(body []byte, model string) ([]byte, error) {
-	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "glm-") {
+// 已知两类上游对 stream_options.include_usage 不兼容：
+//   - GLM OpenAI 兼容端点（尤其第三方中转）可能返回 422 拒绝该字段；
+//   - GPT-6 Astra 非官方端点（实测 napi.origintask.cn）：携带 stream_options 字段的
+//     流式请求会挂起 30-60s、丢弃全部内容增量且不返回 usage 块
+//     （include_usage=true/false 均复现；官方 api.openai.com 不受影响）。
+//
+// 跳过注入后上游不回 usage 块，该类请求计费记 0——回复可达性优先于计费完整性。
+func ensureOpenAIChatStreamUsageForAccount(body []byte, account *Account, model string) ([]byte, error) {
+	if shouldSkipCCStreamUsageInjection(account, model) {
 		return body, nil
 	}
 	return ensureOpenAIChatStreamUsage(body)
+}
+
+// shouldSkipCCStreamUsageInjection 报告是否应跳过 stream_options.include_usage 注入。
+func shouldSkipCCStreamUsageInjection(account *Account, model string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(model))
+	if strings.HasPrefix(normalized, "glm-") {
+		return true
+	}
+	if isOpenAIGPT6AstraModel(model) {
+		return !isOpenAIOfficialBaseURL(account)
+	}
+	return false
+}
+
+// isOpenAIOfficialBaseURL 判断账号上游是否为 OpenAI 官方端点。
+// 判定规则与 accountCodexToolCapabilities 的 official 逻辑保持一致：
+// api.openai.com 恒为官方；chatgpt.com 仅在 OpenAI OAuth 账号下视为官方。
+func isOpenAIOfficialBaseURL(account *Account) bool {
+	if account == nil {
+		return false
+	}
+	baseURL := strings.TrimSpace(account.GetOpenAIBaseURL())
+	if baseURL == "" {
+		baseURL = "https://api.openai.com"
+	}
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return false
+	}
+	if strings.EqualFold(parsed.Hostname(), "api.openai.com") {
+		return true
+	}
+	return account.IsOpenAIOAuth() && strings.EqualFold(parsed.Hostname(), "chatgpt.com")
 }
 
 func isOpenAIChatUsageOnlyStreamChunk(payload string) bool {

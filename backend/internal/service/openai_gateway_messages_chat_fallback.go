@@ -64,9 +64,6 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 	chatReq.Model = upstreamModel
 	chatReq.ReasoningEffort = openAICompatAnthropicReasoningEffort(&anthropicReq, upstreamModel, chatReq.ReasoningEffort)
 	chatReq.Stream = clientStream
-	if clientStream {
-		chatReq.StreamOptions = &apicompat.ChatStreamOptions{IncludeUsage: true}
-	}
 
 	convertedEffort := chatReq.ReasoningEffort
 	reasoningEffort := &convertedEffort
@@ -76,6 +73,15 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 	chatBody, err := json.Marshal(chatReq)
 	if err != nil {
 		return nil, fmt.Errorf("marshal chat completions request: %w", err)
+	}
+	// 流式注入 stream_options.include_usage 前先过账号感知跳过逻辑：
+	// 部分 astra 中转对该字段直接走坏（挂起+丢内容），见
+	// ensureOpenAIChatStreamUsageForAccount。
+	if clientStream {
+		chatBody, err = ensureOpenAIChatStreamUsageForAccount(chatBody, account, upstreamModel)
+		if err != nil {
+			return nil, fmt.Errorf("enable stream usage: %w", err)
+		}
 	}
 	if normalizedBody, normalized := NormalizeGLMOpenAIReasoningEffort(chatBody, upstreamModel); normalized {
 		chatBody = normalizedBody
