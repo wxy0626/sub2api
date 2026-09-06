@@ -28,6 +28,15 @@ func (r *shadowSkipTestRepo) GetByID(_ context.Context, id int64) (*Account, err
 	return r.account, nil
 }
 
+// TestAccountConnection 结束后的 defer 会同步测试结果与调度状态
+// （SetError/ClearError/SetSchedulable），stub 需提供 no-op 实现，
+// 否则嵌入的 nil 接口方法提升会 panic。
+func (r *shadowSkipTestRepo) SetError(_ context.Context, _ int64, _ string) error { return nil }
+
+func (r *shadowSkipTestRepo) ClearError(_ context.Context, _ int64) error { return nil }
+
+func (r *shadowSkipTestRepo) SetSchedulable(_ context.Context, _ int64, _ bool) error { return nil }
+
 func newShadowTestGinCtx() *gin.Context {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
