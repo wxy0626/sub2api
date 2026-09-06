@@ -503,6 +503,7 @@ func scanUsageLog(scanner interface{ Scan(...any) error }) (*service.UsageLog, e
 		requestBodyBytes    sql.NullInt64
 		maxRequestBodyBytes sql.NullInt64
 		sessionID           sql.NullString
+		upstreamRequestID   sql.NullString
 		nativeCompactionV2  bool
 		createdAt           time.Time
 	)

@@ -40,12 +40,6 @@ function onLeave(event: MouseEvent) {
   closeTooltip()
 }
 
-function onTooltipLeave(event: MouseEvent) {
-  if (props.trigger !== 'hover') return
-  if (isInside(triggerRef.value, event.relatedTarget)) return
-  closeTooltip()
-}
-
 function onClick(event: MouseEvent) {
   if (props.trigger !== 'click') return
   event.stopPropagation()

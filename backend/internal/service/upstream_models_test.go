@@ -1052,6 +1052,7 @@ func TestSyncUpstreamModelCatalogEnrichesOfficialOpenAIHostWithoutRegistryAPIFie
 	require.NoError(t, err)
 	require.Empty(t, catalog.Warnings)
 	require.Equal(t, []string{"gpt-5.6-sol", "gpt-6-astra"}, catalog.Models)
+}
 
 // TestFetchUpstreamSupportedModelsKeepsFullCatalogForOpenAICompatibleProxy 验证自定义 base_url 的
 // OpenAI 兼容端点按上游实际目录返回：gemini-*、claude-*、gpt-4o 等模型不再被 GPT 白名单裁掉。
@@ -1127,13 +1128,26 @@ func TestFilterSyncedModelIDs(t *testing.T) {
 func TestFetchUpstreamSupportedModelsParsesGrokOAuthResponse(t *testing.T) {
 	t.Parallel()
 
-	require.NotNil(t, repo.updates)
-	encoded, err := json.Marshal(repo.updates[UpstreamModelMetadataExtraKey])
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"data":[{"model":"grok-4.5"},{"model":"grok-4.5"},{"modelId":"grok-build-0.1"}]}`)),
+	}}
+	svc := &AccountTestService{
+		httpUpstream:      upstream,
+		cfg:               upstreamModelSyncTestConfig(),
+		grokTokenProvider: NewGrokTokenProvider(nil, nil),
+	}
+
+	models, err := svc.FetchUpstreamSupportedModels(context.Background(), grokOAuthModelSyncTestAccount(""))
 	require.NoError(t, err)
-	var snapshot UpstreamModelMetadataSnapshot
-	require.NoError(t, json.Unmarshal(encoded, &snapshot))
-	require.Equal(t, "models.dev", snapshot.Source)
-	require.Equal(t, astra, snapshot.Models["gpt-6-astra"])
+	require.Equal(t, []string{"grok-4.5", "grok-build-0.1"}, models)
+	require.Equal(t, "https://cli-chat-proxy.grok.com/v1/models", upstream.lastReq.URL.String())
+	require.Equal(t, "Bearer oauth-access-token", upstream.lastReq.Header.Get("Authorization"))
+	require.Equal(t, grokCLIVersion, upstream.lastReq.Header.Get("X-Grok-Client-Version"))
+	require.Equal(t, "interactive", upstream.lastReq.Header.Get("X-Grok-Client-Mode"))
+	require.Equal(t, "grok-user-id", upstream.lastReq.Header.Get("X-UserID"))
+	require.Equal(t, "grok-user@example.com", upstream.lastReq.Header.Get("X-Email"))
 }
 
 // Scenario: 同一批同步里部分模型能力完整时仍落库完整条目，并对不完整条目告警。

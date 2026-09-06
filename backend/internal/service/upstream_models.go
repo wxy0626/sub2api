@@ -28,6 +28,8 @@ const (
 	modelsDevRegistryTTL                = 6 * time.Hour
 	UpstreamModelMetadataExtraKey       = "upstream_model_metadata"
 	UpstreamModelMetadataIncompleteCode = "upstream_model_metadata_incomplete"
+	// UpstreamModelMetadataPartialCode v0.2.1 新增：部分模型元数据缺失时的告警码。
+	UpstreamModelMetadataPartialCode = "upstream_model_metadata_partial"
 )
 
 // UpstreamModelMetadata 描述单个上游模型的展示与能力元数据。

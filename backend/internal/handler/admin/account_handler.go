@@ -801,8 +801,9 @@ func (h *AccountHandler) ListFilterOptions(c *gin.Context) {
 	response.Success(c, gin.H{"platforms": platforms, "types": types})
 }
 
-func buildAccountsListETag(
-	items []AccountWithConcurrency,
+// buildAccountsListETag 泛型 ETag：同一函数同时服务 lite 紧凑列表与完整列表。
+func buildAccountsListETag[T any](
+	items []T,
 	total int64,
 	page, pageSize int,
 	platform, accountType, status, search string,
