@@ -489,3 +489,143 @@ func TestForwardResponses_ChatFallbackRestoresReasoningFromCache(t *testing.T) {
 	// 明文 summary 的 item 被回写进缓存（自愈）。
 	require.Equal(t, "plain thinking", cache.snapshotSets()["item_plain"])
 }
+
+// TestForwardResponses_ChatFallbackEmptyStreamFailsOver 验证 CC fallback 流式路径的
+// 静默空流防御：上游只回 role chunk + 空 content 收尾（无 usage、无语义输出）时，
+// 必须转成 UpstreamFailoverError 交 handler 换号重试，且客户端 0 字节（可透明重放）。
+// 对应 napi.origintask.cn gpt-6-astra 坏路径与原生路径 issue #5009。
+func TestForwardResponses_ChatFallbackEmptyStreamFailsOver(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"gpt-6-astra","input":"hello","stream":true}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstreamBody := strings.Join([]string{
+		`data: {"id":"chatcmpl_empty","object":"chat.completion.chunk","model":"gpt-6-astra","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}`,
+		"",
+		`data: {"id":"chatcmpl_empty","object":"chat.completion.chunk","model":"gpt-6-astra","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "x-request-id": []string{"rid_cc_empty_stream"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+	}}
+	svc := &OpenAIGatewayService{
+		cfg:          rawChatCompletionsTestConfig(),
+		httpUpstream: upstream,
+	}
+
+	_, err := svc.Forward(context.Background(), c, forceChatResponsesFallbackAccount(), body)
+	require.Error(t, err)
+	var failoverErr *UpstreamFailoverError
+	require.True(t, errors.As(err, &failoverErr), "空流必须产生 UpstreamFailoverError, got: %v", err)
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+	require.Empty(t, rec.Body.String(), "空流不得向客户端写出任何字节，否则 handler 无法透明换号重试")
+}
+
+// TestForwardResponses_ChatFallbackEmptyStreamWithUsageSucceeds 镜像原生路径语义：
+// 空内容但上游报了非零 usage 时不视为静默拒答，照常交付（由上层按 0 输出计费）。
+func TestForwardResponses_ChatFallbackEmptyStreamWithUsageSucceeds(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"gpt-6-astra","input":"hello","stream":true}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstreamBody := strings.Join([]string{
+		`data: {"id":"chatcmpl_usage","object":"chat.completion.chunk","model":"gpt-6-astra","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}`,
+		"",
+		`data: {"id":"chatcmpl_usage","object":"chat.completion.chunk","model":"gpt-6-astra","choices":[{"index":0,"delta":{"content":""},"finish_reason":"stop"}]}`,
+		"",
+		`data: {"id":"chatcmpl_usage","object":"chat.completion.chunk","model":"gpt-6-astra","choices":[],"usage":{"prompt_tokens":4,"completion_tokens":0,"total_tokens":4}}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "x-request-id": []string{"rid_cc_empty_usage"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+	}}
+	svc := &OpenAIGatewayService{
+		cfg:          rawChatCompletionsTestConfig(),
+		httpUpstream: upstream,
+	}
+
+	result, err := svc.Forward(context.Background(), c, forceChatResponsesFallbackAccount(), body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, 4, result.Usage.InputTokens)
+	require.Equal(t, 0, result.Usage.OutputTokens)
+	require.Contains(t, rec.Body.String(), "data: [DONE]")
+}
+
+// TestForwardResponses_ChatFallbackEmptyJSONResponseFailsOver 验证非流式路径的
+// 静默空响应防御：无语义输出且无 usage 的 200 JSON 必须转成 failover 错误。
+func TestForwardResponses_ChatFallbackEmptyJSONResponseFailsOver(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"gpt-6-astra","input":"hello","stream":false}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid_cc_empty_json"}},
+		Body: io.NopCloser(strings.NewReader(
+			`{"id":"chatcmpl_empty_json","object":"chat.completion","model":"gpt-6-astra","choices":[{"index":0,"message":{"role":"assistant","content":""},"finish_reason":"stop"}]}`,
+		)),
+	}}
+	svc := &OpenAIGatewayService{
+		cfg:          rawChatCompletionsTestConfig(),
+		httpUpstream: upstream,
+	}
+
+	result, err := svc.Forward(context.Background(), c, forceChatResponsesFallbackAccount(), body)
+	require.Error(t, err)
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.True(t, errors.As(err, &failoverErr), "空 JSON 响应必须产生 UpstreamFailoverError, got: %v", err)
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+	require.Empty(t, rec.Body.String(), "空 JSON 响应不得向客户端写出任何字节")
+}
+
+// TestForwardResponses_ChatFallbackEmptyJSONResponseWithUsageSucceeds 非流式镜像：
+// 空 content 但带非零 usage 时正常交付。
+func TestForwardResponses_ChatFallbackEmptyJSONResponseWithUsageSucceeds(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"gpt-6-astra","input":"hello","stream":false}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid_cc_empty_json_usage"}},
+		Body: io.NopCloser(strings.NewReader(
+			`{"id":"chatcmpl_empty_json_usage","object":"chat.completion","model":"gpt-6-astra","choices":[{"index":0,"message":{"role":"assistant","content":""},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":0,"total_tokens":3}}`,
+		)),
+	}}
+	svc := &OpenAIGatewayService{
+		cfg:          rawChatCompletionsTestConfig(),
+		httpUpstream: upstream,
+	}
+
+	result, err := svc.Forward(context.Background(), c, forceChatResponsesFallbackAccount(), body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, 3, result.Usage.InputTokens)
+	require.Equal(t, 0, result.Usage.OutputTokens)
+}

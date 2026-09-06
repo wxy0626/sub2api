@@ -126,14 +126,15 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	}
 
 	if clientStream {
-		return s.streamChatCompletionsAsResponses(c, resp, originalModel, customTools, functionTools, toolSearch, namespaceTools, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
+		return s.streamChatCompletionsAsResponses(c, resp, account, originalModel, customTools, functionTools, toolSearch, namespaceTools, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
 	}
-	return s.bufferChatCompletionsAsResponses(c, resp, originalModel, customTools, functionTools, toolSearch, namespaceTools, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
+	return s.bufferChatCompletionsAsResponses(c, resp, account, originalModel, customTools, functionTools, toolSearch, namespaceTools, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
 }
 
 func (s *OpenAIGatewayService) bufferChatCompletionsAsResponses(
 	c *gin.Context,
 	resp *http.Response,
+	account *Account,
 	originalModel string,
 	customTools map[string]bool,
 	functionTools map[string]bool,
@@ -149,6 +150,10 @@ func (s *OpenAIGatewayService) bufferChatCompletionsAsResponses(
 	ccResp, usage, err := s.readCCUpstreamJSONResponse(c, resp, writeOpenAIResponsesFallbackError)
 	if err != nil {
 		return nil, err
+	}
+	// 静默空响应防御：无语义输出且无 usage 视为可重试异常（与流式路径一致）。
+	if openAIUsageAllZero(usage) && !ccResponseHasSemanticOutput(ccResp) {
+		return nil, newOpenAIResponsesEmptyCompletedFailoverError(c, account, requestID)
 	}
 	responsesResp := apicompat.ChatCompletionsResponseToResponses(ccResp, originalModel, customTools, functionTools, toolSearch, namespaceTools)
 	s.cacheReasoningItemsFromOutput(responsesResp.Output)
@@ -176,6 +181,7 @@ func (s *OpenAIGatewayService) bufferChatCompletionsAsResponses(
 func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 	c *gin.Context,
 	resp *http.Response,
+	account *Account,
 	originalModel string,
 	customTools map[string]bool,
 	functionTools map[string]bool,
@@ -196,9 +202,47 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 	state.ToolSearchDeclared = toolSearch
 	state.NamespaceTools = namespaceTools
 	clientDisconnected := false
+	// 静默空流 failover 的 0 字节前提：handler 只有在 Writer 无新增字节时才能
+	// 透明换号重试（见 gateway_handler_responses.go 的 writerSizeBeforeForward
+	// 检查）。语义输出确认前，转换事件先进缓冲不落 Writer；与其他 CC 流式路径
+	// 的 pendingSSE/pendingLines 机制对齐。
+	clientOutputStarted := false
+	pendingEvents := make([]apicompat.ResponsesStreamEvent, 0, 8)
+
+	flushPendingEvents := func() {
+		if clientDisconnected || clientOutputStarted || len(pendingEvents) == 0 {
+			return
+		}
+		writeStreamHeaders()
+		for _, event := range pendingEvents {
+			sse, err := apicompat.ResponsesEventToSSE(event)
+			if err != nil {
+				logger.L().Warn("openai responses chat fallback: failed to marshal stream event",
+					zap.Error(err),
+					zap.String("request_id", requestID),
+				)
+				continue
+			}
+			if _, err := fmt.Fprint(c.Writer, sse); err != nil {
+				clientDisconnected = true
+				logger.L().Debug("openai responses chat fallback: client disconnected, continuing to drain upstream for billing",
+					zap.Error(err),
+					zap.String("request_id", requestID),
+				)
+				return
+			}
+		}
+		pendingEvents = pendingEvents[:0]
+		clientOutputStarted = true
+		c.Writer.Flush()
+	}
 
 	writeEvents := func(events []apicompat.ResponsesStreamEvent) {
 		if clientDisconnected || len(events) == 0 {
+			return
+		}
+		if !clientOutputStarted {
+			pendingEvents = append(pendingEvents, events...)
 			return
 		}
 		writeStreamHeaders()
@@ -223,13 +267,20 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 		c.Writer.Flush()
 	}
 
+	sawSemanticOutput := false
 	scan := s.scanCCStream(c, resp, "openai responses chat fallback", requestID, startTime, func(chunk *apicompat.ChatCompletionsChunk) {
+		if ccChunkHasSemanticOutput(chunk) {
+			sawSemanticOutput = true
+			flushPendingEvents()
+		}
 		events := apicompat.ChatCompletionsChunkToResponsesEvents(chunk, state)
 		s.cacheReasoningItemsFromEvents(events)
 		writeEvents(events)
 	})
 
 	if scan.Err != nil {
+		// 读取异常不属于可透明重试的场景，已缓冲的部分事件照常交付。
+		flushPendingEvents()
 		return &OpenAIForwardResult{
 			RequestID:                   requestID,
 			UpstreamHeaders:             resp.Header,
@@ -246,6 +297,8 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 		}, fmt.Errorf("stream usage incomplete: %w", scan.Err)
 	}
 	if err := state.ValidateToolCallArguments(); err != nil {
+		// 工具参数校验失败交由 handler 以错误收尾，已缓冲事件先交付。
+		flushPendingEvents()
 		return &OpenAIForwardResult{
 			RequestID:                   requestID,
 			UpstreamHeaders:             resp.Header,
@@ -262,8 +315,32 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 		}, fmt.Errorf("invalid tool call arguments from upstream: %w", err)
 	}
 
+	// 静默空流防御（对应原生路径 issue #5009 的 empty response.completed）：
+	// 上游流正常结束但没有任何内容/推理/工具调用增量、也没有 usage——典型如
+	// napi.origintask.cn 的 gpt-6-astra 坏路径（挂起数十秒后只回 role chunk +
+	// 空 content 收尾）。按可重试上游异常交回 handler 换账号重放，而不是把
+	// "计费 0 的空回复"当作成功交付。客户端已断连时无需重试。
+	if !sawSemanticOutput && openAIUsageAllZero(scan.Usage) && !clientDisconnected {
+		return &OpenAIForwardResult{
+			RequestID:                   requestID,
+			UpstreamHeaders:             resp.Header,
+			Usage:                       scan.Usage,
+			Model:                       originalModel,
+			BillingModel:                billingModel,
+			UpstreamModel:               upstreamModel,
+			ReasoningEffort:             reasoningEffort,
+			UpstreamResponseServiceTier: observedUpstreamResponseServiceTier(c),
+			ServiceTier:                 resolvedOpenAIUpstreamServiceTier(c, serviceTier),
+			Stream:                      true,
+			Duration:                    time.Since(startTime),
+			FirstTokenMs:                scan.FirstTokenMs,
+		}, newOpenAIResponsesEmptyCompletedFailoverError(c, account, requestID)
+	}
+
 	finalEvents := apicompat.FinalizeChatCompletionsResponsesStream(state)
 	s.cacheReasoningItemsFromEvents(finalEvents)
+	// 成功收尾：先把缓冲的 created/added 等前置事件按序写出，再写终止事件。
+	flushPendingEvents()
 	writeEvents(finalEvents)
 	if !clientDisconnected {
 		writeStreamHeaders()
@@ -300,6 +377,57 @@ func chatChunkStartsResponsesOutput(chunk *apicompat.ChatCompletionsChunk) bool 
 	}
 	for _, choice := range chunk.Choices {
 		if choice.Delta.Content != nil || choice.Delta.ReasoningContent != nil || len(choice.Delta.ToolCalls) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// openAIUsageAllZero 报告 usage 是否完全为零（未上报或上报了全零用量）。
+func openAIUsageAllZero(usage OpenAIUsage) bool {
+	return usage.InputTokens == 0 && usage.OutputTokens == 0 &&
+		usage.CacheCreationInputTokens == 0 && usage.CacheReadInputTokens == 0 &&
+		usage.ImageInputTokens == 0 && usage.ImageOutputTokens == 0
+}
+
+// ccChunkHasSemanticOutput 报告 CC 流式 chunk 是否携带对客户端可见的语义输出
+// （非空 content / reasoning / 工具调用增量）。仅包含空字符串 content 的收尾
+// chunk（finish_reason=stop 常见形态）不算输出——上游静默空流往往正是以这种
+// "role chunk + 空 content 收尾"收场，不能据此误判为有效回复。
+func ccChunkHasSemanticOutput(chunk *apicompat.ChatCompletionsChunk) bool {
+	if chunk == nil {
+		return false
+	}
+	for _, choice := range chunk.Choices {
+		if choice.Delta.Content != nil && strings.TrimSpace(*choice.Delta.Content) != "" {
+			return true
+		}
+		if (choice.Delta.ReasoningContent != nil && strings.TrimSpace(*choice.Delta.ReasoningContent) != "") ||
+			(choice.Delta.Reasoning != nil && strings.TrimSpace(*choice.Delta.Reasoning) != "") {
+			return true
+		}
+		if len(choice.Delta.ToolCalls) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// ccResponseHasSemanticOutput 报告 CC 非流式响应是否携带语义输出
+// （非空 content / reasoning / 工具调用）。
+func ccResponseHasSemanticOutput(resp *apicompat.ChatCompletionsResponse) bool {
+	if resp == nil {
+		return false
+	}
+	for _, choice := range resp.Choices {
+		if len(choice.Message.ToolCalls) > 0 || choice.Message.FunctionCall != nil {
+			return true
+		}
+		if strings.TrimSpace(choice.Message.ReasoningContent) != "" || strings.TrimSpace(choice.Message.Reasoning) != "" {
+			return true
+		}
+		content := strings.TrimSpace(string(choice.Message.Content))
+		if content != "" && content != "null" && content != `""` {
 			return true
 		}
 	}
