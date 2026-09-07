@@ -170,6 +170,17 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	)
 
 	// 5. Build and send upstream request via the shared CC pipeline
+	// 首输出看门狗：窗口自请求开始计起，覆盖建连/响应头/首个语义输出；客户端输出
+	// 开始后由流式 handler 停表。仅 OpenAI 平台启用（Grok 桥接沿用自身超时策略）。
+	firstOutputTimeout := time.Duration(0)
+	firstOutputEffort := ""
+	if account.Platform == PlatformOpenAI {
+		if reasoningEffort != nil {
+			firstOutputEffort = *reasoningEffort
+		}
+		firstOutputTimeout = s.openAIFirstOutputTimeout(firstOutputEffort)
+	}
+	firstOutputWatchdog := newOpenAIFirstOutputWatchdog(startTime, firstOutputTimeout, firstOutputEffort)
 	targetURL, err := s.rawChatCompletionsURL(account)
 	if err != nil {
 		return nil, err
@@ -179,7 +190,11 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	if customUA == "" && account.IsGrokOAuth() {
 		customUA = defaultGrokUpstreamUserAgent()
 	}
-	resp, err := s.sendCCUpstreamRequest(ctx, c, account, targetURL, upstreamBody, clientStream, token, customUA, grokCacheIdentity)
+	resp, err := s.sendCCUpstreamRequestWithFirstOutputTimeout(ctx, c, account, targetURL, upstreamBody, clientStream, token, customUA, grokCacheIdentity, firstOutputWatchdog)
+	if errors.Is(err, errOpenAIFirstOutputWatchdogFired) {
+		// 看门狗在收到可用输出前触发：客户端 0 字节，转译为换号错误重放。
+		return nil, s.timeoutFailoverError(firstOutputWatchdog, ctx, c, account, startTime, originalModel, "response_headers", nil)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -234,9 +249,9 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	var result *OpenAIForwardResult
 	var forwardErr error
 	if clientStream {
-		result, forwardErr = s.streamRawChatCompletions(c, resp, account, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime, len(body))
+		result, forwardErr = s.streamRawChatCompletions(c, resp, account, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime, len(body), firstOutputWatchdog)
 	} else {
-		result, forwardErr = s.bufferRawChatCompletions(c, resp, account, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
+		result, forwardErr = s.bufferRawChatCompletions(c, resp, account, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime, firstOutputWatchdog)
 	}
 	if result != nil {
 		addOpenAIUsage(&result.Usage, bridgeUsage)
@@ -283,6 +298,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	serviceTier *string,
 	startTime time.Time,
 	requestBodyLen int,
+	firstOutputWatchdog *openAIFirstOutputWatchdog,
 ) (*OpenAIForwardResult, error) {
 	observer := upstreamResponseModelObserverFromContext(c)
 	if observer == nil {
@@ -322,6 +338,8 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			}
 			pendingLines = pendingLines[:0]
 			clientOutputStarted = true
+			// 客户端已收到字节：看门狗停表，超时后换号不再安全。
+			firstOutputWatchdog.stop()
 		}
 		if _, werr := c.Writer.WriteString(line + "\n"); werr != nil {
 			clientDisconnected = true
@@ -392,6 +410,12 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		)
 	}
 
+	// 首输出看门狗触发且客户端 0 字节：必须先于 clientAborted 判定处理，
+	// 否则看门狗取消会被误归类为客户端中断并按成功计费。
+	if firstOutputWatchdog.timedOut() && !clientOutputStarted && !clientDisconnected {
+		return nil, s.timeoutFailoverError(firstOutputWatchdog, c.Request.Context(), c, account, startTime, originalModel, "semantic_output", resp.Header)
+	}
+
 	// 客户端取消/断开后上游读失败与上游截断不可区分（取消会连带取消上游请求），
 	// 沿用既有语义：按已收到的用量正常收尾计费，不判为上游故障。
 	clientAborted := clientDisconnected ||
@@ -443,6 +467,8 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			if !clientDisconnected {
 				c.Writer.Flush()
 				clientOutputStarted = true
+				// 兜底路径同样停表：客户端已收到字节，换号不再安全。
+				firstOutputWatchdog.stop()
 			}
 		}
 	}
@@ -546,11 +572,16 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 	reasoningEffort *string,
 	serviceTier *string,
 	startTime time.Time,
+	firstOutputWatchdog *openAIFirstOutputWatchdog,
 ) (*OpenAIForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 
 	respBody, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
+		if firstOutputWatchdog.timedOut() {
+			// 缓冲读取期间看门狗触发：客户端未收到任何字节，转译为换号错误重放。
+			return nil, s.timeoutFailoverError(firstOutputWatchdog, c.Request.Context(), c, account, startTime, originalModel, "semantic_output", resp.Header)
+		}
 		if !errors.Is(err, ErrUpstreamResponseBodyTooLarge) {
 			writeChatCompletionsError(c, http.StatusBadGateway, "api_error", "Failed to read upstream response")
 		}

@@ -653,10 +653,11 @@ func (s *OpenAIGatewayService) forwardGrokChatCompletionsViaResponses(
 	s.updateGrokUsageFromResponse(withGrokTeamRateLimitModel(ctx, upstreamModel), account, resp.Header, resp.StatusCode)
 
 	var result *OpenAIForwardResult
+	// Grok 桥接沿用自身超时策略，不启用 OpenAI 首输出看门狗（nil）。
 	if clientStream {
-		result, err = s.handleChatStreamingResponse(resp, c, account, originalModel, billingModel, upstreamModel, startTime, len(body))
+		result, err = s.handleChatStreamingResponse(resp, c, account, originalModel, billingModel, upstreamModel, startTime, len(body), nil)
 	} else {
-		result, err = s.handleChatBufferedStreamingResponse(resp, c, account, originalModel, billingModel, upstreamModel, startTime)
+		result, err = s.handleChatBufferedStreamingResponse(resp, c, account, originalModel, billingModel, upstreamModel, startTime, nil)
 	}
 	if result != nil {
 		result.UpstreamEndpoint = grokChatResponsesEndpoint

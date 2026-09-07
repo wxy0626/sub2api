@@ -972,7 +972,9 @@ type GatewayConfig struct {
 	// GrokResponseHeaderTimeout bounds the pre-first-byte wait for xAI/Grok.
 	// A zero value uses the provider-safe default instead of the generic gateway timeout.
 	GrokResponseHeaderTimeout int `mapstructure:"grok_response_header_timeout"`
-	// OpenAIFirstOutputTimeoutSeconds: native HTTP Responses 首个语义输出超时（秒），0表示禁用。
+	// OpenAIFirstOutputTimeoutSeconds: 首个语义输出超时（秒），覆盖 OpenAI 平台的
+	// native Responses 与 Chat Completions（翻译/raw 直通/缓冲）全部流式与非流式路径，
+	// 0表示禁用。
 	OpenAIFirstOutputTimeoutSeconds int `mapstructure:"openai_first_output_timeout_seconds"`
 	// OpenAIHighEffortFirstOutputTimeoutSeconds: high/xhigh/max 推理的首个语义输出超时（秒）。
 	// 0 表示回退到 OpenAIFirstOutputTimeoutSeconds。
@@ -2377,8 +2379,11 @@ func setDefaults() {
 	viper.SetDefault("gateway.response_header_timeout", 600) // 600秒(10分钟)等待上游响应头，LLM高负载时可能排队较久
 	viper.SetDefault("gateway.openai_response_header_timeout", 60)
 	viper.SetDefault("gateway.grok_response_header_timeout", 0) // 0=使用 xAI/Grok 供应商安全默认而非通用网关超时
-	viper.SetDefault("gateway.openai_first_output_timeout_seconds", 60)
-	viper.SetDefault("gateway.openai_high_effort_first_output_timeout_seconds", 0)
+	// 首输出看门狗默认 30 秒：TTFT 观测显示上游 P90 约 24-27 秒，60 秒只能拦截极端
+	// 挂死；30 秒可砍掉大部分长尾。high/xhigh/max 推理单独放宽到 90 秒，避免误杀
+	// 正常的长思考首包。0 表示禁用。
+	viper.SetDefault("gateway.openai_first_output_timeout_seconds", 30)
+	viper.SetDefault("gateway.openai_high_effort_first_output_timeout_seconds", 90)
 	viper.SetDefault("gateway.log_upstream_error_body", true)
 	viper.SetDefault("gateway.log_upstream_error_body_max_bytes", 2048)
 	viper.SetDefault("gateway.inject_beta_for_apikey", false)
@@ -3314,8 +3319,8 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("gateway.grok_response_header_timeout must be between 0-1800 seconds")
 	}
 	if c.Gateway.OpenAIFirstOutputTimeoutSeconds < 0 || c.Gateway.OpenAIFirstOutputTimeoutSeconds > 600 ||
-		(c.Gateway.OpenAIFirstOutputTimeoutSeconds > 0 && c.Gateway.OpenAIFirstOutputTimeoutSeconds < 30) {
-		return fmt.Errorf("gateway.openai_first_output_timeout_seconds must be 0 or between 30-600 seconds")
+		(c.Gateway.OpenAIFirstOutputTimeoutSeconds > 0 && c.Gateway.OpenAIFirstOutputTimeoutSeconds < 10) {
+		return fmt.Errorf("gateway.openai_first_output_timeout_seconds must be 0 or between 10-600 seconds")
 	}
 	if c.Gateway.OpenAIHighEffortFirstOutputTimeoutSeconds < 0 || c.Gateway.OpenAIHighEffortFirstOutputTimeoutSeconds > 1800 ||
 		(c.Gateway.OpenAIHighEffortFirstOutputTimeoutSeconds > 0 && c.Gateway.OpenAIHighEffortFirstOutputTimeoutSeconds < 30) {

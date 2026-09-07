@@ -330,10 +330,28 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	}
 
 	// 6. Build upstream request
+	// 首输出看门狗：窗口自请求开始计起，覆盖建连/响应头/首个语义输出；客户端输出
+	// 开始后由流式 handler 停表。仅 OpenAI 平台启用（Grok 桥接沿用自身超时策略）。
+	firstOutputTimeout := time.Duration(0)
+	firstOutputEffort := ""
+	if account.Platform == PlatformOpenAI {
+		firstOutputEffortPtr := extractOpenAIReasoningEffortFromBody(responsesBody, upstreamModel, billingModel, originalModel)
+		firstOutputEffortPtr = ApplyThinkingEnabledFallback(firstOutputEffortPtr, responsesBody, billingModel)
+		if firstOutputEffortPtr != nil {
+			firstOutputEffort = *firstOutputEffortPtr
+		}
+		firstOutputTimeout = s.openAIFirstOutputTimeout(firstOutputEffort)
+	}
+	firstOutputWatchdog := newOpenAIFirstOutputWatchdog(startTime, firstOutputTimeout, firstOutputEffort)
 	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
+	if firstOutputWatchdog != nil {
+		upstreamCtx = firstOutputWatchdog.arm(upstreamCtx, releaseUpstreamCtx)
+	} else {
+		releaseUpstreamCtx()
+	}
 	upstreamReq, err := s.buildUpstreamRequest(upstreamCtx, c, account, responsesBody, token, true, promptCacheKey, false)
-	releaseUpstreamCtx()
 	if err != nil {
+		firstOutputWatchdog.stop()
 		return nil, fmt.Errorf("build upstream request: %w", err)
 	}
 
@@ -353,7 +371,23 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	}
 	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 	if err != nil {
+		if firstOutputWatchdog.timedOut() {
+			// 看门狗在等待响应头期间触发：取消来自超时而非传输故障，转译为换号错误。
+			firstOutputWatchdog.stop()
+			return nil, s.timeoutFailoverError(firstOutputWatchdog, ctx, c, account, startTime, originalModel, "response_headers", nil)
+		}
+		firstOutputWatchdog.stop()
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
+	}
+	if firstOutputWatchdog.timedOut() {
+		// 响应头恰好在截止时刻前后到达：仍按超时处理，换号重放。
+		firstOutputWatchdog.stop()
+		_ = resp.Body.Close()
+		return nil, s.timeoutFailoverError(firstOutputWatchdog, ctx, c, account, startTime, originalModel, "response_headers", resp.Header)
+	}
+	if firstOutputWatchdog != nil {
+		// body 关闭时联动停表（defer 关闭 body 兜底），避免定时器悬挂。
+		resp.Body = &openAIRequestContextReadCloser{ReadCloser: resp.Body, cleanup: firstOutputWatchdog.stop}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -387,9 +421,9 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	var result *OpenAIForwardResult
 	var handleErr error
 	if clientStream {
-		result, handleErr = s.handleChatStreamingResponse(resp, c, account, originalModel, billingModel, upstreamModel, startTime, len(body))
+		result, handleErr = s.handleChatStreamingResponse(resp, c, account, originalModel, billingModel, upstreamModel, startTime, len(body), firstOutputWatchdog)
 	} else {
-		result, handleErr = s.handleChatBufferedStreamingResponse(resp, c, account, originalModel, billingModel, upstreamModel, startTime)
+		result, handleErr = s.handleChatBufferedStreamingResponse(resp, c, account, originalModel, billingModel, upstreamModel, startTime, firstOutputWatchdog)
 	}
 
 	// cyber_policy：标记已设、error 已按 Chat Completions 格式发给客户端。丢弃 result、
@@ -492,11 +526,17 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 	billingModel string,
 	upstreamModel string,
 	startTime time.Time,
+	firstOutputWatchdog *openAIFirstOutputWatchdog,
 ) (*OpenAIForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 
 	finalResponse, usage, acc, err := s.readOpenAICompatBufferedTerminal(resp, c, "openai chat_completions buffered", requestID)
 	if err != nil {
+		if firstOutputWatchdog.timedOut() {
+			// 缓冲读取期间看门狗触发：客户端未收到任何字节，转译为换号错误重放。
+			firstOutputWatchdog.stop()
+			return nil, s.timeoutFailoverError(firstOutputWatchdog, c.Request.Context(), c, account, startTime, originalModel, "semantic_output", resp.Header)
+		}
 		return nil, s.newOpenAICompatBufferedReadFailoverError(c, account, resp, requestID, err)
 	}
 
@@ -651,6 +691,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	upstreamModel string,
 	startTime time.Time,
 	requestBodyLen int,
+	firstOutputWatchdog *openAIFirstOutputWatchdog,
 ) (*OpenAIForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 	writeStreamHeaders := s.newStreamHeaderWriter(c, resp.Header)
@@ -856,26 +897,30 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 							break
 						}
 					}
-					pendingSSE = pendingSSE[:0]
-					clientOutputStarted = !clientDisconnected
-					if clientDisconnected {
-						break
-					}
+				pendingSSE = pendingSSE[:0]
+				clientOutputStarted = !clientDisconnected
+				if clientOutputStarted {
+					// 客户端已收到字节：看门狗停表，超时后换号不再安全。
+					firstOutputWatchdog.stop()
 				}
-				if _, err := fmt.Fprint(c.Writer, sse); err != nil {
-					clientDisconnected = true
-					logger.L().Info("openai chat_completions stream: client disconnected, continuing to drain upstream for billing",
-						zap.String("request_id", requestID),
-					)
+				if clientDisconnected {
 					break
 				}
 			}
+			if _, err := fmt.Fprint(c.Writer, sse); err != nil {
+				clientDisconnected = true
+				logger.L().Info("openai chat_completions stream: client disconnected, continuing to drain upstream for billing",
+					zap.String("request_id", requestID),
+				)
+				break
+			}
 		}
-		if len(chunks) > 0 && !clientDisconnected && clientOutputStarted {
-			c.Writer.Flush()
-		}
-		return isTerminalEvent
 	}
+	if len(chunks) > 0 && !clientDisconnected && clientOutputStarted {
+		c.Writer.Flush()
+	}
+	return isTerminalEvent
+}
 
 	finalizeStream := func() (*OpenAIForwardResult, error) {
 		if streamFailoverErr != nil {
@@ -1004,6 +1049,10 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 		}
 		if err := scanner.Err(); err != nil {
 			handleScanErr(err)
+			if firstOutputWatchdog.timedOut() && !clientOutputStarted && !clientDisconnected {
+				// 首输出看门狗触发且客户端 0 字节：透明换号重放。
+				return nil, s.timeoutFailoverError(firstOutputWatchdog, c.Request.Context(), c, account, startTime, originalModel, "semantic_output", resp.Header)
+			}
 			if clientDisconnected || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return resultWithUsage(), fmt.Errorf("stream usage incomplete: %w", err)
 			}
@@ -1079,6 +1128,10 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			}
 			if ev.err != nil {
 				handleScanErr(ev.err)
+				if firstOutputWatchdog.timedOut() && !clientOutputStarted && !clientDisconnected {
+					// 首输出看门狗触发且客户端 0 字节：透明换号重放。
+					return nil, s.timeoutFailoverError(firstOutputWatchdog, c.Request.Context(), c, account, startTime, originalModel, "semantic_output", resp.Header)
+				}
 				if clientDisconnected || errors.Is(ev.err, context.Canceled) || errors.Is(ev.err, context.DeadlineExceeded) {
 					return resultWithUsage(), fmt.Errorf("stream usage incomplete: %w", ev.err)
 				}

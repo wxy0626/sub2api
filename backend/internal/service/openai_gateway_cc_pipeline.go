@@ -182,10 +182,37 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 	userAgent string,
 	grokCacheIdentity string,
 ) (*http.Response, error) {
+	return s.sendCCUpstreamRequestWithFirstOutputTimeout(ctx, c, account, targetURL, body, stream, bearerToken, userAgent, grokCacheIdentity, nil)
+}
+
+// errOpenAIFirstOutputWatchdogFired 哨兵错误：CC 上游请求在收到可用输出前被首输出
+// 看门狗取消。调用方须用 timeoutFailoverError 将其转译为可换号的 UpstreamFailoverError。
+var errOpenAIFirstOutputWatchdogFired = errors.New("openai first output watchdog fired before upstream output")
+
+// sendCCUpstreamRequestWithFirstOutputTimeout 与 sendCCUpstreamRequest 相同，但会在
+// detach 后的上游 ctx 上武装首输出看门狗：截止时刻前上游未产生任何输出即取消请求。
+// firstOutput 为 nil 时行为与 sendCCUpstreamRequest 完全一致。
+func (s *OpenAIGatewayService) sendCCUpstreamRequestWithFirstOutputTimeout(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	targetURL string,
+	body []byte,
+	stream bool,
+	bearerToken string,
+	userAgent string,
+	grokCacheIdentity string,
+	firstOutput *openAIFirstOutputWatchdog,
+) (*http.Response, error) {
 	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
+	if firstOutput != nil {
+		upstreamCtx = firstOutput.arm(upstreamCtx, releaseUpstreamCtx)
+	} else {
+		releaseUpstreamCtx()
+	}
 	upstreamReq, err := http.NewRequestWithContext(upstreamCtx, http.MethodPost, targetURL, bytes.NewReader(body))
-	releaseUpstreamCtx()
 	if err != nil {
+		firstOutput.stop()
 		return nil, fmt.Errorf("build upstream request: %w", err)
 	}
 	// 记录本次实际选择的协议端点，供错误日志和用量日志在没有
@@ -231,7 +258,22 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 	}
 	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 	if err != nil {
+		if firstOutput != nil && firstOutput.timedOut() {
+			// 看门狗在等待响应头期间触发：按超时换号处理，不走传输故障分类。
+			firstOutput.stop()
+			return nil, errOpenAIFirstOutputWatchdogFired
+		}
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
+	}
+	if firstOutput != nil && firstOutput.timedOut() {
+		// 响应头恰好在截止时刻前后到达：仍按超时处理，换号重放。
+		firstOutput.stop()
+		_ = resp.Body.Close()
+		return nil, errOpenAIFirstOutputWatchdogFired
+	}
+	if firstOutput != nil {
+		// body 关闭时联动停表（调用方 defer 关闭 body 兜底），避免定时器悬挂。
+		resp.Body = &openAIRequestContextReadCloser{ReadCloser: resp.Body, cleanup: firstOutput.stop}
 	}
 	return resp, nil
 }

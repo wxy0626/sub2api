@@ -319,6 +319,83 @@ func (g *openAIFirstOutputHeaderGuard) stopHeaderWait() bool {
 	return true
 }
 
+// firedFlag 非阻塞探测定时器是否已触发；不改变定时器状态，可在流式循环中安全调用。
+func (g *openAIFirstOutputHeaderGuard) firedFlag() bool {
+	if g == nil {
+		return false
+	}
+	select {
+	case <-g.fired:
+		return true
+	default:
+		return false
+	}
+}
+
+// openAIFirstOutputWatchdog 携带 Chat Completions 转发路径的首输出看门狗状态。
+// 超时窗口自请求开始（startTime）计起，覆盖"建连 + 响应头 + 首个语义输出"全过程；
+// 客户端输出一旦开始即停表（此后换号不再对客户端透明）。零值/nil 表示未启用。
+type openAIFirstOutputWatchdog struct {
+	deadline time.Time
+	timeout  time.Duration
+	effort   string
+	guard    *openAIFirstOutputHeaderGuard
+}
+
+// newOpenAIFirstOutputWatchdog 创建尚未武装的看门狗；timeout<=0 返回 nil（禁用）。
+func newOpenAIFirstOutputWatchdog(startedAt time.Time, timeout time.Duration, effort string) *openAIFirstOutputWatchdog {
+	if timeout <= 0 {
+		return nil
+	}
+	return &openAIFirstOutputWatchdog{
+		deadline: startedAt.Add(timeout),
+		timeout:  timeout,
+		effort:   effort,
+	}
+}
+
+// arm 在 detach 后的上游 ctx 上启动看门狗定时器，返回受控 ctx；重复调用只生效一次。
+func (w *openAIFirstOutputWatchdog) arm(ctx context.Context, release context.CancelFunc) context.Context {
+	if w == nil {
+		return ctx
+	}
+	if w.guard != nil {
+		return ctx
+	}
+	guardedCtx, guard := newOpenAIFirstOutputHeaderGuard(ctx, release, w.deadline)
+	w.guard = guard
+	return guardedCtx
+}
+
+// stop 在客户端输出已开始（或请求已结束）后停表并释放上游 ctx 资源，防止误杀健康流。
+func (w *openAIFirstOutputWatchdog) stop() {
+	if w != nil && w.guard != nil {
+		w.guard.close()
+	}
+}
+
+// timedOut 非阻塞报告看门狗是否已触发（上游请求已被取消）。
+func (w *openAIFirstOutputWatchdog) timedOut() bool {
+	return w != nil && w.guard != nil && w.guard.firedFlag()
+}
+
+// timeoutFailoverError 将已触发的看门狗转译为可换号的 UpstreamFailoverError（HTTP 504）。
+func (s *OpenAIGatewayService) timeoutFailoverError(
+	w *openAIFirstOutputWatchdog,
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	startTime time.Time,
+	originalModel string,
+	phase string,
+	responseHeaders http.Header,
+) *UpstreamFailoverError {
+	return s.newOpenAIFirstOutputTimeoutError(
+		ctx, c, account, opsUpstreamProxyID(account), opsUpstreamProxyName(account),
+		startTime, originalModel, w.effort, w.timeout, phase, responseHeaders,
+	)
+}
+
 func (g *openAIFirstOutputHeaderGuard) close() {
 	g.once.Do(func() {
 		g.timer.Stop()
