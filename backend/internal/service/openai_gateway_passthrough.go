@@ -889,6 +889,8 @@ func appendOpenAIContextWindowPassthroughError(c *gin.Context, account *Account,
 		return
 	}
 	event := OpsUpstreamErrorEvent{
+		ProxyID:              opsUpstreamProxyID(account),
+		ProxyName:            opsUpstreamProxyName(account),
 		Platform:             PlatformOpenAI,
 		UpstreamStatusCode:   resp.StatusCode,
 		UpstreamRequestID:    resp.Header.Get("x-request-id"),
@@ -2192,31 +2194,63 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 					})
 				}
 				clientOutputStartedForError := openAIStreamClientOutputStarted(c, clientOutputStarted)
+				if !clientOutputStartedForError && !cyberHit {
+					// 显式 compact 回合的流内失败：先给外层重试循环一个信号，
+					// 让它换 compact 模型重试一次（重试与否由 compactModelFallbackRetried 把关）。
+					if compactErr := newOpenAICompactFallbackSignal(c, dataBytes, failedMessage); compactErr != nil {
+						return resultWithUsage(), compactErr
+					}
+				}
+				if clientOutputStartedForError && !cyberHit {
+					if codexFailureTerminal && eventType == "error" {
+						// Wait for the authoritative response.failed before mutating
+						// account health; EOF synthesis applies the pending effect.
+						bareErrorAccountSideEffectsPending = true
+					} else {
+						s.handleOpenAIStreamTerminalAccountSideEffects(c, account, dataBytes, failedMessage, resp.Header, mappedModel)
+						bareErrorAccountSideEffectsPending = false
+					}
+				}
 				if !clientOutputStartedForError {
-					if status, errType, errMsg, matched := applyOpenAIStreamFailedErrorPassthroughRule(c, account.Platform, dataBytes, failedMessage); matched {
-						// 命中透传规则也要记录 ops 上游错误事件（对齐 CC/Messages 与
-						// antigravity 先例），否则透传命中的 failed 在监控中不可见。
-						s.recordOpenAIStreamUpstreamError(c, account, true, upstreamRequestID, "http_error", dataBytes, failedMessage)
-						MarkResponseCommitted(c)
-						c.Writer.Header().Set("Content-Type", "application/json; charset=utf-8")
-						c.JSON(status, gin.H{
-							"error": gin.H{
-								"type":    errType,
-								"message": errMsg,
-							},
-						})
-						return resultWithUsage(), fmt.Errorf("upstream response failed: passthrough rule matched message=%s", errMsg)
+					// 优先级（对齐上游 acce29af2 语义 + 本地上下文窗口处理）：
+					// 1) 换号 failover（access state / 403 / 429 等）→ 必须先于透传规则，
+					//    否则客户端会拿到本可换号重试的账号级错误；上下文窗口错误
+					//    本身不会 failover，自然落到下一分支；
+					// 2) 上下文窗口错误 → 先给透传规则命中机会，未命中再回退
+					//    SSE 终止事件透传（不能被改写成 JSON 的约束只约束非规则路径）；
+					// 3) 错误透传规则（cyber / bare-error 序列除外）。
+					shouldFailover := false
+					if !cyberHit {
+						if eventType == "error" {
+							shouldFailover = openAIStreamErrorEventShouldFailover(dataBytes, failedMessage)
+						} else {
+							shouldFailover = openAIStreamFailedEventShouldFailover(dataBytes, failedMessage)
+						}
+					}
+					if shouldFailover {
+						return resultWithUsage(),
+							s.newOpenAIStreamFailoverErrorWithModel(c, account, true, upstreamRequestID, dataBytes, failedMessage, mappedModel, resp.Header)
 					}
 					if isOpenAIContextWindowError(failedMessage, dataBytes) {
+						if status, errType, errMsg, matched := applyOpenAIStreamFailedErrorPassthroughRule(c, account.Platform, dataBytes, failedMessage); matched {
+							// 命中透传规则也要记录 ops 上游错误事件（对齐 CC/Messages 与
+							// antigravity 先例），否则透传命中的 failed 在监控中不可见。
+							s.recordOpenAIStreamUpstreamError(c, account, true, upstreamRequestID, "http_error", dataBytes, failedMessage)
+							MarkResponseCommitted(c)
+							c.Writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+							c.JSON(status, gin.H{
+								"error": gin.H{
+									"type":    errType,
+									"message": errMsg,
+								},
+							})
+							return resultWithUsage(), fmt.Errorf("upstream response failed: passthrough rule matched message=%s", errMsg)
+						}
 						s.recordOpenAIStreamUpstreamError(c, account, true, upstreamRequestID, "http_error", dataBytes, openAIContextWindowClientMessage(failedMessage))
 						// 上游已经选择了 SSE 的 response.failed 协议；即使此前只有
 						// response.created 等待中的前导事件，也不能改写成 JSON。
 						writeOpenAIContextWindowSSEFailure(c, openAIContextWindowClientMessage(failedMessage))
 						return resultWithUsage(), fmt.Errorf("upstream response failed: %s", failedMessage)
-					}
-					if openAIStreamFailedEventShouldFailover(dataBytes, failedMessage) {
-						return resultWithUsage(),
-							s.newOpenAIStreamFailoverErrorWithModel(c, account, true, upstreamRequestID, dataBytes, failedMessage, mappedModel, resp.Header)
 					}
 					if !cyberHit && !sawBareError {
 						if status, errType, errMsg, matched := applyOpenAIStreamFailedErrorPassthroughRule(c, account.Platform, dataBytes, failedMessage); matched {

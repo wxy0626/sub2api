@@ -94,45 +94,74 @@ func TestForwardResponses_ForceChatCompletionsOmitsNoneReasoningEffort(t *testin
 func TestForwardResponses_PassthroughFlagWithUnsupportedResponsesUsesAccountMapping(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	for _, path := range []string{"/v1/responses", "/v1/responses/compact"} {
-		path := path
-		t.Run(path, func(t *testing.T) {
-			body := []byte(`{"model":"gpt-5.4-channel","input":"hello","stream":false}`)
-			rec := httptest.NewRecorder()
-			c, _ := gin.CreateTestContext(rec)
-			c.Request = httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
-			c.Request.Header.Set("Content-Type", "application/json")
+	t.Run("/v1/responses", func(t *testing.T) {
+		body := []byte(`{"model":"gpt-5.4-channel","input":"hello","stream":false}`)
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+		c.Request.Header.Set("Content-Type", "application/json")
 
-			upstream := &httpUpstreamRecorder{resp: &http.Response{
-				StatusCode: http.StatusOK,
-				Header:     http.Header{"Content-Type": []string{"application/json"}},
-				Body: io.NopCloser(strings.NewReader(
-					`{"id":"chatcmpl_mapping","object":"chat.completion","model":"gpt-5.4-account","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`,
-				)),
-			}}
-			svc := &OpenAIGatewayService{
-				cfg:          rawChatCompletionsTestConfig(),
-				httpUpstream: upstream,
-			}
-			account := rawChatCompletionsTestAccount()
-			account.Credentials["model_mapping"] = map[string]any{
-				"gpt-5.4-channel": "gpt-5.4-account",
-			}
-			account.Credentials["compact_model_mapping"] = map[string]any{
-				"gpt-5.4-account": "gpt-5.4-compact",
-			}
-			account.Extra = map[string]any{
-				"openai_passthrough":                     true,
-				openai_compat.ExtraKeyResponsesSupported: false,
-			}
+		upstream := &httpUpstreamRecorder{resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body: io.NopCloser(strings.NewReader(
+				`{"id":"chatcmpl_mapping","object":"chat.completion","model":"gpt-5.4-account","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`,
+			)),
+		}}
+		svc := &OpenAIGatewayService{
+			cfg:          rawChatCompletionsTestConfig(),
+			httpUpstream: upstream,
+		}
+		account := rawChatCompletionsTestAccount()
+		account.Credentials["model_mapping"] = map[string]any{
+			"gpt-5.4-channel": "gpt-5.4-account",
+		}
+		account.Extra = map[string]any{
+			"openai_passthrough":                     true,
+			openai_compat.ExtraKeyResponsesSupported: false,
+		}
 
-			result, err := svc.Forward(context.Background(), c, account, body)
-			require.NoError(t, err)
-			require.NotNil(t, result)
-			require.Equal(t, "http://upstream.example/v1/chat/completions", upstream.lastReq.URL.String())
-			require.Equal(t, "gpt-5.4-account", gjson.GetBytes(upstream.lastBody, "model").String())
-		})
-	}
+		result, err := svc.Forward(context.Background(), c, account, body)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Equal(t, "http://upstream.example/v1/chat/completions", upstream.lastReq.URL.String())
+		require.Equal(t, "gpt-5.4-account", gjson.GetBytes(upstream.lastBody, "model").String())
+	})
+
+	// 压缩请求即使在 passthrough + responses_supported=false 账号上也禁止
+	// 回落 raw Chat Completions（完整历史会被重新展开、再次触发
+	// context_length_exceeded）；最终边界必须显式拒绝。
+	t.Run("/v1/responses/compact", func(t *testing.T) {
+		body := []byte(`{"model":"gpt-5.4-channel","input":"hello","stream":false}`)
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/compact", bytes.NewReader(body))
+		c.Request.Header.Set("Content-Type", "application/json")
+
+		upstream := &httpUpstreamRecorder{}
+		svc := &OpenAIGatewayService{
+			cfg:          rawChatCompletionsTestConfig(),
+			httpUpstream: upstream,
+		}
+		account := rawChatCompletionsTestAccount()
+		account.Credentials["model_mapping"] = map[string]any{
+			"gpt-5.4-channel": "gpt-5.4-account",
+		}
+		account.Credentials["compact_model_mapping"] = map[string]any{
+			"gpt-5.4-account": "gpt-5.4-compact",
+		}
+		account.Extra = map[string]any{
+			"openai_passthrough":                     true,
+			openai_compat.ExtraKeyResponsesSupported: false,
+		}
+
+		result, err := svc.Forward(context.Background(), c, account, body)
+		require.Error(t, err)
+		require.Nil(t, result)
+		require.Empty(t, upstream.requests, "compact must not call /chat/completions")
+		require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+		require.Equal(t, "responses_compaction_not_supported", gjson.Get(rec.Body.String(), "error.type").String())
+	})
 }
 
 func TestForwardResponses_ForceChatCompletionsRoutesStreamingToChatCompletions(t *testing.T) {

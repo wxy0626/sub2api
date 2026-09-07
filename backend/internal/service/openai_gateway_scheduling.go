@@ -1217,7 +1217,18 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 							return selection, nil
 						}
 
-						// 粘性账号满载时继续负载感知调度，避免提前把请求排在满载账号上。
+						// 粘性账号满载：等待队列未满则原地排队；队列已满才做一次性
+						// 容量溢出（stickySpillover 只对本次请求生效，不迁移持久绑定）。
+						waitingCount, _ := s.concurrencyService.GetAccountWaitingCount(ctx, accountID)
+						if waitingCount < cfg.StickySessionMaxWaiting {
+							return s.newSelectionResult(ctx, account, false, nil, &AccountWaitPlan{
+								AccountID:      accountID,
+								MaxConcurrency: account.Concurrency,
+								Timeout:        cfg.StickySessionWaitTimeout,
+								MaxWaiting:     cfg.StickySessionMaxWaiting,
+							})
+						}
+						stickySpillover = true
 					}
 				}
 			}

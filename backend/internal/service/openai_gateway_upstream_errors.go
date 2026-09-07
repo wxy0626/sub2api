@@ -584,6 +584,8 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 			Kind:               "http_error",
 			Message:            upstreamMsg,
 			Detail:             upstreamDetail,
+			ProxyID:            opsUpstreamProxyID(account),
+			ProxyName:          opsUpstreamProxyName(account),
 		})
 		writeOpenAIContextWindowErrorResponse(c, upstreamMsg)
 		if upstreamMsg == "" {

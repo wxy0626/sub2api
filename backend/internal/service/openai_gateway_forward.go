@@ -158,6 +158,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	// 既无法完成原生 compact 协议，也会再次触发上游 context_length_exceeded。
 	// handler 已按 Responses 能力筛选账号；这里作为最终边界拒绝漏网账号，
 	// 让上层返回明确中文错误，而不是静默改写请求语义。
+	// CN 供应商（DeepSeek/Kimi/GLM）的显式 api_protocol 配置优先于探针 Extra；
+	// 未显式配置时按模型级能力判断（如 deepseek-v4-flash 走原生 Responses，
+	// deepseek-chat 回落 Chat Completions）。ShouldUseOpenAIResponsesForModel
+	// 是调度侧与转发侧共用的唯一路由真源，这里不得重复展开协议 switch，
+	// 否则两处会对未配置账号得出不同结论。
 	if account.Type == AccountTypeAPIKey && !account.ShouldUseOpenAIResponsesForModel(reqModel) {
 		if account.Platform == PlatformOpenAI && IsOpenAICompactionRequest(c, body) {
 			message := "会话压缩请求必须使用上游 Responses API；当前账号仅支持 Chat Completions，请在账号能力探测完成后重试或改用支持 Responses 的账号"
@@ -177,6 +182,36 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			body = sanitizedBody
 			originalBody = sanitizedBody
 			requestView = newOpenAIRequestView(sanitizedBody)
+			reqModel, reqStream, promptCacheKey = requestView.Model, requestView.Stream, requestView.PromptCacheKey
+			originalModel = reqModel
+		}
+	}
+	if account.IsOpenAIApiKey() {
+		if normalized, changed, normalizeErr := normalizeOpenAIParallelToolCallsWithoutTools(body, responsesLite); normalizeErr != nil {
+			return nil, normalizeErr
+		} else if changed {
+			body = normalized
+			originalBody = normalized
+		}
+		if normalized, changed, normalizeErr := normalizeOpenAIAPIKeyStoreFalseReasoningReplay(body, isOpenAIResponsesCompactPath(c)); normalizeErr != nil {
+			return nil, normalizeErr
+		} else if changed {
+			body = normalized
+			originalBody = normalized
+			requestView = newOpenAIRequestView(body)
+			reqModel, reqStream, promptCacheKey = requestView.Model, requestView.Stream, requestView.PromptCacheKey
+			originalModel = reqModel
+		}
+	}
+	if account.IsOpenAI() && (account.IsOpenAIApiKey() || account.IsOpenAIOAuthLike()) {
+		normalizedReasoningBody, reasoningChanged, reasoningErr := normalizeOpenAIResponsesReasoningContentReplay(body)
+		if reasoningErr != nil {
+			return nil, fmt.Errorf("normalize OpenAI Responses reasoning content replay: %w", reasoningErr)
+		}
+		if reasoningChanged {
+			body = normalizedReasoningBody
+			originalBody = normalizedReasoningBody
+			requestView = newOpenAIRequestView(normalizedReasoningBody)
 			reqModel, reqStream, promptCacheKey = requestView.Model, requestView.Stream, requestView.PromptCacheKey
 			originalModel = reqModel
 		}
