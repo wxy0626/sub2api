@@ -329,7 +329,13 @@ func TestOpenAIGatewayService_APIKeyRetriesExplicitlyRejectedTopLevelTruncation(
 	require.Len(t, upstream.bodies, 2)
 	require.Equal(t, "auto", gjson.GetBytes(upstream.bodies[0], "truncation").String())
 	require.False(t, gjson.GetBytes(upstream.bodies[1], "truncation").Exists())
-	require.Equal(t, "keep", gjson.GetBytes(upstream.bodies[1], "input").String())
+	// API Key 账号发送前会把字符串 input 预规范化为 message 块数组
+	// （normalizeOpenAIAPIKeyResponsesStringInput）；重试只负责删除 truncation，
+	// 已规范化的 input 原样保留，不再回退为字符串。
+	input := gjson.GetBytes(upstream.bodies[1], "input")
+	require.True(t, input.IsArray())
+	require.Equal(t, "keep", input.Array()[0].Get("content.0.text").String())
+	require.Equal(t, "input_text", input.Array()[0].Get("content.0.type").String())
 }
 
 func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyRejectsUnsafeIndexedMutations(t *testing.T) {

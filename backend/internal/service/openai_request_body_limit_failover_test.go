@@ -85,7 +85,13 @@ func TestOpenAIRequestBodyLimitFailover_HTTP413SwitchesAccountsBeforeWrite(t *te
 				require.Equal(t, requestBody, upstream.lastBody)
 			} else {
 				require.Equal(t, "gpt-5.2", gjson.GetBytes(upstream.lastBody, "model").String())
-				require.Equal(t, "hello", gjson.GetBytes(upstream.lastBody, "input").String())
+				// API Key 账号发送前会把字符串 input 预规范化为 message 块数组
+				// （normalizeOpenAIAPIKeyResponsesStringInput）；413 failover
+				// 不改写请求体，断言跟随规范化后的形态。
+				input := gjson.GetBytes(upstream.lastBody, "input")
+				require.True(t, input.IsArray())
+				require.Equal(t, "hello", input.Array()[0].Get("content.0.text").String())
+				require.Equal(t, "input_text", input.Array()[0].Get("content.0.type").String())
 			}
 		})
 	}
