@@ -105,7 +105,7 @@ func TestTeamLinkedError_FanoutMarksSameTeamAccounts(t *testing.T) {
 	require.Equal(t, []int64{2, 6, 1}, repo.setErrorIDs)
 	require.Contains(t, repo.setErrorMsgs[2], "team-linked error triggered by account #1")
 	require.Contains(t, repo.setErrorMsgs[6], "team-linked error triggered by account #1")
-	require.Contains(t, repo.setErrorMsgs[1], "Workspace deactivated (402)")
+	require.Contains(t, repo.setErrorMsgs[1], "ChatGPT 工作区已停用（402）")
 	require.NotContains(t, repo.setErrorMsgs[1], "team-linked")
 	// 熔断顺序：兄弟账户先于落库全部进程内熔断，触发账户走 auth_error
 	require.Equal(t, []string{openAITeamLinkedErrorBlockReason, openAITeamLinkedErrorBlockReason, "auth_error"}, blocker.reasons)

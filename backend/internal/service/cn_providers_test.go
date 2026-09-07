@@ -236,7 +236,8 @@ func TestCNBalanceURL(t *testing.T) {
 	require.Equal(t, "https://api.moonshot.cn/v1/users/me/balance", cnBalanceURL(kimi))
 
 	deepseek := &Account{
-		Platform:    PlatformDeepseek,
+		Platform: PlatformDeepseek,
+		Type:     AccountTypeAPIKey,
 		Credentials: map[string]any{"base_url": "https://api.deepseek.com"},
 	}
 	require.Equal(t, "https://api.deepseek.com/user/balance", cnBalanceURL(deepseek))

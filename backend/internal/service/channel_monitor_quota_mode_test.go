@@ -431,11 +431,11 @@ func TestMonitorAccountQuotaCapability_Matrix(t *testing.T) {
 			wantErr: ErrChannelMonitorAccountNotSupportable,
 		},
 		{
-			// 自定义域名 kimi coding：GetCodingPlanProvider 识别不到 → 无额度端点。
-			name: "custom-domain kimi coding unsupported",
+			// 自定义域名 kimi coding：平台字段是稳定供应商标识，额度端点
+			// 固定为 api.kimi.com/coding/v1/usages，不受 base_url 影响。
+			name: "custom-domain kimi coding ok",
 			account: &Account{ID: 2, Platform: domain.PlatformKimi, Type: AccountTypeAPIKey,
 				Credentials: map[string]any{"account_mode": AccountModeCoding, "base_url": "https://cw.example.com"}},
-			wantErr: ErrChannelMonitorAccountNotSupportable,
 		},
 		{
 			name:    "kimi coding default endpoint ok",

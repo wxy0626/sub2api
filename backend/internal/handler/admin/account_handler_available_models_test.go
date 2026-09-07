@@ -62,11 +62,13 @@ type syncUpstreamHTTPUpstream struct {
 	resp      *http.Response
 	err       error
 	lastReq   *http.Request
+	reqURLs   []string
 	responses []*http.Response
 }
 
 func (u *syncUpstreamHTTPUpstream) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
 	u.lastReq = req
+	u.reqURLs = append(u.reqURLs, req.URL.String())
 	if u.err != nil {
 		return nil, u.err
 	}
@@ -486,7 +488,9 @@ func TestAccountHandlerGetAvailableModels_OpenAICompatibleAPIKeyReturnsFullUpstr
 		// owned_by 标记上游目录来源，前端据此放行全部上游模型。
 		require.Equal(t, "upstream", model.OwnedBy)
 	}
-	require.Equal(t, []string{"claude-sonnet-4", "gemini-3-pro-preview", "gpt-4o", "gpt-5.6-luna"}, ids)
+	// 本地白名单策略（filterOpenAICompatibleSyncedModelIDs）：第三方中转的
+	// gpt-* 只保留 5.6+，gpt-4o 被裁剪；非 gpt 第三方模型全量保留。
+	require.Equal(t, []string{"claude-sonnet-4", "gemini-3-pro-preview", "gpt-5.6-luna"}, ids)
 	require.NotNil(t, upstream.lastReq)
 	require.Equal(t, "https://proxy.example.com/v1/models", upstream.lastReq.URL.String())
 	require.Equal(t, "Bearer proxy-key", upstream.lastReq.Header.Get("Authorization"))
@@ -741,7 +745,8 @@ func TestAccountHandlerGetAvailableModels_DeepSeekMappingReturnsSortedModelObjec
 }
 
 // TestAccountHandlerSyncUpstreamModels_OpenAICompatibleProxyReturnsFullCatalog
-// 验证「同步上游模型」对第三方 OpenAI 兼容端点返回全量目录，gemini-* 等模型可写入账号白名单。
+// 验证「同步上游模型」对第三方 OpenAI 兼容端点返回过滤后目录：gemini-* 等
+// 非 gpt 第三方模型全量可写入账号白名单，gpt-* 只保留 5.6+（gpt-4o 被裁）。
 func TestAccountHandlerSyncUpstreamModels_OpenAICompatibleProxyReturnsFullCatalog(t *testing.T) {
 	svc := &availableModelsAdminService{
 		stubAdminService: newStubAdminService(),
@@ -753,7 +758,7 @@ func TestAccountHandlerSyncUpstreamModels_OpenAICompatibleProxyReturnsFullCatalo
 			Status:   service.StatusActive,
 			Credentials: map[string]any{
 				"api_key":  "proxy-key",
-				"base_url": "http://host.docker.internal:7860/v1",
+				"base_url": "https://proxy.example.com/v1",
 			},
 		},
 	}
@@ -778,9 +783,12 @@ func TestAccountHandlerSyncUpstreamModels_OpenAICompatibleProxyReturnsFullCatalo
 		} `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-	require.Equal(t, []string{"gemini-3-pro-preview", "gemini-3.5-flash", "gpt-4o"}, resp.Data.Models)
+	require.Equal(t, []string{"gemini-3-pro-preview", "gemini-3.5-flash"}, resp.Data.Models)
 	require.NotNil(t, upstream.lastReq)
-	require.Equal(t, "http://host.docker.internal:7860/v1/models", upstream.lastReq.URL.String())
+	// 同步流程在拉取账号 /models 目录后，还会尝试 models.dev 注册表补全
+	// 能力元数据（第三方代理通常无此数据，仅记录警告），因此不能断言
+	// lastReq 指向模型目录端点，改为断言请求序列包含该端点。
+	require.Contains(t, upstream.reqURLs, "https://proxy.example.com/v1/models")
 }
 
 func TestAccountHandlerSyncUpstreamModels_ConfigErrorReturnsBadRequest(t *testing.T) {

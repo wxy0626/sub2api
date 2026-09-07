@@ -89,7 +89,7 @@ func TestDeepSeekV4FlashBuildsNativeResponsesRequest(t *testing.T) {
 	account := deepSeekTestAccount()
 	request, err := service.buildUpstreamRequest(context.Background(), c, account, []byte(`{"model":"deepseek-v4-flash","input":"hello"}`), "sk-deepseek-test", false, "", false)
 	require.NoError(t, err)
-	require.Equal(t, "https://api.deepseek.com/v1/responses", request.URL.String())
+	require.Equal(t, "https://api.deepseek.com/responses", request.URL.String())
 	require.Equal(t, "Bearer sk-deepseek-test", request.Header.Get("Authorization"))
 }
 
@@ -157,7 +157,7 @@ func TestDeepSeekV4FlashResponsesTestSuccess(t *testing.T) {
 	err := service.testDeepSeekAccountConnection(ctx, deepSeekTestAccount(), DeepSeekResponsesModel, "hello", AccountTestModeResponses)
 	require.NoError(t, err)
 	require.Len(t, upstream.requests, 1)
-	require.Equal(t, "https://api.deepseek.com/v1/responses", upstream.requests[0].URL.String())
+	require.Equal(t, "https://api.deepseek.com/responses", upstream.requests[0].URL.String())
 	require.Equal(t, "Bearer sk-deepseek-test", upstream.requests[0].Header.Get("Authorization"))
 	require.Contains(t, recorder.Body.String(), "DeepSeek Responses 诊断响应")
 	require.Contains(t, recorder.Body.String(), "\"success\":true")
@@ -173,7 +173,7 @@ func TestDeepSeekV4FlashResponsesTestErrors(t *testing.T) {
 	}{
 		{name: "missing api key", account: func() *Account { a := deepSeekTestAccount(); delete(a.Credentials, "api_key"); return a }(), want: []string{"DeepSeek API Key 未配置", "credentials.api_key"}},
 		{name: "invalid base url", account: func() *Account { a := deepSeekTestAccount(); a.Credentials["base_url"] = "://invalid"; return a }(), want: []string{"DeepSeek Base URL 无效", "credentials.base_url", "原始技术详情"}},
-		{name: "transport", account: deepSeekTestAccount(), upstream: &queuedHTTPUpstream{errors: []error{errors.New("dial tcp: responses connection refused")}}, want: []string{"通过 /v1/responses 测试 DeepSeek 连接失败", "responses connection refused", "原始技术详情"}},
+		{name: "transport", account: deepSeekTestAccount(), upstream: &queuedHTTPUpstream{errors: []error{errors.New("dial tcp: responses connection refused")}}, want: []string{"通过 /responses 测试 DeepSeek 连接失败", "responses connection refused", "原始技术详情"}},
 	}
 
 	for _, tt := range tests {
@@ -209,8 +209,8 @@ func TestDeepSeekV4FlashResponsesTestHTTPErrorPreservesUpstreamDetails(t *testin
 
 	err := service.testDeepSeekAccountConnection(ctx, deepSeekTestAccount(), DeepSeekResponsesModel, "hello", AccountTestModeResponses)
 	require.Error(t, err)
-	require.Equal(t, "https://api.deepseek.com/v1/responses", upstream.requests[0].URL.String())
-	require.Contains(t, err.Error(), "通过 /v1/responses 测试 DeepSeek 连接失败")
+	require.Equal(t, "https://api.deepseek.com/responses", upstream.requests[0].URL.String())
+	require.Contains(t, err.Error(), "通过 /responses 测试 DeepSeek 连接失败")
 	require.Contains(t, err.Error(), "HTTP 401")
 	require.Contains(t, err.Error(), "invalid deepseek responses key")
 	require.Contains(t, recorder.Body.String(), "invalid deepseek responses key")
@@ -313,7 +313,7 @@ func TestDeepSeekV4FlashForwardUsesNativeResponsesAndSemanticSSE(t *testing.T) {
 	require.NotNil(t, result)
 	require.True(t, result.Stream)
 	require.NotNil(t, upstream.lastReq)
-	require.Equal(t, "https://api.deepseek.com/v1/responses", upstream.lastReq.URL.String())
+	require.Equal(t, "https://api.deepseek.com/responses", upstream.lastReq.URL.String())
 	require.Equal(t, "Bearer sk-deepseek-test", upstream.lastReq.Header.Get("Authorization"))
 	require.Equal(t, "deepseek-v4-flash", gjson.GetBytes(upstream.lastBody, "model").String())
 	require.Contains(t, gjson.GetBytes(upstream.lastBody, "input").String(), "hello")

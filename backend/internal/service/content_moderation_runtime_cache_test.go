@@ -276,7 +276,10 @@ func TestContentModerationRuntimeSnapshotRefreshFailureKeepsStaleConfig(t *testi
 	decision, err = svc.Check(context.Background(), input)
 	require.NoError(t, err)
 	require.True(t, decision.Blocked)
+	// Windows 时钟粒度较粗，两次 Check 可能落在同一 tick（TTL=1ns 被判为
+	// 未过期），持续发起 Check 确保过期刷新被触发。
 	require.Eventually(t, func() bool {
+		_, _ = svc.Check(context.Background(), input)
 		_, calls := repo.calls()
 		return calls >= 2
 	}, time.Second, time.Millisecond)
