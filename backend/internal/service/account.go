@@ -1337,6 +1337,16 @@ func (a *Account) IsOpenAIApiKey() bool {
 // 适用 openai 与国产 OpenAI 兼容供应商（kimi/zhipu/deepseek）；grok 走 GetGrokBaseURL，
 // 此处对 grok 返回 "" 以保持原有行为。
 func (a *Account) GetOpenAIBaseURL() string {
+	// CN 供应商 adaptive 账号优先使用分协议 base URL（api_base_urls）。
+	// 必须先于 DeepSeek 委托：GetDeepSeekBaseURL 只认 base_url 字段，
+	// 否则 adaptive 账号的 chat_completions 分协议地址会被旧字段短路。
+	if a.IsCNProvider() && a.IsAdaptiveAPIProtocol() {
+		if baseURLs, ok := a.Credentials["api_base_urls"].(map[string]any); ok {
+			if baseURL, ok := baseURLs[APIProtocolChatCompletions].(string); ok && strings.TrimSpace(baseURL) != "" {
+				return strings.TrimSpace(baseURL)
+			}
+		}
+	}
 	if a.IsDeepSeek() {
 		return a.GetDeepSeekBaseURL()
 	}
@@ -1344,13 +1354,6 @@ func (a *Account) GetOpenAIBaseURL() string {
 	// 否则其 Coding Plan 额度探测会拿到空地址并误报账号类型不匹配。
 	if !a.IsOpenAI() && !a.IsCNProvider() {
 		return ""
-	}
-	if a.IsCNProvider() && a.IsAdaptiveAPIProtocol() {
-		if baseURLs, ok := a.Credentials["api_base_urls"].(map[string]any); ok {
-			if baseURL, ok := baseURLs[APIProtocolChatCompletions].(string); ok && strings.TrimSpace(baseURL) != "" {
-				return strings.TrimSpace(baseURL)
-			}
-		}
 	}
 	if a.Type == AccountTypeAPIKey || a.Type == AccountTypeUpstream {
 		if baseURL := strings.TrimSpace(a.GetCredential("base_url")); baseURL != "" {
@@ -1901,6 +1904,17 @@ func (a *Account) SupportsOpenAIEndpointCapabilityForModel(capability OpenAIEndp
 func (a *Account) ShouldUseOpenAIResponsesForModel(requestedModel string) bool {
 	if a == nil {
 		return false
+	}
+	// CN 供应商的显式 api_protocol 配置优先于探测 Extra：responses /
+	// adaptive-native 协议走原生 Responses；显式 chat_completions / anthropic
+	// 固定不走。未显式配置时回落到原有模型能力/探测判断。
+	if a.IsCNProvider() {
+		switch strings.TrimSpace(a.GetCredential("api_protocol")) {
+		case APIProtocolResponses, APIProtocolAdaptive:
+			return a.UsesNativeCNResponses()
+		case APIProtocolChatCompletions, APIProtocolAnthropic:
+			return false
+		}
 	}
 	if a.IsDeepSeek() {
 		return a.SupportsOpenAIEndpointCapabilityForModel(OpenAIEndpointCapabilityResponses, requestedModel)

@@ -1349,9 +1349,11 @@ func (h *GatewayHandler) compositeAvailableModels(ctx context.Context, groupID *
 	seen := make(map[string]struct{})
 	models := make([]string, 0)
 	schedulablePlatforms := h.gatewayService.GetSchedulablePlatforms(ctx, groupID)
-	for _, platform := range []string{service.PlatformAnthropic, service.PlatformGemini, service.PlatformOpenAI, service.PlatformAntigravity, service.PlatformGrok, service.PlatformDeepSeek} {
+	for _, platform := range []string{service.PlatformAnthropic, service.PlatformGemini, service.PlatformOpenAI, service.PlatformAntigravity, service.PlatformGrok, service.PlatformKimi, service.PlatformZhipu, service.PlatformDeepSeek} {
 		platformModels := h.gatewayService.GetAvailableModels(ctx, groupID, platform)
-		if platformModels == nil && platform != service.PlatformDeepSeek {
+		// CN 供应商没有静态默认模型列表（defaultModelIDsForPlatform 的
+		// default 分支是 Claude 列表），composite 下只暴露账号映射键。
+		if platformModels == nil && !service.IsCNProvider(platform) {
 			if _, ok := schedulablePlatforms[platform]; ok {
 				platformModels = defaultModelIDsForPlatform(platform)
 			}
@@ -1585,13 +1587,14 @@ func defaultModelIDsForPlatform(platform string) []string {
 		return claude.DefaultModelIDs()
 	case service.PlatformGrok:
 		return xai.DefaultModelIDs()
-	case service.PlatformDeepSeek:
-		// DeepSeek 的模型目录只接受上游 API Key 实时结果，不提供静态网关回退。
-		return nil
 	case service.PlatformComposite:
 		ids := make([]string, 0)
 		seen := make(map[string]struct{})
-		for _, concretePlatform := range []string{service.PlatformAnthropic, service.PlatformGemini, service.PlatformOpenAI, service.PlatformAntigravity, service.PlatformGrok, service.PlatformDeepSeek} {
+		// CN 平台（kimi/zhipu/deepseek）与 anthropic 一样落到 default 分支的
+		// Claude 默认列表：Claude Code 客户端请求的就是这些模型名并经账号
+		// model_mapping 转换。/v1/models 对 deepseek 的"只认上游目录"约束
+		// 在 Models handler 与 compositeAvailableModels 中单独控制。
+		for _, concretePlatform := range []string{service.PlatformAnthropic, service.PlatformGemini, service.PlatformOpenAI, service.PlatformAntigravity, service.PlatformGrok, service.PlatformKimi, service.PlatformZhipu, service.PlatformDeepSeek} {
 			for _, id := range defaultModelIDsForPlatform(concretePlatform) {
 				if _, ok := seen[id]; ok {
 					continue

@@ -314,6 +314,12 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 
 	// Route to platform-specific test method
 	if account.IsCNProvider() {
+		// 显式选择 Responses 诊断的 DeepSeek 账号优先进入 deepseek 专用流程：
+		// CN 协议分发会按 credentials.api_protocol 把默认协议账号送去
+		// Chat Completions 测试并丢弃 mode，导致强制 /responses 诊断失效。
+		if account.IsDeepSeek() && normalizeAccountTestMode(mode) == AccountTestModeResponses {
+			return s.testDeepSeekAccountConnection(c, account, modelID, prompt, normalizeAccountTestMode(mode))
+		}
 		switch account.GetAPIProtocol() {
 		case APIProtocolAdaptive:
 			return s.testCNProviderAdaptiveConnection(c, account, modelID, prompt)
@@ -380,7 +386,7 @@ func (s *AccountTestService) testDeepSeekAccountConnection(c *gin.Context, accou
 		}
 	}
 	if mode == AccountTestModeResponses && !strings.EqualFold(testModelID, DeepSeekResponsesModel) {
-		return s.sendErrorAndEnd(c, fmt.Sprintf("DeepSeek 模型 %q 不支持 /v1/responses；只有 %s 支持 Responses，请改用 Chat Completions 或选择 %s。", testModelID, DeepSeekResponsesModel, DeepSeekResponsesModel))
+		return s.sendErrorAndEnd(c, fmt.Sprintf("DeepSeek 模型 %q 不支持 /responses；只有 %s 支持 Responses，请改用 Chat Completions 或选择 %s。", testModelID, DeepSeekResponsesModel, DeepSeekResponsesModel))
 	}
 	if mode == AccountTestModeResponses {
 		// 只有 deepseek-v4-flash 进入现有的 Responses 诊断流程。
@@ -922,7 +928,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		log.Printf("OpenAI account test request failed: account_id=%d error=%v", account.ID, err)
 		if mode == AccountTestModeResponses {
 			if credentialAccount.IsDeepSeek() {
-				return s.sendErrorAndEnd(c, fmt.Sprintf("通过 /v1/responses 测试 DeepSeek 连接失败：无法连接上游服务，请检查 DeepSeek Base URL、代理和网络配置。原始技术详情：%s", deepSeekAccountTestErrorDetail(credentialAccount, err.Error())))
+				return s.sendErrorAndEnd(c, fmt.Sprintf("通过 /responses 测试 DeepSeek 连接失败：无法连接上游服务，请检查 DeepSeek Base URL、代理和网络配置。原始技术详情：%s", deepSeekAccountTestErrorDetail(credentialAccount, err.Error())))
 			}
 			return s.sendErrorAndEnd(c, fmt.Sprintf("通过 /v1/responses 测试连接失败：无法连接上游服务，请检查 API Base URL、网络和 API Key。原始技术详情：%s", err.Error()))
 		}
@@ -963,12 +969,12 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		}
 		if mode == AccountTestModeResponses {
 			if credentialAccount.IsDeepSeek() {
-				return s.sendErrorAndEnd(c, fmt.Sprintf("通过 /v1/responses 测试 DeepSeek 连接失败：上游返回 HTTP %d，请检查 API Key、模型权限和 Responses 接口兼容性。原始技术详情：%s", resp.StatusCode, errorDetail))
+				return s.sendErrorAndEnd(c, fmt.Sprintf("通过 /responses 测试 DeepSeek 连接失败：上游返回 HTTP %d，请检查 API Key、模型权限和 Responses 接口兼容性。原始技术详情：%s", resp.StatusCode, errorDetail))
 			}
 			return s.sendErrorAndEnd(c, fmt.Sprintf("通过 /v1/responses 测试连接失败：上游返回 HTTP %d，请检查接口兼容性、模型权限和 API Key。原始技术详情：%s", resp.StatusCode, errorDetail))
 		}
 		if credentialAccount.IsDeepSeek() {
-			return s.sendErrorAndEnd(c, fmt.Sprintf("通过 /v1/responses 测试 DeepSeek 连接失败：上游返回 HTTP %d，请检查 API Key、模型权限和接口兼容性。原始技术详情：%s", resp.StatusCode, errorDetail))
+			return s.sendErrorAndEnd(c, fmt.Sprintf("通过 /responses 测试 DeepSeek 连接失败：上游返回 HTTP %d，请检查 API Key、模型权限和接口兼容性。原始技术详情：%s", resp.StatusCode, errorDetail))
 		}
 		return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, errorDetail))
 	}
@@ -1191,11 +1197,6 @@ func (s *AccountTestService) testGrokResponsesConnection(c *gin.Context, ctx con
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		errorDetail := accountTestErrorDetail(account, string(body), authToken)
-		if resp.StatusCode == http.StatusPaymentRequired && s.accountRepo != nil {
-			stateCtx, cancel := openAIAccountStateContext(ctx)
-			defer cancel()
-			_ = s.accountRepo.SetTempUnschedulable(stateCtx, account.ID, time.Now().Add(30*time.Minute), "grok payment required")
-		}
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Grok Responses API returned %d: %s", resp.StatusCode, errorDetail))
 	}
 	return s.processOpenAIStream(c, resp.Body, false, account)
@@ -1234,7 +1235,65 @@ func (s *AccountTestService) observeGrokTestResponse(ctx context.Context, accoun
 	} else if s.accountRepo != nil && isSuccessfulGrokRateLimitRecovery(account, &xai.QuotaSnapshot{StatusCode: resp.StatusCode}) {
 		clearGrokRateLimitAfterRecovery(ctx, s.accountRepo, account)
 	}
-
+	if s.accountRepo == nil || len(responseBody) == 0 {
+		if resp.StatusCode == http.StatusPaymentRequired && s.accountRepo != nil {
+			stateCtx, cancel := openAIAccountStateContext(ctx)
+			defer cancel()
+			_ = s.accountRepo.SetTempUnschedulable(stateCtx, account.ID, now.Add(30*time.Minute), "grok payment required")
+		}
+		return
+	}
+	if isGrokContentPolicyRejection(resp.StatusCode, responseBody) {
+		return
+	}
+	decision := classifyGrokUpstreamFailure(resp.StatusCode, responseBody, "")
+	if decision.Class == GrokFailureFreeUsage {
+		if resetAt, limited := grokRateLimitResetAtForAccount(account, snapshot, now); limited && resetAt.After(now) {
+			persistGrokRateLimit(ctx, s.accountRepo, account, resetAt)
+		} else {
+			stateCtx, cancel := openAIAccountStateContext(ctx)
+			_ = s.accountRepo.SetTempUnschedulable(stateCtx, account.ID, now.Add(grokFreeUsageProbeCooldown), "grok free usage exhausted")
+			cancel()
+		}
+		return
+	}
+	if decision.Class == GrokFailureBilling && (isGrokSpendingLimitError(responseBody) || strings.Contains(strings.ToLower(decision.Reason), "credit")) {
+		// spending-limit 是账期结束即可恢复的错误：走 rate-limit 通道（短探针
+		// 冷却），而不是把账号长时间钉死在不可调度状态。
+		persistGrokRateLimit(ctx, s.accountRepo, account, grokSpendingLimitResetAt(account, now))
+		return
+	}
+	cooldown := time.Duration(0)
+	reason := ""
+	switch resp.StatusCode {
+	case http.StatusUnauthorized:
+		cooldown, reason = 10*time.Minute, "grok oauth token unauthorized"
+	case http.StatusPaymentRequired:
+		cooldown, reason = 30*time.Minute, "grok payment required"
+	case http.StatusForbidden:
+		cooldown, reason = 30*time.Minute, "grok entitlement or subscription tier denied"
+	default:
+		if resp.StatusCode >= 500 {
+			cooldown, reason = 2*time.Minute, "grok upstream temporary error"
+		}
+	}
+	if decision.Class == GrokFailureBilling && cooldown == 0 {
+		cooldown, reason = 30*time.Minute, "grok payment required"
+	}
+	if cooldown > 0 {
+		stateCtx, cancel := openAIAccountStateContext(ctx)
+		defer cancel()
+		until := now.Add(cooldown)
+		if account.TempUnschedulableUntil != nil && account.TempUnschedulableUntil.After(until) {
+			until = *account.TempUnschedulableUntil
+		}
+		_ = s.accountRepo.SetTempUnschedulable(
+			stateCtx,
+			account.ID,
+			until,
+			reason,
+		)
+	}
 }
 
 func (s *AccountTestService) testGrokImageGeneration(c *gin.Context, ctx context.Context, account *Account, authToken, modelID, prompt, imageDataURL string) error {

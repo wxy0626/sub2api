@@ -107,7 +107,9 @@ var AllowedQuotaPlatforms = []string{
 	PlatformGemini,
 	PlatformAntigravity,
 	PlatformGrok,
-	PlatformDeepSeek,
+	PlatformKimi,
+	PlatformZhipu,
+	PlatformDeepseek,
 }
 
 // DeepSeekDefaultModelIDs 是前端选择器和 Codex 配置保留的最新 DeepSeek 候选模型。

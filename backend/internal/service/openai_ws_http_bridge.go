@@ -442,19 +442,21 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	_, grokExplicitToolsField := openAIWSHTTPBridgeRawField(grokIntentSourceBody, "tools")
 	grokExplicitToolIntent := account.Platform == PlatformGrok && hasGrokResponsesToolIntent(grokIntentSourceBody)
 	var clientToolMapping apicompat.ResponsesClientToolMapping
-	if account.Platform == PlatformOpenAI {
-		// HTTP bridge 会先删除 WS 字段并重新编码 body；清理必须放在这次
-		// 重建之后，保证后续 build request 拿到的就是最终安全输入。
-		body, clientToolMapping, err = adaptResponsesClientToolsForFunctionUpstream(body, "OpenAI WS HTTP bridge")
-		if err != nil {
-			return nil, fmt.Errorf("adapt response client tools: %w", err)
-		}
-		sanitizedBody, changed, sanitizeErr := sanitizeOpenAIResponsesInputItemIDs(body)
-		if sanitizeErr != nil {
-			return nil, fmt.Errorf("sanitize OpenAI Responses input item IDs in HTTP bridge: %w", sanitizeErr)
-		}
-		if changed {
-			body = sanitizedBody
+	functionToolUpstream := (account.Platform == PlatformOpenAI && account.Type == AccountTypeAPIKey) || account.Platform == PlatformGrok
+	if functionToolUpstream {
+		if account.Platform == PlatformGrok {
+			body, err = sanitizeGrokResponsesInput(body)
+			if err != nil {
+				return nil, fmt.Errorf("sanitize Grok WS HTTP bridge input: %w", err)
+			}
+		} else {
+			sanitizedBody, changed, sanitizeErr := sanitizeOpenAIResponsesInputItemIDs(body)
+			if sanitizeErr != nil {
+				return nil, fmt.Errorf("sanitize OpenAI Responses input item IDs in HTTP bridge: %w", sanitizeErr)
+			}
+			if changed {
+				body = sanitizedBody
+			}
 		}
 		inheritedState, _ := openAIWSHTTPBridgeToolStateFromContext(c)
 		inheritedLoweredTools := decodeOpenAIWSHTTPBridgeLoweredTools(inheritedState.LoweredTools)
