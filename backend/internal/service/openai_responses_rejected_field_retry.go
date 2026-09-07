@@ -27,6 +27,16 @@ var (
 	openAIResponsesCacheModelRejectionPattern     = regexp.MustCompile(`(?i)["']?(prompt_cache_breakpoint|input\[\d+\]\.prompt_cache_breakpoint)["']?\s+is\s+not\s+supported\s+on\s+this\s+model\b`)
 	openAIResponsesToolParametersParamPattern     = regexp.MustCompile(`(?i)^(?:tools|input)\[\d+\](?:\.tools\[\d+\])*(?:\.function)?\.parameters$`)
 	openAIResponsesMissingSchemaTypePattern       = regexp.MustCompile(`(?i)\bgot\s+["']?type\s*:\s*["']?none["']?`)
+	// 点分 content param：部分兼容上游（如 platform.experientiallabs.ai）报错用
+	// input.8.content.0.type 形态，而官方上游用 input[8].content 方括号形态。
+	openAIResponsesRejectedDotContentParamPattern = regexp.MustCompile(`(?i)^input\.(\d+)\.content(?:\.\d+)?(?:\.type)?$`)
+	// 字符串 content 被拒消息："Invalid value for 'input.8.content.0.type':
+	// expected one of 'input_text', but got a string instead." 捕获组提取索引。
+	openAIResponsesStringContentMessagePattern = regexp.MustCompile(`(?i)invalid\s+value\s+for\s+["']?input[.\[](\d+)\]?\.content["']?[^\n]*\bexpected\s+one\s+of\s+["']?input_text["']?[^\n]*\bgot\s+(?:a\s+)?string\b`)
+	// 服务端工具被拒消息："The request carries native Responses tool
+	// declarations (custom, namespace, web_search, or tool_search entries)
+	// that only a native OpenAI Responses route can serve."
+	openAIResponsesNativeToolsMessagePattern = regexp.MustCompile(`(?i)native\s+responses\s+tool\s+declarations`)
 )
 
 type openAIResponsesRejectedFieldRetryState struct {
@@ -129,6 +139,20 @@ func normalizeOpenAIResponsesRejectedFieldRetryBody(statusCode int, body, respon
 		if changed {
 			return retryBody, "tool parameter root type rejection", true, nil
 		}
+	}
+	// 部分兼容上游（如 platform.experientiallabs.ai）不支持 Responses 原生工具
+	// 声明（web_search 等服务端工具；custom/tool_search/namespace 已被透传适配
+	// 转为 function），报 param=tools + unsupported_parameter。剥离全部非
+	// function 工具条目后重试——function 是各家上游的最小公分母。
+	if code == "unsupported_parameter" && (param == "tools" || openAIResponsesNativeToolsMessagePattern.MatchString(message)) {
+		return stripOpenAIResponsesUnsupportedServerTools(body)
+	}
+	// 同类上游也不接受 message content 的字符串简写（官方 API 允许），报
+	// input.N.content.0.type expected input_text but got a string。把 input
+	// 里所有 message 项的字符串 content 按角色规范化为块数组后重试——与
+	// status 修复同理一次修完同类，避免逐索引重试耗尽预算。
+	if stringContentIndex, ok := openAIResponsesRejectedStringContentIndex(param, message); ok {
+		return normalizeOpenAIResponsesRejectedStringContentAtIndex(body, stringContentIndex)
 	}
 	cacheMessageParam := openAIResponsesCacheModelRejectionParamFromMessage(message)
 	cacheParam := param
@@ -402,4 +426,125 @@ func removeOpenAIResponsesRejectedNamespaceAtIndex(body []byte, index int) ([]by
 		return nil, "", false, fmt.Errorf("delete rejected namespace at input[%d]: %w", index, err)
 	}
 	return retryBody, "indexed namespace parameter rejection", true, nil
+}
+
+// openAIResponsesRejectedStringContentIndex 从上游 param 或错误消息中提取
+// 字符串 content 被拒的 input 索引。param 兼容两种形态：官方点分
+// input.8.content.0.type 与既有方括号 input[8].content；param 缺失时回落
+// 到错误消息提取。
+func openAIResponsesRejectedStringContentIndex(param, message string) (int, bool) {
+	if !openAIResponsesStringContentMessagePattern.MatchString(message) {
+		return 0, false
+	}
+	if match := openAIResponsesRejectedDotContentParamPattern.FindStringSubmatch(strings.TrimSpace(param)); len(match) == 2 {
+		if index, err := strconv.Atoi(match[1]); err == nil && index >= 0 {
+			return index, true
+		}
+	}
+	if index, ok := openAIResponsesRejectedContentIndex(param); ok {
+		return index, true
+	}
+	// param 缺失或不匹配时直接从消息里取索引，容忍上游 param 字段省略。
+	if match := openAIResponsesStringContentMessagePattern.FindStringSubmatch(message); len(match) == 2 {
+		if index, err := strconv.Atoi(match[1]); err == nil && index >= 0 {
+			return index, true
+		}
+	}
+	return 0, false
+}
+
+// normalizeOpenAIResponsesRejectedStringContentAtIndex 把 input 里 message 项
+// 的字符串 content 简写规范化为块数组：user/system 角色转 input_text，
+// assistant 角色转 output_text。与 status 修复同理，一次修复全部同类项，
+// 避免上游逐索引报错耗尽重试预算。非 message 项（如 function_call_output
+// 的字符串 output 是标准格式）保持原样。
+func normalizeOpenAIResponsesRejectedStringContentAtIndex(body []byte, index int) ([]byte, string, bool, error) {
+	input := gjson.GetBytes(body, "input")
+	if !input.IsArray() || index < 0 || index >= len(input.Array()) {
+		return nil, "", false, nil
+	}
+
+	retryBody := body
+	normalized := 0
+	for itemIndex, item := range input.Array() {
+		if !item.IsObject() {
+			continue
+		}
+		// 只处理 message 项：有 type=message 或带 role 字段的输入项。
+		itemType := strings.ToLower(strings.TrimSpace(item.Get("type").String()))
+		role := strings.TrimSpace(item.Get("role").String())
+		if itemType != "" && itemType != "message" {
+			continue
+		}
+		if itemType == "" && role == "" {
+			continue
+		}
+		content := item.Get("content")
+		// 上游点名的是字符串简写（gjson.String）；块数组/对象（gjson.JSON）、
+		// null（另有 null content 修复分支）与数字一律不动。
+		if content.Type != gjson.String {
+			continue
+		}
+		// assistant 角色的文本块类型是 output_text，其余角色用 input_text。
+		blockType := "input_text"
+		if strings.EqualFold(role, "assistant") {
+			blockType = "output_text"
+		}
+		block := []map[string]any{{"type": blockType, "text": content.String()}}
+		next, err := sjson.SetBytes(retryBody, fmt.Sprintf("input.%d.content", itemIndex), block)
+		if err != nil {
+			return nil, "", false, fmt.Errorf("normalize string content at input[%d]: %w", itemIndex, err)
+		}
+		retryBody = next
+		normalized++
+	}
+	if normalized == 0 {
+		return nil, "", false, nil
+	}
+	return retryBody, "string content shorthand rejection", true, nil
+}
+
+// stripOpenAIResponsesUnsupportedServerTools 从 tools 数组中剥离上游不支持的
+// 非 function 工具条目（web_search 等服务端工具；custom/tool_search/namespace
+// 已被透传适配提前转为 function，不会走到这里）。tools 清空后连字段一起删除。
+// 上游报错只点名一个类型，但被拒事实足以证明该上游仅支持 function 工具，
+// 因此一次剥净，避免逐类型重试。
+func stripOpenAIResponsesUnsupportedServerTools(body []byte) ([]byte, string, bool, error) {
+	tools := gjson.GetBytes(body, "tools")
+	if !tools.IsArray() {
+		return nil, "", false, nil
+	}
+
+	kept := make([]gjson.Result, 0, len(tools.Array()))
+	removed := 0
+	for _, tool := range tools.Array() {
+		if strings.EqualFold(strings.TrimSpace(tool.Get("type").String()), "function") {
+			kept = append(kept, tool)
+			continue
+		}
+		removed++
+	}
+	if removed == 0 {
+		return nil, "", false, nil
+	}
+
+	var retryBody []byte
+	var err error
+	if len(kept) == 0 {
+		retryBody, err = sjson.DeleteBytes(body, "tools")
+		if err != nil {
+			return nil, "", false, fmt.Errorf("delete rejected tools field: %w", err)
+		}
+	} else {
+		// 保留原条目的完整字段（function 工具的 name/description/parameters 等）。
+		remaining := make([]any, 0, len(kept))
+		for _, tool := range kept {
+			remaining = append(remaining, tool.Value())
+		}
+		retryBody, err = sjson.SetBytes(body, "tools", remaining)
+		if err != nil {
+			return nil, "", false, fmt.Errorf("rewrite tools without rejected entries: %w", err)
+		}
+	}
+	return retryBody, "native responses tools rejection", true, nil
 }

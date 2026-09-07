@@ -749,3 +749,98 @@ func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyClearsUntypedStatusAtInde
 	require.Equal(t, "keep_a", gjson.GetBytes(retryBody, "input.0.status").String())
 	require.False(t, gjson.GetBytes(retryBody, "input.1.status").Exists())
 }
+
+// 部分兼容上游（platform.experientiallabs.ai）不接受 message content 的字符串
+// 简写：官方 API 允许 "content":"hi"，该上游要求 input_text 块数组。命中后应
+// 一次修复 input 里全部 message 字符串 content（按角色选块类型），其余项不动。
+func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyNormalizesStringContent(t *testing.T) {
+	// 构造 9 项 input（索引 0-8），上游点名的 input.8 真实存在。
+	padding := make([]string, 0, 9)
+	padding = append(padding,
+		`{"type":"message","role":"user","content":[{"type":"input_text","text":"already block"}]}`,
+		`{"type":"message","role":"assistant","content":"string answer"}`,
+		`{"type":"function_call_output","call_id":"call_1","output":"string output stays"}`)
+	for i := 3; i < 8; i++ {
+		padding = append(padding, `{"type":"message","role":"user","content":[{"type":"input_text","text":"round `+strconv.Itoa(i)+`"}]}`)
+	}
+	padding = append(padding, `{"type":"message","role":"user","content":"string question"}`)
+	body := []byte(`{"input":[` + strings.Join(padding, ",") + `]}`)
+	responseBody := []byte(`{"error":{"code":"invalid_parameter","message":"Invalid value for 'input.8.content.0.type': expected one of 'input_text', but got a string instead.","param":"input.8.content.0.type"}}`)
+
+	retryBody, reason, changed, err := normalizeOpenAIResponsesRejectedFieldRetryBody(http.StatusBadRequest, body, responseBody)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "string content shorthand rejection", reason)
+
+	// 字符串 content 被规范化为块数组，assistant 用 output_text。
+	assistant := gjson.GetBytes(retryBody, "input.1.content")
+	require.True(t, assistant.IsArray())
+	require.Equal(t, "output_text", assistant.Array()[0].Get("type").String())
+	require.Equal(t, "string answer", assistant.Array()[0].Get("text").String())
+
+	user := gjson.GetBytes(retryBody, "input.8.content")
+	require.True(t, user.IsArray())
+	require.Equal(t, "input_text", user.Array()[0].Get("type").String())
+	require.Equal(t, "string question", user.Array()[0].Get("text").String())
+
+	// 已是块数组的 user 消息与 function_call_output 的字符串 output 原样保留。
+	require.True(t, gjson.GetBytes(retryBody, "input.0.content").IsArray())
+	require.Equal(t, "already block", gjson.GetBytes(retryBody, "input.0.content.0.text").String())
+	require.Equal(t, "string output stays", gjson.GetBytes(retryBody, "input.2.output").String())
+}
+
+// 上游不报 param（或 param 为点分形态）时，也能从错误消息中提取索引并修复。
+func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyNormalizesStringContentWithoutParam(t *testing.T) {
+	body := []byte(`{"input":[{"type":"message","role":"user","content":"plain text"}]}`)
+	responseBody := []byte(`{"error":{"code":"invalid_parameter","message":"Invalid value for 'input.0.content.0.type': expected one of 'input_text', but got a string instead."}}`)
+
+	retryBody, _, changed, err := normalizeOpenAIResponsesRejectedFieldRetryBody(http.StatusBadRequest, body, responseBody)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "plain text", gjson.GetBytes(retryBody, "input.0.content.0.text").String())
+	require.Equal(t, "input_text", gjson.GetBytes(retryBody, "input.0.content.0.type").String())
+}
+
+// 上游不支持 Responses 原生工具声明（web_search 等服务端工具）时，剥离全部
+// 非 function 工具条目后重试；function 工具与其字段完整保留。
+func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyStripsUnsupportedServerTools(t *testing.T) {
+	body := []byte(`{"model":"claude-fable-5.1","tools":[` +
+		`{"type":"web_search"},` +
+		`{"type":"function","name":"get_weather","description":"weather","parameters":{"type":"object","properties":{}}},` +
+		`{"type":"web_search_preview"}]}`)
+	responseBody := []byte(`{"error":{"code":"unsupported_parameter","message":"The request carries native Responses tool declarations (custom, namespace, web_search, or tool_search entries) that only a native OpenAI Responses route can serve. Remove those tools or choose a different model alias.","param":"tools"}}`)
+
+	retryBody, reason, changed, err := normalizeOpenAIResponsesRejectedFieldRetryBody(http.StatusBadRequest, body, responseBody)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "native responses tools rejection", reason)
+
+	tools := gjson.GetBytes(retryBody, "tools").Array()
+	require.Len(t, tools, 1)
+	require.Equal(t, "function", tools[0].Get("type").String())
+	require.Equal(t, "get_weather", tools[0].Get("name").String())
+	require.Equal(t, "weather", tools[0].Get("description").String())
+}
+
+// tools 全部为非 function 类型时，连同字段一起删除，避免提交空数组。
+func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyDropsToolsWhenAllRejected(t *testing.T) {
+	body := []byte(`{"model":"claude-fable-5.1","tools":[{"type":"web_search"},{"type":"web_search_preview"}]}`)
+	responseBody := []byte(`{"error":{"code":"unsupported_parameter","message":"The request carries native Responses tool declarations that only a native OpenAI Responses route can serve.","param":"tools"}}`)
+
+	retryBody, _, changed, err := normalizeOpenAIResponsesRejectedFieldRetryBody(http.StatusBadRequest, body, responseBody)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.False(t, gjson.GetBytes(retryBody, "tools").Exists())
+	require.Equal(t, "claude-fable-5.1", gjson.GetBytes(retryBody, "model").String())
+}
+
+// 官方上游对 function 工具的正常拒绝（unknown parameter）不应触发工具剥离，
+// 避免误删合法能力。
+func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyDoesNotStripToolsOnUnknownParameter(t *testing.T) {
+	body := []byte(`{"tools":[{"type":"function","name":"f"},{"type":"web_search"}]}`)
+	responseBody := []byte(`{"error":{"code":"unknown_parameter","message":"Unknown parameter: 'tools.0.something'.","param":"tools.0.something"}}`)
+
+	_, _, changed, err := normalizeOpenAIResponsesRejectedFieldRetryBody(http.StatusBadRequest, body, responseBody)
+	require.NoError(t, err)
+	require.False(t, changed)
+}
