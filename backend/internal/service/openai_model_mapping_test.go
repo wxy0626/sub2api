@@ -1,6 +1,10 @@
 package service
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
+)
 
 func TestResolveOpenAIForwardModel(t *testing.T) {
 	tests := []struct {
@@ -296,6 +300,16 @@ func TestResolveOpenAIForwardMappedModels_CompactMappingPrecedence(t *testing.T)
 }
 
 func TestCanonicalOpenAIAccountSchedulingModelMatchesForwardSemantics(t *testing.T) {
+	// 本测试断言 Grok OAuth 不继承 OpenAI Codex 别名归一化（gpt-5.6 → gpt-5.6-sol）。
+	// Grok 空映射账号回落 xai.DefaultModelMapping()（进程级运行时选项）；其他测试
+	// 经 parseSettings 加载默认设置（grok_cross_client_model_map_enabled 默认 "true"，
+	// 见 setting_parse.go）会把 gpt-* → 默认文本模型的通配映射写入全局且不恢复，
+	// 使本测试在 -count≥2 / 顺序变化下偶发拿到 "grok-4.6"。这里自钉空选项，
+	// 与子用例"未启用跨客户端桥接"的语义一致；开启态由 account_wildcard_test 覆盖。
+	original := xai.RuntimeModelMappingOptions()
+	t.Cleanup(func() { xai.SetRuntimeModelMappingOptions(original) })
+	xai.SetRuntimeModelMappingOptions(xai.ModelMappingOptions{})
+
 	tests := []struct {
 		name    string
 		account *Account
