@@ -79,6 +79,26 @@ func TestNormalizeOpenAIReasoningEffortForMaxCapableModels(t *testing.T) {
 	}
 }
 
+func TestNormalizeOpenAIReasoningEffortForModelFallsBackToHighestSupportedLevel(t *testing.T) {
+	tests := []struct {
+		name  string
+		raw   string
+		model string
+		want  string
+	}{
+		{name: "GPT supports ultra", raw: "ultra", model: "gpt-5.5", want: "ultra"},
+		{name: "GPT max remains max", raw: "max", model: "gpt-6-astra", want: "max"},
+		{name: "legacy model falls ultra to xhigh", raw: "ultra", model: "claude-sonnet-4.5", want: "xhigh"},
+		{name: "max-capable provider falls ultra to max", raw: "ultra", model: "deepseek-v4-pro", want: "max"},
+		{name: "high-only provider falls ultra to high", raw: "ultra", model: "grok-4.5", want: "high"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, normalizeOpenAIReasoningEffortForModel(tt.raw, tt.model))
+		})
+	}
+}
+
 func TestNormalizeOpenAICodexCompactReasoningEffortDowngradesMax(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.6-sol","input":"compact me","reasoning":{"effort":"max","summary":"auto"}}`)
 

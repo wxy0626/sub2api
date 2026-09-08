@@ -2231,7 +2231,7 @@ func normalizeOpenAIReasoningEffort(raw string) string {
 		return ""
 	case "low", "medium", "high":
 		return value
-	case "xhigh", "extrahigh", "max":
+	case "xhigh", "extrahigh", "max", "ultra":
 		return "xhigh"
 	default:
 		// Only store known effort levels for now to keep UI consistent.
@@ -2240,10 +2240,34 @@ func normalizeOpenAIReasoningEffort(raw string) string {
 }
 
 func normalizeOpenAIReasoningEffortForModel(raw, model string) string {
-	if strings.EqualFold(strings.TrimSpace(raw), "max") && supportsOpenAIReasoningEffortMax(model) {
-		return "max"
+	value := strings.ToLower(strings.TrimSpace(raw))
+	value = strings.NewReplacer("-", "", "_", "", " ", "").Replace(value)
+	if value == "none" || value == "minimal" || value == "" {
+		return ""
 	}
-	return normalizeOpenAIReasoningEffort(raw)
+	if value != "low" && value != "medium" && value != "high" && value != "xhigh" && value != "max" && value != "ultra" {
+		return ""
+	}
+
+	// 按目标模型的最高支持档向下回退，避免把客户端可选档位原样发给不支持的上游。
+	requestedRank := map[string]int{"low": 1, "medium": 2, "high": 3, "xhigh": 4, "max": 5, "ultra": 6}[value]
+	maxRank := 4
+	if isOpenAICodexReasoningGPTModel(model) && value == "ultra" {
+		maxRank = 6
+	} else if supportsOpenAIReasoningEffortMax(model) {
+		maxRank = 5
+	} else if strings.HasPrefix(strings.ToLower(lastOpenAIModelSegment(model)), "grok-4.5") {
+		maxRank = 3
+	}
+	if requestedRank > maxRank {
+		requestedRank = maxRank
+	}
+	for effort, rank := range map[string]int{"ultra": 6, "max": 5, "xhigh": 4, "high": 3, "medium": 2, "low": 1} {
+		if rank == requestedRank {
+			return effort
+		}
+	}
+	return ""
 }
 
 // supportsOpenAIReasoningEffortMax reports model families whose upstream scale

@@ -1288,17 +1288,6 @@
             {{ t('admin.accounts.addMapping') }}
           </button>
 
-          <div class="flex flex-wrap gap-2">
-            <button
-              v-for="preset in antigravityPresetMappings"
-              :key="preset.label"
-              type="button"
-              @click="addAntigravityPresetMapping(preset.from, preset.to)"
-              :class="['rounded-lg px-3 py-1 text-xs transition-colors', preset.color]"
-            >
-              + {{ preset.label }}
-            </button>
-          </div>
         </div>
       </div>
 
@@ -1639,18 +1628,6 @@
               {{ t('admin.accounts.addMapping') }}
             </button>
 
-              <!-- Quick Add Buttons -->
-              <div class="flex flex-wrap gap-2">
-                <button
-                  v-for="preset in presetMappings"
-                  :key="preset.label"
-                  type="button"
-                  @click="addPresetMapping(preset.from, preset.to)"
-                  :class="['rounded-lg px-3 py-1 text-xs transition-colors', preset.color]"
-                >
-                  + {{ preset.label }}
-                </button>
-              </div>
             </div>
           </template>
         </div>
@@ -2097,18 +2074,6 @@
             <button type="button" @click="modelMappings.push({ from: '', to: '' })" class="btn btn-secondary text-sm">
               + {{ t('admin.accounts.addMapping') }}
             </button>
-            <!-- Bedrock Preset Mappings -->
-            <div class="flex flex-wrap gap-2">
-              <button
-                v-for="preset in bedrockPresets"
-                :key="preset.from"
-                type="button"
-                @click="addPresetMapping(preset.from, preset.to)"
-                :class="['rounded-lg px-3 py-1 text-xs transition-colors', preset.color]"
-              >
-                + {{ preset.label }}
-              </button>
-            </div>
           </div>
         </div>
 
@@ -2491,18 +2456,6 @@
               + {{ t('admin.accounts.addMapping') }}
             </button>
 
-            <!-- Quick Add Buttons -->
-            <div class="flex flex-wrap gap-2">
-              <button
-                v-for="preset in presetMappings"
-                :key="'oauth-' + preset.label"
-                type="button"
-                @click="addPresetMapping(preset.from, preset.to)"
-                :class="['rounded-lg px-3 py-1 text-xs transition-colors', preset.color]"
-              >
-                + {{ preset.label }}
-              </button>
-            </div>
           </div>
         </template>
       </div>
@@ -3961,11 +3914,9 @@ import { useAppStore } from '@/stores/app'
 
 import {
   claudeModels,
-  getPresetMappingsByPlatform,
   getModelsByPlatform,
   commonErrorCodes,
   buildModelMappingObject,
-  fetchAntigravityDefaultMappings,
   isValidWildcardPattern
 } from '@/composables/useModelWhitelist'
 import { adminAPI } from '@/api/admin'
@@ -4171,9 +4122,9 @@ interface TempUnschedRuleForm {
 // State
 const step = ref(1)
 const submitting = ref(false)
-const accountCategory = ref<'oauth-based' | 'apikey' | 'bedrock' | 'service_account'>('oauth-based') // UI selection for account category
+const accountCategory = ref<'oauth-based' | 'apikey' | 'bedrock' | 'service_account'>('apikey') // UI selection for account category
 const addMethod = ref<AddMethod>('oauth') // For oauth-based: 'oauth' or 'setup-token'
-const apiKeyBaseUrl = ref('https://api.openai.com')
+const apiKeyBaseUrl = ref('')
 // OpenAI API Key 图片专用 Base URL；空值表示沿用普通 base_url。
 const apiKeyImageBaseUrl = ref('')
 const apiKeyValue = ref('')
@@ -4232,8 +4183,8 @@ const cnAdaptiveProtocolOptions = computed<Array<{ value: CnNativeApiProtocol; l
   return opts
 })
 
-function resetAdaptiveBaseUrls(platform: 'kimi' | 'zhipu' | 'deepseek', mode: CnAccountMode) {
-  adaptiveBaseUrls.value = defaultCNAdaptiveBaseUrls(platform, mode)
+function resetAdaptiveBaseUrls() {
+  adaptiveBaseUrls.value = { chat_completions: '', anthropic: '', responses: '' }
 }
 // 当前选中平台的品牌色（选中卡片描边 / 图标底色），与 platformColors 取色一致。
 const cnAccentActiveClass = computed(() => {
@@ -4270,42 +4221,34 @@ function selectCNPlatform(platform: 'kimi' | 'zhipu' | 'deepseek') {
   if (platform === 'deepseek') {
     accountMode.value = 'payg'
   }
-  apiKeyBaseUrl.value = defaultCNBaseUrl(platform, accountMode.value, apiProtocol.value)
-  resetAdaptiveBaseUrls(platform, accountMode.value)
+  apiKeyBaseUrl.value = ''
+  resetAdaptiveBaseUrls()
 }
 // 账号类型 / 协议变更时同步默认 base url。
 watch(accountMode, (mode, previousMode) => {
   if (!isCNPlatform.value) return
   if (apiProtocol.value === 'adaptive') {
-    const previousDefaults = defaultCNAdaptiveBaseUrls(cnPresetPlatform.value, previousMode)
-    const nextDefaults = defaultCNAdaptiveBaseUrls(cnPresetPlatform.value, mode)
-    for (const item of cnAdaptiveProtocolOptions.value) {
-      if (!adaptiveBaseUrls.value[item.value] || adaptiveBaseUrls.value[item.value] === previousDefaults[item.value]) {
-        adaptiveBaseUrls.value[item.value] = nextDefaults[item.value]
-      }
-    }
-    apiKeyBaseUrl.value = adaptiveBaseUrls.value.chat_completions
+    void previousMode
+    void mode
+    apiKeyBaseUrl.value = ''
     return
   }
-  apiKeyBaseUrl.value = defaultCNBaseUrl(form.platform, mode, apiProtocol.value)
+  apiKeyBaseUrl.value = ''
 })
 watch(apiProtocol, (protocol) => {
   if (!isCNPlatform.value) return
   if (protocol === 'adaptive') {
-    const defaults = defaultCNAdaptiveBaseUrls(cnPresetPlatform.value, accountMode.value)
-    for (const item of cnAdaptiveProtocolOptions.value) {
-      if (!adaptiveBaseUrls.value[item.value]) adaptiveBaseUrls.value[item.value] = defaults[item.value]
-    }
-    apiKeyBaseUrl.value = adaptiveBaseUrls.value.chat_completions
+    void protocol
+    apiKeyBaseUrl.value = ''
     return
   }
-  apiKeyBaseUrl.value = defaultCNBaseUrl(form.platform, accountMode.value, protocol)
+  apiKeyBaseUrl.value = ''
 })
 // 点击预设端点：同时回填 base url、账号类型与协议。
 function onCnPresetSelect(preset: { mode: CnAccountMode; protocol: CnApiProtocol; url: string }) {
   accountMode.value = preset.mode
   apiProtocol.value = preset.protocol
-  apiKeyBaseUrl.value = preset.url
+  apiKeyBaseUrl.value = ''
 }
 
 const syncPreviewCredentials = computed(() => {
@@ -4456,8 +4399,6 @@ const upstreamApiKey = ref('') // For upstream type: API key
 const antigravityModelRestrictionMode = ref<'whitelist' | 'mapping'>('whitelist')
 const antigravityWhitelistModels = ref<string[]>([])
 const antigravityModelMappings = ref<ModelMapping[]>([])
-const antigravityPresetMappings = computed(() => getPresetMappingsByPlatform('antigravity'))
-const bedrockPresets = computed(() => getPresetMappingsByPlatform('bedrock'))
 
 // Bedrock credentials
 const bedrockAuthMode = ref<'sigv4' | 'apikey'>('sigv4')
@@ -4662,7 +4603,6 @@ const geminiHelpLinks = {
 }
 
 // Computed: current preset mappings based on platform
-const presetMappings = computed(() => getPresetMappingsByPlatform(form.platform))
 const tempUnschedPresets = computed(() => [
   {
     label: t('admin.accounts.tempUnschedulable.presets.overloadLabel'),
@@ -4765,9 +4705,7 @@ watch(
       // Antigravity: 默认使用映射模式并填充默认映射
       if (form.platform === 'antigravity') {
         antigravityModelRestrictionMode.value = 'mapping'
-        fetchAntigravityDefaultMappings().then(mappings => {
-          antigravityModelMappings.value = [...mappings]
-        })
+        antigravityModelMappings.value = []
         antigravityWhitelistModels.value = []
       } else {
         antigravityWhitelistModels.value = []
@@ -4834,16 +4772,7 @@ watch(
   () => form.platform,
   (newPlatform) => {
     // Reset base URL based on platform
-    apiKeyBaseUrl.value =
-      (newPlatform === 'openai')
-        ? 'https://api.openai.com'
-        : newPlatform === 'gemini'
-          ? 'https://generativelanguage.googleapis.com'
-          : newPlatform === 'grok'
-            ? 'https://api.x.ai/v1'
-            : newPlatform === 'deepseek'
-              ? 'https://api.deepseek.com'
-            : 'https://api.anthropic.com'
+    apiKeyBaseUrl.value = ''
     apiKeyImageBaseUrl.value = ''
     // Clear model-related settings
     allowedModels.value = []
@@ -4852,9 +4781,7 @@ watch(
     // Antigravity: 默认使用映射模式并填充默认映射
     if (newPlatform === 'antigravity') {
       antigravityModelRestrictionMode.value = 'mapping'
-      fetchAntigravityDefaultMappings().then(mappings => {
-        antigravityModelMappings.value = [...mappings]
-      })
+      antigravityModelMappings.value = []
       antigravityWhitelistModels.value = []
       accountCategory.value = 'oauth-based'
       antigravityAccountType.value = 'oauth'
@@ -5010,28 +4937,12 @@ const removeModelMapping = (index: number) => {
   modelMappings.value.splice(index, 1)
 }
 
-const addPresetMapping = (from: string, to: string) => {
-  if (modelMappings.value.some((m) => m.from === from)) {
-    appStore.showInfo(t('admin.accounts.mappingExists', { model: from }))
-    return
-  }
-  modelMappings.value.push({ from, to })
-}
-
 const addAntigravityModelMapping = () => {
   antigravityModelMappings.value.push({ from: '', to: '' })
 }
 
 const removeAntigravityModelMapping = (index: number) => {
   antigravityModelMappings.value.splice(index, 1)
-}
-
-const addAntigravityPresetMapping = (from: string, to: string) => {
-  if (antigravityModelMappings.value.some((m) => m.from === from)) {
-    appStore.showInfo(t('admin.accounts.mappingExists', { model: from }))
-    return
-  }
-  antigravityModelMappings.value.push({ from, to })
 }
 
 // Error code toggle helper
@@ -5305,7 +5216,7 @@ const resetForm = () => {
   form.name = ''
   form.notes = ''
   form.platform = 'openai'
-  form.type = 'oauth'
+  form.type = 'apikey'
   form.credentials = {}
   form.proxy_id = null
   form.concurrency = 5
@@ -5314,12 +5225,12 @@ const resetForm = () => {
   form.rate_multiplier = 1
   form.group_ids = []
   form.expires_at = null
-  accountCategory.value = 'oauth-based'
+      accountCategory.value = 'apikey'
   addMethod.value = 'oauth'
   accountMode.value = 'payg'
   apiProtocol.value = 'adaptive'
   adaptiveBaseUrls.value = { chat_completions: '', anthropic: '', responses: '' }
-  apiKeyBaseUrl.value = 'https://api.openai.com'
+  apiKeyBaseUrl.value = ''
   apiKeyImageBaseUrl.value = ''
   apiKeyValue.value = ''
   upstreamRequestIdHeader.value = ''
@@ -5340,9 +5251,7 @@ const resetForm = () => {
 
   antigravityModelRestrictionMode.value = 'mapping'
   antigravityWhitelistModels.value = []
-  fetchAntigravityDefaultMappings().then(mappings => {
-    antigravityModelMappings.value = [...mappings]
-  })
+  antigravityModelMappings.value = []
   poolModeEnabled.value = false
   poolModeRetryCount.value = DEFAULT_POOL_MODE_RETRY_COUNT
   poolModeRetryStatusCodesInput.value = ''
