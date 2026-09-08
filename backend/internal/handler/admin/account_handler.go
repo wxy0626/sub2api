@@ -11,13 +11,13 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
@@ -29,7 +29,6 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/Wei-Shaw/sub2api/internal/service"
-	"github.com/Wei-Shaw/sub2api/internal/util/logredact"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/sync/errgroup"
@@ -66,6 +65,7 @@ type AccountHandler struct {
 	grokImportProber        grokImportProber
 	upstreamBillingProbe    *service.UpstreamBillingProbeService
 	ollamaCloudUsage        *service.OllamaCloudUsageService
+	cfg                     *config.Config
 }
 
 // SetUpstreamBillingProbeService attaches the optional remote billing probe service.
@@ -192,6 +192,7 @@ type CheckMixedChannelRequest struct {
 // AccountWithConcurrency extends Account with real-time concurrency info
 type AccountWithConcurrency struct {
 	*dto.Account
+	simpleMode         bool                         `json:"-"`
 	CurrentConcurrency int                          `json:"current_concurrency"`
 	SchedulerScore     *AccountSchedulerScore       `json:"scheduler_score,omitempty"`
 	SchedulerScores    []AccountSchedulerGroupScore `json:"scheduler_scores,omitempty"`
@@ -212,6 +213,110 @@ type AccountListItemWithConcurrency struct {
 	CurrentWindowCost  *float64                     `json:"current_window_cost,omitempty"`
 	ActiveSessions     *int                         `json:"active_sessions,omitempty"`
 	CurrentRPM         *int                         `json:"current_rpm,omitempty"`
+}
+
+type simpleModeGroupReference struct {
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	Platform string `json:"platform"`
+	Status   string `json:"status"`
+}
+
+type simpleModeAccountGroupReference struct {
+	AccountID int64                     `json:"account_id"`
+	GroupID   int64                     `json:"group_id"`
+	Priority  int                       `json:"priority"`
+	CreatedAt time.Time                 `json:"created_at"`
+	Group     *simpleModeGroupReference `json:"group,omitempty"`
+}
+
+func simpleModeGroupReferenceFromDTO(group *dto.Group) *simpleModeGroupReference {
+	if group == nil {
+		return nil
+	}
+	return &simpleModeGroupReference{ID: group.ID, Name: group.Name, Platform: group.Platform, Status: group.Status}
+}
+
+func simpleModeCompositeGroupIDs(account *dto.Account) map[int64]struct{} {
+	hidden := make(map[int64]struct{})
+	if account == nil {
+		return hidden
+	}
+	for _, group := range account.Groups {
+		if group != nil && group.Platform == service.PlatformComposite {
+			hidden[group.ID] = struct{}{}
+		}
+	}
+	for _, accountGroup := range account.AccountGroups {
+		if accountGroup.Group != nil && accountGroup.Group.Platform == service.PlatformComposite {
+			hidden[accountGroup.GroupID] = struct{}{}
+		}
+	}
+	return hidden
+}
+
+func filterSimpleModeGroupIDs(groupIDs []int64, hidden map[int64]struct{}) []int64 {
+	visible := make([]int64, 0, len(groupIDs))
+	for _, groupID := range groupIDs {
+		if _, ok := hidden[groupID]; !ok {
+			visible = append(visible, groupID)
+		}
+	}
+	return visible
+}
+
+func simpleModeCompositeServiceGroupIDs(account *service.Account) map[int64]struct{} {
+	hidden := make(map[int64]struct{})
+	if account == nil {
+		return hidden
+	}
+	for _, group := range account.Groups {
+		if group != nil && group.Platform == service.PlatformComposite {
+			hidden[group.ID] = struct{}{}
+		}
+	}
+	for _, accountGroup := range account.AccountGroups {
+		if accountGroup.Group != nil && accountGroup.Group.Platform == service.PlatformComposite {
+			hidden[accountGroup.GroupID] = struct{}{}
+		}
+	}
+	return hidden
+}
+
+func (a AccountWithConcurrency) MarshalJSON() ([]byte, error) {
+	type alias AccountWithConcurrency
+	if !a.simpleMode || a.Account == nil {
+		return json.Marshal(alias(a))
+	}
+	groups := make([]simpleModeGroupReference, 0, len(a.Groups))
+	compositeIDs := simpleModeCompositeGroupIDs(a.Account)
+	for _, group := range a.Groups {
+		if group != nil && group.Platform == service.PlatformComposite {
+			continue
+		}
+		if ref := simpleModeGroupReferenceFromDTO(group); ref != nil {
+			groups = append(groups, *ref)
+		}
+	}
+	accountGroups := make([]simpleModeAccountGroupReference, 0, len(a.AccountGroups))
+	for _, accountGroup := range a.AccountGroups {
+		if accountGroup.Group != nil && accountGroup.Group.Platform == service.PlatformComposite {
+			continue
+		}
+		if _, hidden := compositeIDs[accountGroup.GroupID]; hidden {
+			continue
+		}
+		accountGroups = append(accountGroups, simpleModeAccountGroupReference{
+			AccountID: accountGroup.AccountID, GroupID: accountGroup.GroupID, Priority: accountGroup.Priority,
+			CreatedAt: accountGroup.CreatedAt, Group: simpleModeGroupReferenceFromDTO(accountGroup.Group),
+		})
+	}
+	return json.Marshal(struct {
+		alias
+		GroupIDs      []int64                           `json:"group_ids,omitempty"`
+		Groups        []simpleModeGroupReference        `json:"groups"`
+		AccountGroups []simpleModeAccountGroupReference `json:"account_groups"`
+	}{alias: alias(a), GroupIDs: filterSimpleModeGroupIDs(a.GroupIDs, compositeIDs), Groups: groups, AccountGroups: accountGroups})
 }
 
 type AccountSchedulerScore struct {
@@ -249,9 +354,14 @@ func (h *AccountHandler) accountListResponseFromService(account *service.Account
 	return out
 }
 
+func (h *AccountHandler) isSimpleMode() bool {
+	return h != nil && h.cfg != nil && h.cfg.RunMode == config.RunModeSimple
+}
+
 func (h *AccountHandler) buildAccountResponseWithRuntime(ctx context.Context, account *service.Account) AccountWithConcurrency {
 	item := AccountWithConcurrency{
 		Account:            h.accountResponseFromService(account),
+		simpleMode:         h.isSimpleMode(),
 		CurrentConcurrency: 0,
 	}
 	if account == nil {
@@ -507,14 +617,13 @@ func (h *AccountHandler) listAccountSchedulerScoreFilterPool(
 	platform, accountType, status, search string,
 	groupID int64,
 	privacyMode string,
-	proxyID int64,
 ) []service.Account {
 	if h.adminService == nil || (platform != "" && platform != service.PlatformOpenAI) {
 		return nil
 	}
 	// 池只用于 OpenAI 分数计算（非 OpenAI 账号会在打分时被丢弃），
 	// 无论列表页平台过滤为何，查询一律限定 openai，避免无过滤时全表扫描。
-	accounts, err := h.adminService.ListAccountsForSchedulerScoreFilter(ctx, service.PlatformOpenAI, accountType, status, search, groupID, privacyMode, proxyID)
+	accounts, err := h.adminService.ListAccountsForSchedulerScoreFilter(ctx, service.PlatformOpenAI, accountType, status, search, groupID, privacyMode)
 	if err != nil {
 		slog.Warn("openai_scheduler_filter_score_pool_failed", "error", err)
 		return nil
@@ -531,16 +640,6 @@ func (h *AccountHandler) List(c *gin.Context) {
 	status := c.Query("status")
 	search := c.Query("search")
 	privacyMode := strings.TrimSpace(c.Query("privacy_mode"))
-	// 代理筛选 ID：0 表示不过滤，正数限制为指定已绑定代理。
-	var proxyID int64
-	if proxyIDStr := strings.TrimSpace(c.Query("proxy_id")); proxyIDStr != "" {
-		parsedProxyID, parseErr := strconv.ParseInt(proxyIDStr, 10, 64)
-		if parseErr != nil || parsedProxyID <= 0 {
-			response.ErrorFrom(c, infraerrors.BadRequest("INVALID_PROXY_FILTER", "代理筛选参数 proxy_id 无效：仅支持大于 0 的整数。请从代理下拉列表重新选择有效代理后重试。技术详情：proxy_id must be a positive integer"))
-			return
-		}
-		proxyID = parsedProxyID
-	}
 	sortBy := c.DefaultQuery("sort_by", "name")
 	sortOrder := c.DefaultQuery("sort_order", "asc")
 	// 标准化和验证 search 参数
@@ -570,7 +669,7 @@ func (h *AccountHandler) List(c *gin.Context) {
 		}
 	}
 
-	accounts, total, err := h.adminService.ListAccounts(c.Request.Context(), page, pageSize, platform, accountType, status, search, groupID, privacyMode, proxyID, sortBy, sortOrder)
+	accounts, total, err := h.adminService.ListAccounts(c.Request.Context(), page, pageSize, platform, accountType, status, search, groupID, privacyMode, sortBy, sortOrder)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -607,7 +706,7 @@ func (h *AccountHandler) List(c *gin.Context) {
 		}
 	}
 	if includeSchedulerScore && pageHasOpenAIAccounts {
-		schedulerFilterPool := h.listAccountSchedulerScoreFilterPool(c.Request.Context(), platform, accountType, status, search, groupID, privacyMode, proxyID)
+		schedulerFilterPool := h.listAccountSchedulerScoreFilterPool(c.Request.Context(), platform, accountType, status, search, groupID, privacyMode)
 		schedulerScores, schedulerGroupScores = h.buildOpenAIAccountSchedulerScores(c.Request.Context(), accounts, schedulerFilterPool)
 	}
 
@@ -690,9 +789,13 @@ func (h *AccountHandler) List(c *gin.Context) {
 		accountResponse := h.accountResponseFromService(acc)
 		if lite {
 			accountResponse = h.accountListResponseFromService(acc)
+			if h.isSimpleMode() {
+				accountResponse.GroupIDs = filterSimpleModeGroupIDs(accountResponse.GroupIDs, simpleModeCompositeServiceGroupIDs(acc))
+			}
 		}
 		item := AccountWithConcurrency{
 			Account:            accountResponse,
+			simpleMode:         h.isSimpleMode(),
 			CurrentConcurrency: concurrencyCounts[acc.ID],
 			SchedulerScore:     schedulerScores[acc.ID],
 			SchedulerScores:    schedulerGroupScores[acc.ID],
@@ -764,44 +867,6 @@ func (h *AccountHandler) List(c *gin.Context) {
 	response.Paginated(c, result, total, page, pageSize)
 }
 
-// ListFilterOptions 返回账号列表筛选所需的平台和类型枚举，不返回账号详情或凭据。
-// GET /api/v1/admin/accounts/filter-options
-func (h *AccountHandler) ListFilterOptions(c *gin.Context) {
-	accounts, err := h.adminService.ListAccountsForSchedulerScoreFilter(c.Request.Context(), "", "", "", "", 0, "", 0)
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-
-	// 仅聚合枚举值，避免为了筛选项向浏览器发送账号或凭据数据。
-	platformSet := make(map[string]struct{})
-	typeSet := make(map[string]struct{})
-	for _, account := range accounts {
-		if account.Platform != "" {
-			platformSet[account.Platform] = struct{}{}
-		}
-		if account.Type != "" {
-			typeSet[account.Type] = struct{}{}
-		}
-	}
-
-	// 筛选选项按字母序稳定返回，避免前端每次加载时顺序跳动。
-	platforms := make([]string, 0, len(platformSet))
-	for platform := range platformSet {
-		platforms = append(platforms, platform)
-	}
-	sort.Strings(platforms)
-
-	types := make([]string, 0, len(typeSet))
-	for accountType := range typeSet {
-		types = append(types, accountType)
-	}
-	sort.Strings(types)
-
-	response.Success(c, gin.H{"platforms": platforms, "types": types})
-}
-
-// buildAccountsListETag 泛型 ETag：同一函数同时服务 lite 紧凑列表与完整列表。
 func buildAccountsListETag[T any](
 	items []T,
 	total int64,
@@ -879,31 +944,6 @@ func (h *AccountHandler) GetByID(c *gin.Context) {
 	}
 
 	response.Success(c, h.buildAccountResponseWithRuntime(c.Request.Context(), account))
-}
-
-// GetCredential returns the plaintext value of a sensitive credential key for an account.
-// GET /api/v1/admin/accounts/:id/credentials/:key
-// 该接口泄露上游凭证原文，必须配合 step-up 2FA 使用。
-func (h *AccountHandler) GetCredential(c *gin.Context) {
-	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
-	if err != nil {
-		response.BadRequest(c, "Invalid account ID")
-		return
-	}
-
-	key := strings.TrimSpace(c.Param("key"))
-	if key == "" {
-		response.BadRequest(c, "Credential key is required")
-		return
-	}
-
-	value, err := h.adminService.GetAccountCredential(c.Request.Context(), accountID, key)
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-
-	response.Success(c, gin.H{"value": value})
 }
 
 // CheckMixedChannel handles checking mixed channel risk for account-group binding.
@@ -1209,65 +1249,6 @@ type TestAccountRequest struct {
 	// ImageDataURL / AudioDataURL are data:<mime>;base64,... payloads.
 	ImageDataURL string `json:"image_data_url"`
 	AudioDataURL string `json:"audio_data_url"`
-}
-
-const accountTestModeExtraKey = "account_test_mode"
-
-// UpdateAccountTestModeRequest 接收管理员模型测试使用的 OpenAI 或 DeepSeek 请求模式。
-// 独立接口避免通用账号更新误覆盖 Extra 中的运行态数据。
-type UpdateAccountTestModeRequest struct {
-	Mode string `json:"mode" binding:"required,oneof=default responses compact workspace"`
-}
-
-// UpdateTestMode 保存 OpenAI 或 DeepSeek 账号的模型测试模式。
-// PUT /api/v1/admin/accounts/:id/test-mode
-func (h *AccountHandler) UpdateTestMode(c *gin.Context) {
-	// 账号ID必须为正整数，避免把无效路径参数传入服务层。
-	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
-	if err != nil || accountID <= 0 {
-		response.BadRequest(c, "保存模型测试模式失败：账号 ID 格式无效，请检查请求路径。技术详情：id must be a positive integer")
-		return
-	}
-
-	var req UpdateAccountTestModeRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "保存模型测试模式失败：测试模式仅支持 default、responses、compact 或 workspace，请重新选择后重试。技术详情："+err.Error())
-		return
-	}
-
-	account, err := h.adminService.GetAccount(c.Request.Context(), accountID)
-	if err != nil {
-		statusCode, status := infraerrors.ToHTTP(err)
-		response.ErrorWithDetails(c, statusCode, "保存模型测试模式失败：未能读取账号，请确认账号仍存在并刷新后重试。技术详情："+err.Error(), status.Reason, status.Metadata)
-		return
-	}
-	if account == nil || (account.Platform != service.PlatformOpenAI && account.Platform != service.PlatformDeepSeek) {
-		platform := "unknown"
-		if account != nil {
-			platform = account.Platform
-		}
-		response.BadRequest(c, "保存模型测试模式失败：仅 OpenAI 或 DeepSeek 账号支持该设置，请在支持的平台账号中使用模型测试。技术详情：account platform is "+platform)
-		return
-	}
-	if account.Platform == service.PlatformDeepSeek && req.Mode != "default" && req.Mode != "responses" {
-		response.BadRequest(c, "保存模型测试模式失败：DeepSeek 账号仅支持 default 或 responses 模式，请重新选择后重试。技术详情：account platform is deepseek; requested mode is "+req.Mode)
-		return
-	}
-
-	// 仅合并 account_test_mode，保证其它 Extra 配置与运行态键不会被覆盖。
-	if err := h.adminService.UpdateAccountExtra(c.Request.Context(), accountID, map[string]any{accountTestModeExtraKey: req.Mode}); err != nil {
-		statusCode, status := infraerrors.ToHTTP(err)
-		response.ErrorWithDetails(c, statusCode, "保存模型测试模式失败：账号配置未写入，请检查数据库连接或稍后重试。技术详情："+err.Error(), status.Reason, status.Metadata)
-		return
-	}
-
-	updatedAccount, err := h.adminService.GetAccount(c.Request.Context(), accountID)
-	if err != nil {
-		statusCode, status := infraerrors.ToHTTP(err)
-		response.ErrorWithDetails(c, statusCode, "保存模型测试模式失败：配置已写入但无法返回最新账号信息，请刷新列表确认。技术详情："+err.Error(), status.Reason, status.Metadata)
-		return
-	}
-	response.Success(c, h.buildAccountResponseWithRuntime(c.Request.Context(), updatedAccount))
 }
 
 type SyncFromCRSRequest struct {
@@ -2077,6 +2058,14 @@ func (h *AccountHandler) BatchCreate(c *gin.Context) {
 			return
 		}
 	}
+	groupIDs := make([]int64, 0)
+	for _, item := range req.Accounts {
+		groupIDs = append(groupIDs, item.GroupIDs...)
+	}
+	if err := h.adminService.ValidateAccountGroupBindings(c.Request.Context(), groupIDs); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 
 	executeAdminIdempotentJSON(c, "admin.accounts.batch_create", req, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
 		success := 0
@@ -2774,54 +2763,6 @@ func (h *AccountHandler) SetSchedulable(c *gin.Context) {
 	response.Success(c, h.buildAccountResponseWithRuntime(c.Request.Context(), account))
 }
 
-// fetchOpenAICompatibleUpstreamModels 拉取 OpenAI 兼容端点的实时模型目录并转换为响应模型。
-// 返回 ok=false 表示无法获得上游目录（服务未配置、端点不支持 /v1/models、请求失败或返回空），
-// 调用方需回落到内置默认模型集，避免第三方端点异常时模型测试直接不可用。
-func (h *AccountHandler) fetchOpenAICompatibleUpstreamModels(ctx context.Context, account *service.Account) ([]openai.Model, bool) {
-	if h.accountTestService == nil || account == nil {
-		return nil, false
-	}
-
-	upstreamModelIDs, err := h.accountTestService.FetchUpstreamSupportedModels(ctx, account)
-	if err != nil {
-		// 这里只记录失败类别，不暴露上游地址与凭据；具体原因由同步接口负责回显。
-		var syncErr *service.UpstreamModelSyncError
-		if errors.As(err, &syncErr) {
-			slog.Warn("openai_upstream_models_fetch_failed", "account_id", account.ID, "kind", syncErr.Kind)
-		} else {
-			slog.Warn("openai_upstream_models_fetch_failed", "account_id", account.ID)
-		}
-		return nil, false
-	}
-	if len(upstreamModelIDs) == 0 {
-		return nil, false
-	}
-
-	// defaultByID 用于给命中内置模型的上游 ID 补齐展示名等元数据。
-	defaultByID := make(map[string]openai.Model, len(openai.DefaultModels))
-	for _, model := range openai.DefaultModels {
-		defaultByID[model.ID] = model
-	}
-
-	models := make([]openai.Model, 0, len(upstreamModelIDs))
-	for _, modelID := range upstreamModelIDs {
-		model := openai.Model{
-			ID:          modelID,
-			Object:      "model",
-			Type:        "model",
-			DisplayName: modelID,
-		}
-		if defaultModel, exists := defaultByID[modelID]; exists {
-			model.Created = defaultModel.Created
-			model.DisplayName = defaultModel.DisplayName
-		}
-		// OwnedBy 统一标记为上游目录，前端据此放行上游返回的全部模型。
-		model.OwnedBy = openai.UpstreamCatalogOwner
-		models = append(models, model)
-	}
-	return models, true
-}
-
 // GetAvailableModels handles getting available models for an account
 // GET /api/v1/admin/accounts/:id/models
 func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
@@ -2839,25 +2780,21 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 
 	// Handle OpenAI accounts
 	if account.IsOpenAI() {
-		mapping := account.GetModelMapping()
-
-		// OpenAI 兼容端点（含第三方 v1 协议代理）优先返回上游 /v1/models 实时目录，
-		// 不再把可测试模型限制在内置 GPT 模型集：上游返回什么就能测什么。
-		// 仅在 API Key 账号且管理员未显式配置 model_mapping 时生效；
-		// 上游不支持 /v1/models 或请求失败时静默回落到原有默认/映射逻辑。
-		if account.Type == service.AccountTypeAPIKey && len(mapping) == 0 {
-			if upstreamModels, ok := h.fetchOpenAICompatibleUpstreamModels(c.Request.Context(), account); ok {
-				response.Success(c, upstreamModels)
+		// Prefer the shared, account-keyed upstream catalog. If discovery fails,
+		// retain the legacy local catalog below so the test dialog remains usable.
+		if h.accountTestService != nil {
+			if models, fetchErr := h.accountTestService.FetchOpenAIAccountModels(c.Request.Context(), account); fetchErr == nil {
+				response.Success(c, models)
 				return
 			}
 		}
-
 		// OpenAI 自动透传会绕过常规模型改写，测试/模型列表也应回落到默认模型集。
 		if account.IsOpenAIPassthroughEnabled() {
 			response.Success(c, openai.DefaultModels)
 			return
 		}
 
+		mapping := account.GetModelMapping()
 		if len(mapping) == 0 {
 			response.Success(c, openai.DefaultModels)
 			return
@@ -2940,7 +2877,6 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 
 	// Handle Grok accounts
 	if account.Platform == service.PlatformGrok {
-		// defaultModels 是 Grok OAuth 账号在没有实时模型目录时继续使用的静态模型集。
 		defaultModels := xai.DefaultModels()
 
 		hasExplicitMapping := false
@@ -2949,32 +2885,6 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 			hasExplicitMapping = len(rawMapping) > 0
 		case map[string]string:
 			hasExplicitMapping = len(rawMapping) > 0
-		}
-		if account.Type == service.AccountTypeAPIKey && !hasExplicitMapping {
-			// upstreamModelIDs 是 Grok API Key 实时目录，也是首次模型测试下拉的唯一来源。
-			if h.accountTestService == nil {
-				respondUpstreamModelSyncError(c, "Grok", account, &service.UpstreamModelSyncError{
-					Kind:    service.UpstreamModelSyncErrorConfiguration,
-					Message: "Grok 模型同步服务未配置，请联系管理员检查服务初始化",
-				})
-				return
-			}
-			upstreamModelIDs, syncErr := h.accountTestService.FetchUpstreamSupportedModels(c.Request.Context(), account)
-			if syncErr != nil {
-				respondUpstreamModelSyncError(c, "Grok", account, syncErr)
-				return
-			}
-			models := make([]xai.Model, 0, len(upstreamModelIDs))
-			for _, modelID := range upstreamModelIDs {
-				models = append(models, xai.Model{
-					ID:          modelID,
-					Object:      "model",
-					OwnedBy:     "xai",
-					DisplayName: modelID,
-				})
-			}
-			response.Success(c, models)
-			return
 		}
 		if !hasExplicitMapping {
 			response.Success(c, defaultModels)
@@ -2992,7 +2902,6 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 			defaultByID[model.ID] = model
 		}
 
-		// requestedModels 保存管理员配置的模型别名，并在返回前排序以稳定接口顺序。
 		requestedModels := make([]string, 0, len(mapping))
 		for requestedModel := range mapping {
 			requestedModels = append(requestedModels, requestedModel)
@@ -3013,42 +2922,6 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 			})
 		}
 		response.Success(c, models)
-		return
-	}
-
-	// Handle DeepSeek API Key accounts
-	if account.Platform == service.PlatformDeepSeek {
-		// GetModelMapping 可能包含服务层生成的默认映射，因此这里单独判断是否配置了显式映射。
-		hasExplicitMapping := false
-		switch rawMapping := account.Credentials["model_mapping"].(type) {
-		case map[string]any:
-			hasExplicitMapping = len(rawMapping) > 0
-		case map[string]string:
-			hasExplicitMapping = len(rawMapping) > 0
-		}
-
-		if !hasExplicitMapping {
-			if h.accountTestService == nil {
-				response.Error(c, http.StatusInternalServerError, "获取 DeepSeek 上游模型失败：后端模型同步服务未配置，请联系管理员检查服务初始化。原始技术详情：account test service is not configured")
-				return
-			}
-
-			modelIDs, syncErr := h.accountTestService.FetchUpstreamSupportedModels(c.Request.Context(), account)
-			if syncErr != nil {
-				respondDeepSeekAvailableModelsError(c, account, syncErr)
-				return
-			}
-			response.Success(c, buildDeepSeekAvailableModels(modelIDs))
-			return
-		}
-
-		mapping := account.GetModelMapping()
-		requestedModels := make([]string, 0, len(mapping))
-		for requestedModel := range mapping {
-			requestedModels = append(requestedModels, requestedModel)
-		}
-		sort.Strings(requestedModels)
-		response.Success(c, buildDeepSeekAvailableModels(requestedModels))
 		return
 	}
 
@@ -3093,85 +2966,8 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 	response.Success(c, models)
 }
 
-// buildDeepSeekAvailableModels 将 DeepSeek 模型 ID 转换为管理端统一的模型对象格式。
-func buildDeepSeekAvailableModels(modelIDs []string) []claude.Model {
-	models := make([]claude.Model, 0, len(modelIDs))
-	for _, modelID := range modelIDs {
-		models = append(models, claude.Model{
-			ID:          modelID,
-			Type:        "model",
-			DisplayName: modelID,
-			CreatedAt:   "",
-		})
-	}
-	return models
-}
-
-// adminAuthorizationBearerPattern 匹配错误详情中的 Authorization Bearer 凭据值。
-var adminAuthorizationBearerPattern = regexp.MustCompile(`(?i)(\bauthorization\b\s*[:=]\s*bearer\s+)[^\s,;]+`)
-
-// redactUpstreamModelTechnicalDetail 在返回管理员错误前清理账号凭据和常见认证头。
-func redactUpstreamModelTechnicalDetail(detail string, account *service.Account) string {
-	redacted := strings.TrimSpace(detail)
-	if account != nil {
-		for _, credentialKey := range []string{
-			"authorization", "api_key", "apikey", "access_token", "refresh_token",
-			"token", "password", "secret", "cookie",
-		} {
-			credential := strings.TrimSpace(account.GetCredential(credentialKey))
-			if credential != "" {
-				redacted = strings.ReplaceAll(redacted, credential, "***")
-			}
-		}
-	}
-
-	redacted = adminAuthorizationBearerPattern.ReplaceAllString(redacted, `$1***`)
-	return strings.TrimSpace(logredact.RedactText(redacted,
-		"authorization", "cookie", "api_key", "api-key", "apikey",
-		"access_token", "access-token", "refresh_token", "refresh-token",
-		"password", "secret", "token",
-	))
-}
-
-// respondUpstreamModelSyncError 将模型目录同步错误统一转换为中文原因和脱敏技术详情。
-func respondUpstreamModelSyncError(c *gin.Context, platform string, account *service.Account, err error) {
-	statusCode := http.StatusBadGateway
-	message := fmt.Sprintf("获取 %s 上游模型失败：上游 /v1/models 请求未成功，请检查 API Key、Base URL、代理和网络连接。", platform)
-	technicalDetail := "未提供原始技术详情"
-
-	var syncErr *service.UpstreamModelSyncError
-	if errors.As(err, &syncErr) {
-		technicalDetail = syncErr.Error()
-		switch syncErr.Kind {
-		case service.UpstreamModelSyncErrorConfiguration:
-			statusCode = http.StatusBadRequest
-			message = fmt.Sprintf("获取 %s 上游模型失败：账号配置无效，请检查 API Key、账号类型和 Base URL。", platform)
-		case service.UpstreamModelSyncErrorUnsupported:
-			statusCode = http.StatusBadRequest
-			message = fmt.Sprintf("获取 %s 上游模型失败：当前账号类型或平台不支持模型同步，请使用 API Key 账号并检查配置。", platform)
-		}
-	} else if err != nil {
-		technicalDetail = err.Error()
-	}
-
-	// 错误详情可能来自上游或请求链路，返回前统一脱敏，避免泄露凭据。
-	technicalDetail = redactUpstreamModelTechnicalDetail(technicalDetail, account)
-	if technicalDetail == "" {
-		technicalDetail = "未提供原始技术详情"
-	}
-	response.Error(c, statusCode, message+"原始技术详情："+technicalDetail)
-}
-
-// respondDeepSeekAvailableModelsError 保留 DeepSeek 既有调用入口，统一复用模型同步错误处理。
-func respondDeepSeekAvailableModelsError(c *gin.Context, account *service.Account, err error) {
-	respondUpstreamModelSyncError(c, "DeepSeek", account, err)
-}
-
 // SyncUpstreamModels handles syncing live supported models from an account's upstream.
 // POST /api/v1/admin/accounts/:id/models/sync-upstream
-//
-// 支持在请求体中携带尚未保存的凭据覆盖（api_key / base_url）。这样在编辑账号时，
-// “直接修改 API Key / Base URL 后获取上游支持模型”无需先保存、关闭再重新打开。
 func (h *AccountHandler) SyncUpstreamModels(c *gin.Context) {
 	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -3179,70 +2975,19 @@ func (h *AccountHandler) SyncUpstreamModels(c *gin.Context) {
 		return
 	}
 
-	// overrideReq 携带表单内的未保存凭据。忽略空 body / 解析错误以保持向后兼容。
-	var overrideReq struct {
-		APIKey  string `json:"api_key"`
-		BaseURL string `json:"base_url"`
-	}
-	_ = c.ShouldBindJSON(&overrideReq)
-
 	account, err := h.adminService.GetAccount(c.Request.Context(), accountID)
 	if err != nil {
 		response.NotFound(c, "Account not found")
 		return
 	}
 
-	// 仅当提供了非空的覆盖凭据时才使用临时账号，否则沿用已保存账号（向后兼容）。
-	target := account
-	if key := strings.TrimSpace(overrideReq.APIKey); key != "" || strings.TrimSpace(overrideReq.BaseURL) != "" {
-		overridden := &service.Account{
-			Platform:    account.Platform,
-			Type:        account.Type,
-			Credentials: map[string]any{},
-		}
-		for k, v := range account.Credentials {
-			overridden.Credentials[k] = v
-		}
-		if key != "" {
-			overridden.Credentials["api_key"] = key
-		}
-		if baseURL := strings.TrimSpace(overrideReq.BaseURL); baseURL != "" {
-			overridden.Credentials["base_url"] = baseURL
-		}
-		target = overridden
-	}
-
 	if h.accountTestService == nil {
-		if target.Platform == service.PlatformDeepSeek {
-			respondDeepSeekAvailableModelsError(c, target, &service.UpstreamModelSyncError{
-				Kind:    service.UpstreamModelSyncErrorConfiguration,
-				Message: "DeepSeek 模型同步服务未配置，请联系管理员检查服务初始化",
-			})
-			return
-		}
-		if target.Platform == service.PlatformGrok {
-			respondUpstreamModelSyncError(c, "Grok", target, &service.UpstreamModelSyncError{
-				Kind:    service.UpstreamModelSyncErrorConfiguration,
-				Message: "Grok 模型同步服务未配置，请联系管理员检查服务初始化",
-			})
-			return
-		}
 		response.InternalError(c, "Account test service is not configured")
 		return
 	}
 
-	// v0.2.0：同步时同时拉取模型列表与能力元数据并持久化快照。
-	catalog, err := h.accountTestService.SyncUpstreamModelCatalog(c.Request.Context(), target)
+	catalog, err := h.accountTestService.SyncUpstreamModelCatalog(c.Request.Context(), account)
 	if err != nil {
-		if target.Platform == service.PlatformDeepSeek {
-			respondDeepSeekAvailableModelsError(c, target, err)
-			return
-		}
-		if target.Platform == service.PlatformGrok {
-			respondUpstreamModelSyncError(c, "Grok", target, err)
-			return
-		}
-
 		var syncErr *service.UpstreamModelSyncError
 		if errors.As(err, &syncErr) {
 			switch syncErr.Kind {
@@ -3295,35 +3040,12 @@ func (h *AccountHandler) SyncUpstreamModelsPreview(c *gin.Context) {
 	}
 
 	if h.accountTestService == nil {
-		if req.Platform == service.PlatformDeepSeek {
-			respondDeepSeekAvailableModelsError(c, tempAccount, &service.UpstreamModelSyncError{
-				Kind:    service.UpstreamModelSyncErrorConfiguration,
-				Message: "DeepSeek 模型同步服务未配置，请联系管理员检查服务初始化",
-			})
-			return
-		}
-		if req.Platform == service.PlatformGrok {
-			respondUpstreamModelSyncError(c, "Grok", tempAccount, &service.UpstreamModelSyncError{
-				Kind:    service.UpstreamModelSyncErrorConfiguration,
-				Message: "Grok 模型同步服务未配置，请联系管理员检查服务初始化",
-			})
-			return
-		}
 		response.InternalError(c, "Account test service is not configured")
 		return
 	}
 
 	catalog, err := h.accountTestService.SyncUpstreamModelCatalog(c.Request.Context(), tempAccount)
 	if err != nil {
-		if req.Platform == service.PlatformDeepSeek {
-			respondDeepSeekAvailableModelsError(c, tempAccount, err)
-			return
-		}
-		if req.Platform == service.PlatformGrok {
-			respondUpstreamModelSyncError(c, "Grok", tempAccount, err)
-			return
-		}
-
 		var syncErr *service.UpstreamModelSyncError
 		if errors.As(err, &syncErr) {
 			switch syncErr.Kind {
@@ -3459,7 +3181,7 @@ func (h *AccountHandler) BatchRefreshTier(c *gin.Context) {
 	accounts := make([]*service.Account, 0)
 
 	if len(req.AccountIDs) == 0 {
-		allAccounts, _, err := h.adminService.ListAccounts(ctx, 1, 10000, "gemini", "oauth", "", "", 0, "", 0, "name", "asc")
+		allAccounts, _, err := h.adminService.ListAccounts(ctx, 1, 10000, "gemini", "oauth", "", "", 0, "", "name", "asc")
 		if err != nil {
 			response.ErrorFrom(c, err)
 			return

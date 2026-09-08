@@ -575,28 +575,24 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			forceCacheBilling := fs.ForceCacheBilling
 			quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 			sessionID := service.ExtractClientSessionID(c)
-			// 在提交异步任务前拍下请求体大小，避免闭包保活完整 body。
-			requestBodyBytes := int64(len(body))
-			maxRequestBodyBytes := gatewayMaxBodySize(h.cfg)
 			h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 				if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
-					Result:              result,
-					QuotaPlatform:       quotaPlatform,
-					APIKey:              apiKey,
-					User:                apiKey.User,
-					Account:             account,
-					Subscription:        subscription,
-					InboundEndpoint:     inboundEndpoint,
-					UpstreamEndpoint:    upstreamEndpoint,
-					UserAgent:           userAgent,
-					IPAddress:           clientIP,
-					SessionID:           sessionID,
-					RequestBodyBytes:    requestBodyBytes,
-					MaxRequestBodyBytes: maxRequestBodyBytes,
-					RequestPayloadHash:  requestPayloadHash,
-					ForceCacheBilling:   forceCacheBilling,
-					APIKeyService:       h.apiKeyService,
-					ChannelUsageFields:  clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel),
+					Result:             result,
+					QuotaPlatform:      quotaPlatform,
+					APIKey:             apiKey,
+					User:               apiKey.User,
+					Account:            account,
+					Subscription:       subscription,
+					PricingAt:          pricingAt,
+					InboundEndpoint:    inboundEndpoint,
+					UpstreamEndpoint:   upstreamEndpoint,
+					UserAgent:          userAgent,
+					IPAddress:          clientIP,
+					SessionID:          sessionID,
+					RequestPayloadHash: requestPayloadHash,
+					ForceCacheBilling:  forceCacheBilling,
+					APIKeyService:      h.apiKeyService,
+					ChannelUsageFields: clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel),
 				}); err != nil {
 					logger.L().With(
 						zap.String("component", "handler.gateway.messages"),
@@ -1109,64 +1105,9 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				}
 			}
 
-			// 捕获请求信息（用于异步记录，避免在 goroutine 中访问 gin.Context）
-			userAgent := c.GetHeader("User-Agent")
-			clientIP := ip.GetClientIP(c)
-			// Forward 内部可能继续改写 body，usage 去重指纹必须使用最终上游接受的当前 body。
-			requestPayloadHash := service.HashUsageRequestPayload(attemptParsedReq.Body.Bytes())
-			inboundEndpoint := GetInboundEndpoint(c)
-			upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
-
-			if result.ReasoningEffort == nil {
-				result.ReasoningEffort = service.NormalizeClaudeOutputEffort(attemptParsedReq.OutputEffort)
-			}
-			// 同上（重试路径中的对称填充）。详见非重试路径同名注释。
-			if result.ReasoningEffort == nil && attemptParsedReq.ThinkingEnabled {
-				protocolModel := result.UpstreamModel
-				if protocolModel == "" {
-					protocolModel = result.Model
-				}
-				result.ReasoningEffort = service.DefaultEffortForThinkingEnabled(protocolModel)
-			}
-
-			// 使用量记录通过有界 worker 池提交，避免请求热路径创建无界 goroutine。
-			// ForceCacheBilling 提前拍成标量，避免 worker 闭包保活 failover 状态里的响应体。
-			forceCacheBilling := fs.ForceCacheBilling
-			quotaPlatform := service.QuotaPlatform(c.Request.Context(), currentAPIKey)
-			sessionID := service.ExtractClientSessionID(c)
-			// 重试路径同样只向异步任务传递请求体大小和配置上限标量。
-			requestBodyBytes := int64(len(body))
-			maxRequestBodyBytes := gatewayMaxBodySize(h.cfg)
-			h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
-				if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
-					Result:              result,
-					QuotaPlatform:       quotaPlatform,
-					APIKey:              currentAPIKey,
-					User:                currentAPIKey.User,
-					Account:             account,
-					Subscription:        currentSubscription,
-					InboundEndpoint:     inboundEndpoint,
-					UpstreamEndpoint:    upstreamEndpoint,
-					UserAgent:           userAgent,
-					IPAddress:           clientIP,
-					SessionID:           sessionID,
-					RequestBodyBytes:    requestBodyBytes,
-					MaxRequestBodyBytes: maxRequestBodyBytes,
-					RequestPayloadHash:  requestPayloadHash,
-					ForceCacheBilling:   forceCacheBilling,
-					APIKeyService:       h.apiKeyService,
-					ChannelUsageFields:  clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel),
-				}); err != nil {
-					logger.L().With(
-						zap.String("component", "handler.gateway.messages"),
-						zap.Int64("user_id", subject.UserID),
-						zap.Int64("api_key_id", currentAPIKey.ID),
-						zap.Any("group_id", currentAPIKey.GroupID),
-						zap.String("model", reqModel),
-						zap.Int64("account_id", account.ID),
-					).Error("gateway.record_usage_failed", zap.Error(err))
-				}
-			})
+			submitForwardUsage(result)
+			// 转发成功，会话槽保持既有空闲超时语义
+			upstreamServedSession = true
 			return
 		}
 		if !retryWithFallback {
@@ -1193,20 +1134,24 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 		platform = forcedPlatform
 	}
 
+	if platform == service.PlatformOpenAI && apiKey != nil && apiKey.Group != nil &&
+		apiKey.Group.Platform == service.PlatformOpenAI && apiKey.Group.CodexModelsManifestConfig.Enabled {
+		h.pinnedOpenAIModels(c, apiKey.Group)
+		return
+	}
+
 	if platform == service.PlatformComposite {
 		availableModels := h.compositeAvailableModels(c.Request.Context(), groupID)
-		if apiKey != nil && apiKey.Group != nil && apiKey.Group.CustomModelsListEnabled() {
-			availableModels = filterModelsByCustomList(availableModels, defaultModelIDsForPlatform(service.PlatformComposite), apiKey.Group.ModelsListConfig.Models)
-			writeCustomModelsList(c, service.PlatformComposite, availableModels)
+		if apiKey != nil && apiKey.Group != nil && apiKey.Group.ModelAllowlistEnabled() {
+			source := availableModels
+			if len(source) == 0 {
+				source = defaultModelIDsForPlatform(service.PlatformComposite)
+			}
+			writeAllowlistedModelsList(c, service.PlatformComposite, apiKey.Group.ModelAllowlist.FilterForListing(source))
 			return
 		}
 		if len(availableModels) > 0 {
 			writeModelsList(c, service.PlatformComposite, availableModels)
-			return
-		}
-		if h.gatewayService != nil && len(h.gatewayService.GetSchedulablePlatforms(c.Request.Context(), groupID)) > 0 {
-			// 已存在可调度账号但没有经过上游确认的模型时，不能用静态目录冒充可用模型。
-			writeModelsList(c, service.PlatformComposite, nil)
 			return
 		}
 		writeModelsList(c, service.PlatformComposite, defaultModelIDsForPlatform(service.PlatformComposite))
@@ -1215,25 +1160,14 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 
 	// Get available models from account configurations for the selected group platform.
 	availableModels := h.gatewayService.GetAvailableModels(c.Request.Context(), groupID, platform)
-	if apiKey != nil && apiKey.Group != nil && apiKey.Group.CustomModelsListEnabled() {
-		fallbackModels := defaultModelIDsForPlatform(platform)
-		if availableModels != nil && platform != service.PlatformAnthropic {
-			// 除 Anthropic 外，非 nil 表示服务层已确认账号模型目录，即使为空也不能补回静态模型。
-			// Anthropic 的 OAuth 账号依赖静态 Claude 目录，需与账号映射模型合并。
-			fallbackModels = nil
-		}
-		availableModels = filterModelsByCustomList(customModelsListSource(platform, availableModels, fallbackModels), fallbackModels, apiKey.Group.ModelsListConfig.Models)
-		writeCustomModelsList(c, platform, availableModels)
+	if apiKey != nil && apiKey.Group != nil && apiKey.Group.ModelAllowlistEnabled() {
+		source := modelListingSource(platform, availableModels, defaultModelIDsForPlatform(platform))
+		writeAllowlistedModelsList(c, platform, apiKey.Group.ModelAllowlist.FilterForListing(source))
 		return
 	}
 
-	if availableModels != nil {
-		if len(availableModels) > 0 {
-			writeModelsList(c, platform, availableModels)
-			return
-		}
-		// 动态上游目录返回空结果时保持空目录，避免静态模型冒充可调用模型。
-		writeModelsList(c, platform, nil)
+	if len(availableModels) > 0 {
+		writeModelsList(c, platform, availableModels)
 		return
 	}
 
@@ -1255,11 +1189,6 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 	}
 	if platform == service.PlatformGrok {
 		writeGrokModelsList(c, xai.DefaultModelIDs())
-		return
-	}
-	if platform == service.PlatformDeepSeek {
-		// DeepSeek 模型必须经过账号 API Key 的上游目录确认，失败时返回空目录。
-		writeModelsList(c, platform, nil)
 		return
 	}
 
@@ -1318,8 +1247,12 @@ func (h *GatewayHandler) codexModelIDsForGroup(ctx context.Context, group *servi
 	if platform == service.PlatformComposite {
 		availableModels := h.compositeAvailableModels(ctx, groupID)
 		fallbackModels := defaultCodexModelIDsForPlatform(service.PlatformComposite)
-		if group.CustomModelsListEnabled() {
-			return filterModelsByCustomList(availableModels, fallbackModels, group.ModelsListConfig.Models)
+		if group.ModelAllowlistEnabled() {
+			source := availableModels
+			if len(source) == 0 {
+				source = fallbackModels
+			}
+			return group.ModelAllowlist.FilterForListing(source)
 		}
 		if len(availableModels) > 0 {
 			return availableModels
@@ -1329,12 +1262,8 @@ func (h *GatewayHandler) codexModelIDsForGroup(ctx context.Context, group *servi
 
 	availableModels := h.gatewayService.GetAvailableModels(ctx, groupID, platform)
 	fallbackModels := defaultCodexModelIDsForPlatform(platform)
-	if group.CustomModelsListEnabled() {
-		return filterModelsByCustomList(
-			customModelsListSource(platform, availableModels, fallbackModels),
-			fallbackModels,
-			group.ModelsListConfig.Models,
-		)
+	if group.ModelAllowlistEnabled() {
+		return group.ModelAllowlist.FilterForListing(modelListingSource(platform, availableModels, fallbackModels))
 	}
 	if len(availableModels) > 0 {
 		return availableModels
@@ -1349,12 +1278,12 @@ func (h *GatewayHandler) compositeAvailableModels(ctx context.Context, groupID *
 	seen := make(map[string]struct{})
 	models := make([]string, 0)
 	schedulablePlatforms := h.gatewayService.GetSchedulablePlatforms(ctx, groupID)
-	for _, platform := range []string{service.PlatformAnthropic, service.PlatformGemini, service.PlatformOpenAI, service.PlatformAntigravity, service.PlatformGrok, service.PlatformKimi, service.PlatformZhipu, service.PlatformDeepSeek} {
+	for _, platform := range []string{service.PlatformAnthropic, service.PlatformGemini, service.PlatformOpenAI, service.PlatformAntigravity, service.PlatformGrok, service.PlatformKimi, service.PlatformZhipu, service.PlatformDeepseek} {
 		platformModels := h.gatewayService.GetAvailableModels(ctx, groupID, platform)
-		// CN 供应商没有静态默认模型列表（defaultModelIDsForPlatform 的
-		// default 分支是 Claude 列表），composite 下只暴露账号映射键。
-		if platformModels == nil && !service.IsCNProvider(platform) {
-			if _, ok := schedulablePlatforms[platform]; ok {
+		if len(platformModels) == 0 {
+			// CN 供应商没有静态默认模型列表（defaultModelIDsForPlatform 的
+			// default 分支是 Claude 列表），composite 下只暴露账号映射键。
+			if _, ok := schedulablePlatforms[platform]; ok && !service.IsCNProvider(platform) {
 				platformModels = defaultModelIDsForPlatform(platform)
 			}
 		}
@@ -1374,6 +1303,10 @@ func (h *GatewayHandler) compositeAvailableModels(ctx context.Context, groupID *
 }
 
 func writeModelsList(c *gin.Context, platform string, modelIDs []string) {
+	if platform == service.PlatformOpenAI {
+		writeOpenAIModelsList(c, modelIDs)
+		return
+	}
 	if platform == service.PlatformGrok {
 		writeGrokModelsList(c, modelIDs)
 		return
@@ -1393,7 +1326,7 @@ func writeModelsList(c *gin.Context, platform string, modelIDs []string) {
 	})
 }
 
-func writeCustomModelsList(c *gin.Context, platform string, modelIDs []string) {
+func writeAllowlistedModelsList(c *gin.Context, platform string, modelIDs []string) {
 	if platform == service.PlatformOpenAI {
 		writeOpenAIModelsList(c, modelIDs)
 		return
@@ -1491,70 +1424,17 @@ func writeOpenAIModelsList(c *gin.Context, modelIDs []string) {
 	})
 }
 
-func customModelsListSource(platform string, availableModels, fallbackModels []string) []string {
-	if platform == service.PlatformAnthropic && len(availableModels) > 0 {
+// modelListingSource 汇总模型列表过滤的候选来源：账号映射键（availableModels）
+// 与平台默认列表（fallbackModels）。账号映射为空时回落默认列表；Anthropic
+// 平台两者取并集，其余平台以账号映射键为准。
+func modelListingSource(platform string, availableModels, fallbackModels []string) []string {
+	if len(availableModels) == 0 {
+		return fallbackModels
+	}
+	if platform == service.PlatformAnthropic {
 		return mergeModelIDs(availableModels, fallbackModels)
 	}
 	return availableModels
-}
-
-func filterModelsByCustomList(availableModels, fallbackModels, selectedModels []string) []string {
-	if len(selectedModels) == 0 {
-		return availableModels
-	}
-	source := availableModels
-	if len(source) == 0 {
-		source = fallbackModels
-	}
-	if len(source) == 0 {
-		return nil
-	}
-
-	allowed := make([]string, 0, len(source))
-	for _, model := range source {
-		model = strings.TrimSpace(model)
-		if model != "" {
-			allowed = append(allowed, model)
-		}
-	}
-
-	seen := make(map[string]struct{}, len(selectedModels))
-	filtered := make([]string, 0, len(selectedModels))
-	for _, model := range selectedModels {
-		model = strings.TrimSpace(model)
-		if model == "" {
-			continue
-		}
-		if !customModelsListAllowsModel(allowed, model) {
-			continue
-		}
-		if _, ok := seen[model]; ok {
-			continue
-		}
-		seen[model] = struct{}{}
-		filtered = append(filtered, model)
-	}
-	return filtered
-}
-
-func customModelsListAllowsModel(availablePatterns []string, model string) bool {
-	for _, pattern := range availablePatterns {
-		if pattern == model {
-			return true
-		}
-		if strings.HasSuffix(pattern, "*") && strings.HasPrefix(model, strings.TrimSuffix(pattern, "*")) {
-			return true
-		}
-	}
-	normalizedClaudeModel := claude.NormalizeModelID(strings.TrimSuffix(model, "-thinking"))
-	if normalizedClaudeModel != model {
-		for _, pattern := range availablePatterns {
-			if pattern == normalizedClaudeModel {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func defaultCodexModelIDsForPlatform(platform string) []string {
@@ -1590,11 +1470,7 @@ func defaultModelIDsForPlatform(platform string) []string {
 	case service.PlatformComposite:
 		ids := make([]string, 0)
 		seen := make(map[string]struct{})
-		// CN 平台（kimi/zhipu/deepseek）与 anthropic 一样落到 default 分支的
-		// Claude 默认列表：Claude Code 客户端请求的就是这些模型名并经账号
-		// model_mapping 转换。/v1/models 对 deepseek 的"只认上游目录"约束
-		// 在 Models handler 与 compositeAvailableModels 中单独控制。
-		for _, concretePlatform := range []string{service.PlatformAnthropic, service.PlatformGemini, service.PlatformOpenAI, service.PlatformAntigravity, service.PlatformGrok, service.PlatformKimi, service.PlatformZhipu, service.PlatformDeepSeek} {
+		for _, concretePlatform := range []string{service.PlatformAnthropic, service.PlatformGemini, service.PlatformOpenAI, service.PlatformAntigravity, service.PlatformGrok, service.PlatformKimi, service.PlatformZhipu, service.PlatformDeepseek} {
 			for _, id := range defaultModelIDsForPlatform(concretePlatform) {
 				if _, ok := seen[id]; ok {
 					continue
@@ -1634,10 +1510,21 @@ func mergeModelIDs(primary, secondary []string) []string {
 
 // AntigravityModels 返回 Antigravity 支持的全部模型
 // GET /antigravity/models
+// 分组级模型白名单开启时按白名单过滤。
 func (h *GatewayHandler) AntigravityModels(c *gin.Context) {
+	models := antigravity.DefaultModels()
+	if apiKey, ok := middleware2.GetAPIKeyFromContext(c); ok && apiKey != nil && apiKey.Group != nil && apiKey.Group.ModelAllowlistEnabled() {
+		filtered := make([]antigravity.ClaudeModel, 0, len(models))
+		for _, model := range models {
+			if apiKey.Group.ModelAllowlist.Allows(model.ID) {
+				filtered = append(filtered, model)
+			}
+		}
+		models = filtered
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"object": "list",
-		"data":   antigravity.DefaultModels(),
+		"data":   models,
 	})
 }
 
