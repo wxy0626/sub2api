@@ -427,8 +427,8 @@ describe('admin AccountsView bulk edit scope', () => {
     ])
     expect(wrapper.get('[data-test="header-platform"]').getComponent(HeaderGroupSelectStub).props('options')).toEqual([
       { value: '', label: 'admin.accounts.allPlatforms' },
-      { value: 'grok', label: 'grok' },
-      { value: 'openai', label: 'openai' }
+      { value: 'openai', label: 'openai' },
+      { value: 'grok', label: 'grok' }
     ])
     expect(wrapper.get('[data-test="header-type"]').getComponent(HeaderGroupSelectStub).props('options')).toEqual([
       { value: '', label: 'admin.accounts.allTypes' },

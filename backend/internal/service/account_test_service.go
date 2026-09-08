@@ -185,8 +185,27 @@ func (s *AccountTestService) SetOpenAIGatewayService(gateway *OpenAIGatewayServi
 
 // FetchOpenAIAccountModels uses the shared cached discovery path for the test picker.
 func (s *AccountTestService) FetchOpenAIAccountModels(ctx context.Context, account *Account) ([]openai.Model, error) {
-	if s == nil || s.openaiGatewayService == nil {
+	if s == nil {
 		return nil, errors.New("OpenAI model discovery service is unavailable")
+	}
+	// 兼容旧构造链：尚未注入共享 Gateway 时，仍从当前账号的实时 /v1/models
+	// 目录读取模型，避免把 OpenAI-compatible 账号误回落成内置 OpenAI 目录。
+	if s.openaiGatewayService == nil {
+		modelIDs, err := s.FetchUpstreamSupportedModels(ctx, account)
+		if err != nil {
+			return nil, err
+		}
+		models := make([]openai.Model, 0, len(modelIDs))
+		for _, modelID := range modelIDs {
+			owner := openai.UpstreamCatalogOwner
+			if isOfficialOpenAIModelsBaseURL(account.GetOpenAIBaseURL()) {
+				owner = "openai"
+			}
+			models = append(models, openai.Model{
+				ID: modelID, Object: "model", OwnedBy: owner, Type: "model", DisplayName: modelID,
+			})
+		}
+		return models, nil
 	}
 	response, err := s.openaiGatewayService.FetchOpenAIModelsList(ctx, account)
 	if err != nil {
@@ -207,6 +226,10 @@ func (s *AccountTestService) FetchOpenAIAccountModels(ctx context.Context, accou
 		}
 		if strings.TrimSpace(model.Type) == "" {
 			model.Type = "model"
+		}
+		// 兼容入口的第三方目录缺少归属时，使用 upstream；保留供应商明确返回的值。
+		if account != nil && account.Type == AccountTypeAPIKey && !isOfficialOpenAIModelsBaseURL(account.GetOpenAIBaseURL()) && strings.EqualFold(strings.TrimSpace(model.OwnedBy), "openai") {
+			model.OwnedBy = openai.UpstreamCatalogOwner
 		}
 	}
 	return payload.Data, nil

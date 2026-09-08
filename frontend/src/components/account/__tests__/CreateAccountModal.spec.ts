@@ -170,6 +170,9 @@ async function submitApiKeyAccount(
   disableUpstreamBillingProbe = false
 ) {
   const wrapper = mountModal()
+  if (platform === 'anthropic') {
+    await selectButtonByText(wrapper, 'Anthropic')
+  }
   await selectButtonByText(wrapper, platform === 'openai' ? 'OpenAI' : 'admin.accounts.claudeConsole')
   if (platform === 'openai') {
     await selectButtonByText(wrapper, 'API Key')
@@ -223,6 +226,15 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
   })
 
   afterEach(() => vi.useRealTimers())
+
+  it('defaults to OpenAI and places it first in the platform selector', () => {
+    const wrapper = mountModal()
+    const platformButtons = wrapper.find('[data-tour="account-form-platform"]').findAll('button')
+    expect(platformButtons[0]?.text()).toContain('OpenAI')
+    expect(platformButtons[0]?.classes()).toContain('bg-white')
+    expect(platformButtons[1]?.text()).toContain('Anthropic')
+    wrapper.unmount()
+  })
 
   it('sets month and year expiry presets without submitting the account form', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })

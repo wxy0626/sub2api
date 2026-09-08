@@ -11,6 +11,8 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -29,6 +31,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/Wei-Shaw/sub2api/internal/util/logredact"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/sync/errgroup"
@@ -1311,7 +1314,61 @@ type TestAccountRequest struct {
 	AudioDataURL string `json:"audio_data_url"`
 }
 
+// displayUpstreamPlatformName 返回管理员使用的平台显示名。
+func displayUpstreamPlatformName(platform string) string {
+	switch strings.ToLower(strings.TrimSpace(platform)) {
+	case service.PlatformGrok:
+		return "Grok"
+	case service.PlatformDeepSeek:
+		return "DeepSeek"
+	default:
+		return platform
+	}
+}
+
+func isOfficialOpenAIAccount(account *service.Account) bool {
+	if account == nil {
+		return false
+	}
+	u, err := url.Parse(strings.TrimSpace(account.GetCredential("base_url")))
+	return err == nil && strings.EqualFold(strings.TrimSuffix(u.Hostname(), "."), "api.openai.com")
+}
+
+// buildDeepSeekAvailableModels 将兼容入口中的模型 ID 转为统一展示对象。
+func buildDeepSeekAvailableModels(modelIDs []string) []claude.Model {
+	models := make([]claude.Model, 0, len(modelIDs))
+	for _, modelID := range modelIDs {
+		models = append(models, claude.Model{ID: modelID, Type: "model", DisplayName: modelID})
+	}
+	return models
+}
+
 const accountTestModeExtraKey = "account_test_mode"
+
+var modelAuthorizationPattern = regexp.MustCompile(`(?i)(\bauthorization\b\s*[:=]\s*bearer\s+)[^\s,;]+`)
+
+// respondModelDirectoryError 在管理员响应边界保留诊断信息并移除凭据。
+func respondModelDirectoryError(c *gin.Context, account *service.Account, err error) {
+	detail := err.Error()
+	for _, key := range service.SensitiveCredentialKeys {
+		if value := account.GetCredential(key); value != "" {
+			detail = strings.ReplaceAll(detail, value, "***")
+		}
+	}
+	detail = modelAuthorizationPattern.ReplaceAllString(detail, `$1***`)
+	detail = logredact.RedactText(detail, "authorization", "cookie", "api_key", "apikey", "access_token", "refresh_token", "password", "secret", "token")
+	status := http.StatusBadGateway
+	var syncErr *service.UpstreamModelSyncError
+	if errors.As(err, &syncErr) {
+		switch syncErr.Kind {
+		case service.UpstreamModelSyncErrorConfiguration, service.UpstreamModelSyncErrorUnsupported:
+			status = http.StatusBadRequest
+		case service.UpstreamModelSyncErrorInternal:
+			status = http.StatusInternalServerError
+		}
+	}
+	response.Error(c, status, "获取 "+displayUpstreamPlatformName(account.Platform)+" 上游模型失败：请检查 API Key、Base URL、代理和网络连接。原始技术详情："+detail)
+}
 
 type UpdateAccountTestModeRequest struct {
 	Mode string `json:"mode" binding:"required,oneof=default responses compact workspace"`
@@ -2887,8 +2944,15 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 	if account.IsOpenAI() {
 		// Prefer the shared, account-keyed upstream catalog. If discovery fails,
 		// retain the legacy local catalog below so the test dialog remains usable.
-		if h.accountTestService != nil {
+		if h.accountTestService != nil && len(account.GetModelMapping()) == 0 {
 			if models, fetchErr := h.accountTestService.FetchOpenAIAccountModels(c.Request.Context(), account); fetchErr == nil {
+				if account.Type == service.AccountTypeAPIKey && strings.TrimSpace(account.GetCredential("base_url")) != "" && !isOfficialOpenAIAccount(account) {
+					for i := range models {
+						if strings.EqualFold(strings.TrimSpace(models[i].OwnedBy), "openai") {
+							models[i].OwnedBy = openai.UpstreamCatalogOwner
+						}
+					}
+				}
 				response.Success(c, models)
 				return
 			}
@@ -2924,6 +2988,22 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 					DisplayName: requestedModel,
 				})
 			}
+		}
+		response.Success(c, models)
+		return
+	}
+
+	// DeepSeek API Key 账号无显式映射时以真实上游目录为准，避免静态 Claude
+	// 目录或默认目录冒充可调用模型。
+	if account.Platform == service.PlatformDeepSeek && account.Type == service.AccountTypeAPIKey && len(account.GetModelMapping()) == 0 && h.accountTestService != nil {
+		ids, fetchErr := h.accountTestService.FetchUpstreamSupportedModels(c.Request.Context(), account)
+		if fetchErr != nil {
+			respondModelDirectoryError(c, account, fetchErr)
+			return
+		}
+		models := make([]claude.Model, 0, len(ids))
+		for _, id := range ids {
+			models = append(models, claude.Model{ID: id, Type: "model", DisplayName: id})
 		}
 		response.Success(c, models)
 		return
@@ -2983,6 +3063,26 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 	// Handle Grok accounts
 	if account.Platform == service.PlatformGrok {
 		defaultModels := xai.DefaultModels()
+		hasMapping := false
+		if mapping, ok := account.Credentials["model_mapping"].(map[string]any); ok {
+			hasMapping = len(mapping) > 0
+		}
+		if mapping, ok := account.Credentials["model_mapping"].(map[string]string); ok {
+			hasMapping = len(mapping) > 0
+		}
+		if account.Type == service.AccountTypeAPIKey && !hasMapping && h.accountTestService != nil {
+			ids, fetchErr := h.accountTestService.FetchUpstreamSupportedModels(c.Request.Context(), account)
+			if fetchErr != nil {
+				respondModelDirectoryError(c, account, fetchErr)
+				return
+			}
+			models := make([]xai.Model, 0, len(ids))
+			for _, id := range ids {
+				models = append(models, xai.Model{ID: id, Object: "model", Type: "model", OwnedBy: "upstream", DisplayName: id})
+			}
+			response.Success(c, models)
+			return
+		}
 
 		hasExplicitMapping := false
 		switch rawMapping := account.Credentials["model_mapping"].(type) {
@@ -3030,6 +3130,20 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 		return
 	}
 
+	// OpenAI-compatible DeepSeek accounts expose mapped request model IDs.
+	if account.Platform == service.PlatformDeepSeek {
+		mapping := account.GetModelMapping()
+		if len(mapping) > 0 {
+			ids := make([]string, 0, len(mapping))
+			for id := range mapping {
+				ids = append(ids, id)
+			}
+			sort.Strings(ids)
+			response.Success(c, buildDeepSeekAvailableModels(ids))
+			return
+		}
+	}
+
 	// Handle Claude/Anthropic accounts
 	// For OAuth and Setup-Token accounts: return default models
 	if account.IsOAuth() {
@@ -3047,7 +3161,12 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 
 	// Return mapped models (keys of the mapping are the available model IDs)
 	var models []claude.Model
+	requestedModels := make([]string, 0, len(mapping))
 	for requestedModel := range mapping {
+		requestedModels = append(requestedModels, requestedModel)
+	}
+	sort.Strings(requestedModels)
+	for _, requestedModel := range requestedModels {
 		// Try to find display info from default models
 		var found bool
 		for _, dm := range claude.DefaultModels {
@@ -3102,13 +3221,13 @@ func (h *AccountHandler) SyncUpstreamModels(c *gin.Context) {
 				response.InternalError(c, syncErr.SafeMessage())
 			default:
 				slog.Warn("sync_upstream_models_failed", "account_id", accountID, "kind", syncErr.Kind)
-				response.Error(c, http.StatusBadGateway, syncErr.SafeMessage())
+				response.Error(c, http.StatusBadGateway, "获取 "+displayUpstreamPlatformName(account.Platform)+" 上游模型失败。原始技术详情："+syncErr.SafeMessage())
 			}
 			return
 		}
 
 		slog.Warn("sync_upstream_models_failed", "account_id", accountID)
-		response.Error(c, http.StatusBadGateway, "Failed to sync upstream models from upstream")
+		response.Error(c, http.StatusBadGateway, "获取 "+displayUpstreamPlatformName(account.Platform)+" 上游模型失败。原始技术详情："+err.Error())
 		return
 	}
 
@@ -3160,13 +3279,13 @@ func (h *AccountHandler) SyncUpstreamModelsPreview(c *gin.Context) {
 				response.InternalError(c, syncErr.SafeMessage())
 			default:
 				slog.Warn("sync_upstream_models_preview_failed", "platform", req.Platform, "kind", syncErr.Kind)
-				response.Error(c, http.StatusBadGateway, syncErr.SafeMessage())
+				response.Error(c, http.StatusBadGateway, "获取 "+displayUpstreamPlatformName(req.Platform)+" 上游模型失败。原始技术详情："+syncErr.SafeMessage())
 			}
 			return
 		}
 
 		slog.Warn("sync_upstream_models_preview_failed", "platform", req.Platform)
-		response.Error(c, http.StatusBadGateway, "Failed to sync upstream models from upstream")
+		response.Error(c, http.StatusBadGateway, "获取 "+displayUpstreamPlatformName(req.Platform)+" 上游模型失败。原始技术详情："+err.Error())
 		return
 	}
 

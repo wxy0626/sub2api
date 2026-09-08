@@ -690,7 +690,18 @@ const groupFilterOptions = computed<SelectOption[]>(() => [
 // 表头平台筛选选项，始终提供“全部平台”，其余选项由后端安全聚合接口动态生成。
 const platformFilterOptions = computed<SelectOption[]>(() => [
   { value: '', label: t('admin.accounts.allPlatforms') },
-  ...accountFilterValues.value.platforms.map(platform => ({ value: platform, label: platform }))
+  ...accountFilterValues.value.platforms
+    .slice()
+    .sort((left, right) => {
+      const order = ['openai', 'anthropic', 'gemini', 'antigravity', 'grok', 'kimi', 'zhipu', 'deepseek']
+      const leftIndex = order.indexOf(left)
+      const rightIndex = order.indexOf(right)
+      if (leftIndex === -1 && rightIndex === -1) return left.localeCompare(right)
+      if (leftIndex === -1) return 1
+      if (rightIndex === -1) return -1
+      return leftIndex - rightIndex
+    })
+    .map(platform => ({ value: platform, label: platform }))
 ])
 
 // 表头类型筛选选项，始终提供“全部类型”，其余选项由后端安全聚合接口动态生成。
