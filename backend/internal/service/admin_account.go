@@ -21,25 +21,25 @@ import (
 )
 
 // Account management implementations
-func (s *adminServiceImpl) ListAccounts(ctx context.Context, page, pageSize int, platform, accountType, status, search string, groupID int64, privacyMode string, sortBy, sortOrder string) ([]Account, int64, error) {
+func (s *adminServiceImpl) ListAccounts(ctx context.Context, page, pageSize int, platform, accountType, status, search string, groupID int64, privacyMode string, proxyID int64, sortBy, sortOrder string) ([]Account, int64, error) {
 	if groupID > 0 {
 		if err := s.ValidateAccountGroupBindings(ctx, []int64{groupID}); err != nil {
 			return nil, 0, err
 		}
 	}
 	params := pagination.PaginationParams{Page: page, PageSize: pageSize, SortBy: sortBy, SortOrder: sortOrder}
-	accounts, result, err := s.accountRepo.ListWithFilters(ctx, params, platform, accountType, status, search, groupID, privacyMode)
+	accounts, result, err := s.accountRepo.ListWithFilters(ctx, params, platform, accountType, status, search, groupID, privacyMode, proxyID)
 	if err != nil {
 		return nil, 0, err
 	}
 	return accounts, result.Total, nil
 }
 
-func (s *adminServiceImpl) ListAccountsForSchedulerScoreFilter(ctx context.Context, platform, accountType, status, search string, groupID int64, privacyMode string) ([]Account, error) {
+func (s *adminServiceImpl) ListAccountsForSchedulerScoreFilter(ctx context.Context, platform, accountType, status, search string, groupID int64, privacyMode string, proxyID int64) ([]Account, error) {
 	if s == nil || s.accountRepo == nil {
 		return nil, nil
 	}
-	return s.accountRepo.ListAllWithFilters(ctx, platform, accountType, status, search, groupID, privacyMode)
+	return s.accountRepo.ListAllWithFilters(ctx, platform, accountType, status, search, groupID, privacyMode, proxyID)
 }
 
 func (s *adminServiceImpl) ListOpenAISchedulableAccountsForSchedulerScore(ctx context.Context, groupID *int64) ([]Account, error) {
@@ -54,6 +54,29 @@ func (s *adminServiceImpl) ListOpenAISchedulableAccountsForSchedulerScore(ctx co
 
 func (s *adminServiceImpl) GetAccount(ctx context.Context, id int64) (*Account, error) {
 	return s.accountRepo.GetByID(ctx, id)
+}
+
+// GetAccountCredential 按白名单读取管理员后端内部需要的敏感凭证值。
+func (s *adminServiceImpl) GetAccountCredential(ctx context.Context, accountID int64, key string) (string, error) {
+	if !IsSensitiveCredentialKey(key) {
+		return "", infraerrors.BadRequest("INVALID_CREDENTIAL_KEY", "credential key is not allowed")
+	}
+	account, err := s.accountRepo.GetByID(ctx, accountID)
+	if err != nil {
+		return "", err
+	}
+	if account == nil {
+		return "", infraerrors.NotFound("ACCOUNT_NOT_FOUND", "account not found")
+	}
+	value, ok := account.Credentials[key]
+	if !ok || value == nil || strings.TrimSpace(fmt.Sprint(value)) == "" {
+		return "", infraerrors.NotFound("CREDENTIAL_NOT_FOUND", "credential is not configured")
+	}
+	text, ok := value.(string)
+	if !ok {
+		return "", infraerrors.InternalServer("CREDENTIAL_INVALID", "credential value is not a string")
+	}
+	return text, nil
 }
 
 func (s *adminServiceImpl) GetAccountsByIDs(ctx context.Context, ids []int64) ([]*Account, error) {
@@ -1226,6 +1249,7 @@ func (s *adminServiceImpl) resolveBulkUpdateTargetIDs(ctx context.Context, filte
 			filters.Search,
 			groupID,
 			filters.PrivacyMode,
+			0,
 			"",
 			"",
 		)

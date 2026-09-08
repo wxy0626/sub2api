@@ -82,6 +82,20 @@ func TestNormalizeOpenAIResponsesLegacyIngressPreservesNativePromptTemplate(t *t
 	require.False(t, gjson.GetBytes(normalized, "input").Exists())
 }
 
+func TestNormalizeOpenAIResponsesLegacyIngressConvertsStringContentParts(t *testing.T) {
+	body := []byte(`{"model":"claude-fable-5.1","input":[
+		{"type":"message","role":"user","content":["first text",{"type":"input_text","text":"already normalized"},"last text"]}
+	]}`)
+
+	normalized, changed, err := normalizeOpenAIResponsesLegacyIngress(body)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "input_text", gjson.GetBytes(normalized, "input.0.content.0.type").String())
+	require.Equal(t, "first text", gjson.GetBytes(normalized, "input.0.content.0.text").String())
+	require.Equal(t, "input_text", gjson.GetBytes(normalized, "input.0.content.1.type").String())
+	require.Equal(t, "last text", gjson.GetBytes(normalized, "input.0.content.2.text").String())
+}
+
 func TestNormalizeOpenAIResponsesLegacyIngressPreservesUnknownPromptShapeWhileDroppingCommands(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","prompt":["one","two"],"commands":[{"name":"legacy"}]}`)
 

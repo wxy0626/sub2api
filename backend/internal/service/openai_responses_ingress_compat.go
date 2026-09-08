@@ -62,6 +62,9 @@ func normalizeOpenAIResponsesLegacyIngress(body []byte) ([]byte, bool, error) {
 		delete(request, "commands")
 		changed = true
 	}
+	if normalizeResponsesInputTextParts(request) {
+		changed = true
+	}
 
 	if !changed {
 		return body, false, nil
@@ -71,6 +74,36 @@ func normalizeOpenAIResponsesLegacyIngress(body []byte) ([]byte, bool, error) {
 		return body, false, fmt.Errorf("serialize legacy Responses ingress: %w", err)
 	}
 	return normalized, true, nil
+}
+
+// normalizeResponsesInputTextParts 将部分 OpenAI-compatible 上游不接受的
+// input[*].content[*] 裸字符串转换为标准 Responses input_text block。
+// 仅处理文本字符串，图片和其他对象保持原样。
+func normalizeResponsesInputTextParts(request map[string]any) bool {
+	items, ok := request["input"].([]any)
+	if !ok {
+		return false
+	}
+	changed := false
+	for _, rawItem := range items {
+		item, ok := rawItem.(map[string]any)
+		if !ok {
+			continue
+		}
+		parts, ok := item["content"].([]any)
+		if !ok {
+			continue
+		}
+		for i, part := range parts {
+			text, ok := part.(string)
+			if !ok {
+				continue
+			}
+			parts[i] = map[string]any{"type": "input_text", "text": text}
+			changed = true
+		}
+	}
+	return changed
 }
 
 type convertedLegacyResponsesMessages struct {

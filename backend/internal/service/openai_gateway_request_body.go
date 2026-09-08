@@ -106,6 +106,51 @@ func filterOpenAIResponsesNoneReasoningEffortForAccount(account *Account, body [
 	return out, nil
 }
 
+// stripUnsupportedEncryptedReasoningInclude removes the Codex-only encrypted
+// reasoning include from third-party OpenAI-compatible Responses endpoints.
+// Official OpenAI keeps the field because it is part of the native reasoning
+// replay contract.
+func stripUnsupportedEncryptedReasoningInclude(account *Account, body []byte) ([]byte, bool, error) {
+	if account == nil || !account.IsOpenAIApiKey() {
+		return body, false, nil
+	}
+	baseURL := strings.TrimSpace(account.GetCredential("base_url"))
+	if baseURL == "" || isOfficialOpenAIModelsBaseURL(baseURL) {
+		return body, false, nil
+	}
+
+	var request map[string]any
+	if err := decodeOpenAIJSONUseNumber(body, &request); err != nil {
+		return body, false, fmt.Errorf("strip unsupported encrypted reasoning include: %w", err)
+	}
+	include, ok := request["include"].([]any)
+	if !ok {
+		return body, false, nil
+	}
+	filtered := make([]any, 0, len(include))
+	changed := false
+	for _, value := range include {
+		if name, ok := value.(string); ok && strings.TrimSpace(name) == "reasoning.encrypted_content" {
+			changed = true
+			continue
+		}
+		filtered = append(filtered, value)
+	}
+	if !changed {
+		return body, false, nil
+	}
+	if len(filtered) == 0 {
+		delete(request, "include")
+	} else {
+		request["include"] = filtered
+	}
+	normalized, err := marshalOpenAIUpstreamJSON(request)
+	if err != nil {
+		return body, false, fmt.Errorf("serialize stripped encrypted reasoning include: %w", err)
+	}
+	return normalized, true, nil
+}
+
 func deleteOpenAIResponsesNoneReasoningEffortFromObject(account *Account, body map[string]any) {
 	if body == nil || shouldPreserveOpenAIResponsesNoneReasoningEffort(account) {
 		return

@@ -348,6 +348,39 @@ func TestFilterOpenAIResponsesNoneReasoningEffortForAccount_APIKeyAutomaticPasst
 	require.JSONEq(t, string(body), string(got))
 }
 
+func TestStripUnsupportedEncryptedReasoningIncludeForThirdPartyAPIKey(t *testing.T) {
+	body := []byte(`{"model":"claude-fable-5.1","include":["reasoning.encrypted_content","other.value"]}`)
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"base_url": "https://api.experientiallabs.ai/v1",
+		},
+	}
+
+	normalized, changed, err := stripUnsupportedEncryptedReasoningInclude(account, body)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "other.value", gjson.GetBytes(normalized, "include.0").String())
+	require.Equal(t, int64(1), gjson.GetBytes(normalized, "include.#").Int())
+}
+
+func TestStripUnsupportedEncryptedReasoningIncludePreservesOfficialOpenAI(t *testing.T) {
+	body := []byte(`{"include":["reasoning.encrypted_content"]}`)
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"base_url": "https://api.openai.com/v1",
+		},
+	}
+
+	normalized, changed, err := stripUnsupportedEncryptedReasoningInclude(account, body)
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.JSONEq(t, string(body), string(normalized))
+}
+
 // Lite 工具迁移到 input[].additional_tools 后，仍应按有工具请求处理。
 func TestNormalizeOpenAIParallelToolCallsWithoutTools_KeepsResponsesLiteAdditionalTools(t *testing.T) {
 	liteBody := []byte(`{"input":[{"type":"message","role":"user","content":"hi"},{"type":"additional_tools","tools":[{"type":"function","name":"spawn_agent"}]}],"parallel_tool_calls":false}`)

@@ -172,7 +172,13 @@ func openAIWSEventShouldParseUsage(eventType string) bool {
 }
 
 func openAIWSMessageShouldParseUsage(eventType string, message []byte) bool {
-	return openAIWSEventShouldParseUsage(eventType) && bytes.Contains(message, []byte(`"usage"`))
+	// 兼容上游把 usage 放在任意 Responses 生命周期事件或包装字段中。
+	// delta 事件通常是增量片段，避免把其中的局部 usage 当作最终快照。
+	if strings.HasSuffix(strings.TrimSpace(eventType), ".delta") {
+		return false
+	}
+	// 解析器会继续识别 usage、response.usage、data.response.usage 等路径。
+	return bytes.Contains(message, []byte(`"usage"`))
 }
 
 func parseOpenAIWSEventEnvelope(message []byte) (eventType string, responseID string, response gjson.Result) {

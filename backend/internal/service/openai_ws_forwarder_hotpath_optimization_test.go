@@ -70,6 +70,7 @@ func TestOpenAIWSEventShouldParseUsageTerminalEvents(t *testing.T) {
 	require.False(t, openAIWSEventShouldParseUsage(""))
 	require.False(t, openAIWSMessageShouldParseUsage("response.in_progress", []byte(`{"type":"response.in_progress"}`)))
 	require.True(t, openAIWSMessageShouldParseUsage("response.in_progress", []byte(`{"type":"response.in_progress","usage":{}}`)))
+	require.True(t, openAIWSMessageShouldParseUsage("response.output_text.done", []byte(`{"type":"response.output_text.done","response":{"usage":{"input_tokens":1}}}`)))
 	require.False(t, openAIWSMessageShouldParseUsage("response.output_text.delta", []byte(`{"type":"response.output_text.delta","usage":{}}`)))
 }
 
