@@ -617,13 +617,14 @@ func (h *AccountHandler) listAccountSchedulerScoreFilterPool(
 	platform, accountType, status, search string,
 	groupID int64,
 	privacyMode string,
+	proxyID int64,
 ) []service.Account {
 	if h.adminService == nil || (platform != "" && platform != service.PlatformOpenAI) {
 		return nil
 	}
 	// 池只用于 OpenAI 分数计算（非 OpenAI 账号会在打分时被丢弃），
 	// 无论列表页平台过滤为何，查询一律限定 openai，避免无过滤时全表扫描。
-	accounts, err := h.adminService.ListAccountsForSchedulerScoreFilter(ctx, service.PlatformOpenAI, accountType, status, search, groupID, privacyMode)
+	accounts, err := h.adminService.ListAccountsForSchedulerScoreFilter(ctx, service.PlatformOpenAI, accountType, status, search, groupID, privacyMode, proxyID)
 	if err != nil {
 		slog.Warn("openai_scheduler_filter_score_pool_failed", "error", err)
 		return nil
@@ -640,6 +641,15 @@ func (h *AccountHandler) List(c *gin.Context) {
 	status := c.Query("status")
 	search := c.Query("search")
 	privacyMode := strings.TrimSpace(c.Query("privacy_mode"))
+	var proxyID int64
+	if raw := strings.TrimSpace(c.Query("proxy_id")); raw != "" {
+		parsed, parseErr := strconv.ParseInt(raw, 10, 64)
+		if parseErr != nil || parsed <= 0 {
+			response.ErrorFrom(c, infraerrors.BadRequest("INVALID_PROXY_FILTER", "代理筛选参数 proxy_id 无效：仅支持大于 0 的整数。请从代理下拉列表重新选择有效代理后重试。技术详情：proxy_id must be a positive integer"))
+			return
+		}
+		proxyID = parsed
+	}
 	sortBy := c.DefaultQuery("sort_by", "name")
 	sortOrder := c.DefaultQuery("sort_order", "asc")
 	// 标准化和验证 search 参数
@@ -669,7 +679,7 @@ func (h *AccountHandler) List(c *gin.Context) {
 		}
 	}
 
-	accounts, total, err := h.adminService.ListAccounts(c.Request.Context(), page, pageSize, platform, accountType, status, search, groupID, privacyMode, sortBy, sortOrder)
+	accounts, total, err := h.adminService.ListAccounts(c.Request.Context(), page, pageSize, platform, accountType, status, search, groupID, privacyMode, proxyID, sortBy, sortOrder)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -706,7 +716,7 @@ func (h *AccountHandler) List(c *gin.Context) {
 		}
 	}
 	if includeSchedulerScore && pageHasOpenAIAccounts {
-		schedulerFilterPool := h.listAccountSchedulerScoreFilterPool(c.Request.Context(), platform, accountType, status, search, groupID, privacyMode)
+		schedulerFilterPool := h.listAccountSchedulerScoreFilterPool(c.Request.Context(), platform, accountType, status, search, groupID, privacyMode, proxyID)
 		schedulerScores, schedulerGroupScores = h.buildOpenAIAccountSchedulerScores(c.Request.Context(), accounts, schedulerFilterPool)
 	}
 
@@ -944,6 +954,56 @@ func (h *AccountHandler) GetByID(c *gin.Context) {
 	}
 
 	response.Success(c, h.buildAccountResponseWithRuntime(c.Request.Context(), account))
+}
+
+// ListFilterOptions 返回账号列表筛选所需的平台和类型枚举。
+func (h *AccountHandler) ListFilterOptions(c *gin.Context) {
+	accounts, err := h.adminService.ListAccountsForSchedulerScoreFilter(c.Request.Context(), "", "", "", "", 0, "", 0)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	platformSet := make(map[string]struct{})
+	typeSet := make(map[string]struct{})
+	for _, account := range accounts {
+		if account.Platform != "" {
+			platformSet[account.Platform] = struct{}{}
+		}
+		if account.Type != "" {
+			typeSet[account.Type] = struct{}{}
+		}
+	}
+	platforms := make([]string, 0, len(platformSet))
+	for platform := range platformSet {
+		platforms = append(platforms, platform)
+	}
+	types := make([]string, 0, len(typeSet))
+	for accountType := range typeSet {
+		types = append(types, accountType)
+	}
+	sort.Strings(platforms)
+	sort.Strings(types)
+	response.Success(c, gin.H{"platforms": platforms, "types": types})
+}
+
+// GetCredential returns a sensitive credential after route-level step-up auth.
+func (h *AccountHandler) GetCredential(c *gin.Context) {
+	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid account ID")
+		return
+	}
+	key := strings.TrimSpace(c.Param("key"))
+	if key == "" {
+		response.BadRequest(c, "Credential key is required")
+		return
+	}
+	value, err := h.adminService.GetAccountCredential(c.Request.Context(), accountID, key)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"value": value})
 }
 
 // CheckMixedChannel handles checking mixed channel risk for account-group binding.
@@ -1249,6 +1309,51 @@ type TestAccountRequest struct {
 	// ImageDataURL / AudioDataURL are data:<mime>;base64,... payloads.
 	ImageDataURL string `json:"image_data_url"`
 	AudioDataURL string `json:"audio_data_url"`
+}
+
+const accountTestModeExtraKey = "account_test_mode"
+
+type UpdateAccountTestModeRequest struct {
+	Mode string `json:"mode" binding:"required,oneof=default responses compact workspace"`
+}
+
+// UpdateTestMode 保存 OpenAI 或 DeepSeek 账号的模型测试模式。
+func (h *AccountHandler) UpdateTestMode(c *gin.Context) {
+	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || accountID <= 0 {
+		response.BadRequest(c, "保存模型测试模式失败：账号 ID 格式无效，请检查请求路径。技术详情：id must be a positive integer")
+		return
+	}
+	var req UpdateAccountTestModeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "保存模型测试模式失败：测试模式仅支持 default、responses、compact 或 workspace，请重新选择后重试。技术详情："+err.Error())
+		return
+	}
+	account, err := h.adminService.GetAccount(c.Request.Context(), accountID)
+	if err != nil {
+		statusCode, status := infraerrors.ToHTTP(err)
+		response.ErrorWithDetails(c, statusCode, "保存模型测试模式失败：未能读取账号，请确认账号仍存在并刷新后重试。技术详情："+err.Error(), status.Reason, status.Metadata)
+		return
+	}
+	if account == nil || (account.Platform != service.PlatformOpenAI && account.Platform != service.PlatformDeepSeek) {
+		response.BadRequest(c, "保存模型测试模式失败：仅 OpenAI 或 DeepSeek 账号支持该设置，请在支持的平台账号中使用模型测试。")
+		return
+	}
+	if account.Platform == service.PlatformDeepSeek && req.Mode != "default" && req.Mode != "responses" {
+		response.BadRequest(c, "保存模型测试模式失败：DeepSeek 账号仅支持 default 或 responses 模式，请重新选择后重试。技术详情：account platform is deepseek; requested mode is "+req.Mode)
+		return
+	}
+	if err := h.adminService.UpdateAccountExtra(c.Request.Context(), accountID, map[string]any{accountTestModeExtraKey: req.Mode}); err != nil {
+		statusCode, status := infraerrors.ToHTTP(err)
+		response.ErrorWithDetails(c, statusCode, "保存模型测试模式失败：账号配置未写入，请检查数据库连接或稍后重试。技术详情："+err.Error(), status.Reason, status.Metadata)
+		return
+	}
+	updatedAccount, err := h.adminService.GetAccount(c.Request.Context(), accountID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, h.buildAccountResponseWithRuntime(c.Request.Context(), updatedAccount))
 }
 
 type SyncFromCRSRequest struct {
@@ -3181,7 +3286,7 @@ func (h *AccountHandler) BatchRefreshTier(c *gin.Context) {
 	accounts := make([]*service.Account, 0)
 
 	if len(req.AccountIDs) == 0 {
-		allAccounts, _, err := h.adminService.ListAccounts(ctx, 1, 10000, "gemini", "oauth", "", "", 0, "", "name", "asc")
+		allAccounts, _, err := h.adminService.ListAccounts(ctx, 1, 10000, "gemini", "oauth", "", "", 0, "", 0, "name", "asc")
 		if err != nil {
 			response.ErrorFrom(c, err)
 			return
