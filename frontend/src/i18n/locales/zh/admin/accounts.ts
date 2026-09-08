@@ -125,7 +125,24 @@ export default {
         window5h: '5 小时',
         windowWeekly: '每周',
         resetSoon: '即将重置',
-        apiKeyHint: '填写对应平台的 API Key。'
+        apiKeyHint: '填写对应平台的 API Key。',
+        balanceProbeTooltip: '查询账号余额',
+        zhipuTeam: {
+          title: '智谱团队版 Coding Plan',
+          organization: '组织 ID',
+          organizationPlaceholder: '输入组织 ID（可选）',
+          project: '项目 ID',
+          projectPlaceholder: '输入项目 ID（可选）',
+          hint: '填写后将使用团队版端点探测额度。',
+          help: {
+            title: '配置说明',
+            step1: '在智谱控制台创建或打开 Coding Plan。',
+            step2: '复制组织 ID 和项目 ID。',
+            step3: '将两个 ID 填入上方字段。',
+            step4: '保存后重新探测账号额度。',
+            example: '示例：organization = org_xxx，project = proj_xxx。'
+          }
+        }
       },
       // Schedulable toggle
       schedulable: '参与调度',
@@ -330,6 +347,7 @@ export default {
       testConnection: '测试连接',
       runTestNow: '立即检测',
       modelTest: '模型测试',
+      testSuccess: '测试成功',
       reAuthorize: '重新授权',
       refreshToken: '刷新令牌',
       noAccountsYet: '暂无账号',

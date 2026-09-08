@@ -137,6 +137,15 @@ export default {
       noGroupTitle: '请先分配分组',
       noGroupDescription:
         '此 API 密钥尚未分配分组，请先在密钥列表中点击分组列进行分配，然后才能查看使用配置。',
+      codexModelCatalog: {
+        title: 'Codex 模型目录',
+        description: '获取 Codex 配置所需的当前模型目录。',
+        download: '下载目录',
+        fetch: '获取目录',
+        retry: '重试',
+        modelsCount: '可用模型：{count} 个',
+        errorDescription: '获取模型目录失败，请检查密钥、分组和网络连接。'
+      },
       openai: {
         description: '将以下配置文件添加到 Codex CLI 配置目录中。',
         authModeTitle: 'Codex 认证模式',
@@ -197,6 +206,11 @@ export default {
         configTomlHint: '请将 config.toml 和 models.json 保存到同一个 .codex 目录，并保留配置中的 ~/.codex/models.json 路径。',
         note: '将 config.toml 和 models.json 保存到 ~/.codex，然后启动 Codex 使用 DeepSeek Responses API。',
         noteWindows: '将 config.toml 和 models.json 保存到 %USERPROFILE%\\.codex，然后启动 Codex 使用 DeepSeek Responses API。'
+      },
+      routedCodex: {
+        description: '通过当前分组将 Codex 请求路由到兼容平台。',
+        note: '请使用生成的配置并确认当前分组已绑定可用账号。',
+        configTomlHint: '请将配置保存到 Codex 配置目录，并使用环境变量提供 API Key。'
       },
       opencode: {
         title: 'OpenCode 配置示例',

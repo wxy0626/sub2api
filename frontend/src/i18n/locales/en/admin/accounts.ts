@@ -125,7 +125,24 @@ export default {
         window5h: '5-hour',
         windowWeekly: 'Weekly',
         resetSoon: 'Resetting soon',
-        apiKeyHint: 'Enter the API key for the selected platform.'
+        apiKeyHint: 'Enter the API key for the selected platform.',
+        balanceProbeTooltip: 'Query account balance',
+        zhipuTeam: {
+          title: 'Zhipu team Coding Plan',
+          organization: 'Organization ID',
+          organizationPlaceholder: 'Enter organization ID (optional)',
+          project: 'Project ID',
+          projectPlaceholder: 'Enter project ID (optional)',
+          hint: 'When filled, the team endpoint is used for quota probes.',
+          help: {
+            title: 'Configuration steps',
+            step1: 'Create or open a Coding Plan in the Zhipu console.',
+            step2: 'Copy the organization ID and project ID.',
+            step3: 'Enter both IDs in the fields above.',
+            step4: 'Save the account and probe its quota again.',
+            example: 'Example: organization = org_xxx, project = proj_xxx.'
+          }
+        }
       },
       setupToken: 'Setup Token',
       apiKey: 'API Key',
@@ -433,6 +450,8 @@ export default {
       },
       testConnection: 'Test Connection',
       runTestNow: 'Model Detection',
+      modelTest: 'Model Test',
+      testSuccess: 'Test succeeded',
       reAuthorize: 'Re-Authorize',
       refreshToken: 'Refresh Token',
       noAccountsYet: 'No accounts yet',
@@ -461,6 +480,7 @@ export default {
         resetStatus: 'Reset Status',
         refreshToken: 'Refresh Token',
         test: 'Batch Test',
+        testSelectionRequired: 'Select at least one account before running a batch test.',
         probeUpstreamBilling: 'Probe Upstream Rate',
         resetStatusSuccess: 'Successfully reset {count} account(s) status',
         refreshTokenSuccess: 'Successfully refreshed {count} account(s) token',
