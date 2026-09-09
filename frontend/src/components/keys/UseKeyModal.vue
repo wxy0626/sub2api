@@ -1286,8 +1286,11 @@ function generateDeepSeekCodexFiles(baseRoot: string, apiKey: string): FileConfi
     default_reasoning_level: 'high',
     supported_reasoning_levels: [
       { effort: 'low', description: 'Fast responses with lighter reasoning' },
+      { effort: 'medium', description: 'Balanced reasoning for most coding tasks' },
       { effort: 'high', description: 'Extra high reasoning depth for complex problems' },
-      { effort: 'max', description: 'Maximum reasoning depth for the hardest problems' }
+      { effort: 'xhigh', description: 'Extra-high reasoning depth for difficult tasks' },
+      { effort: 'max', description: 'Maximum reasoning depth for the hardest problems' },
+      { effort: 'ultra', description: 'Maximum reasoning with automatic task delegation' }
     ],
     shell_type: 'shell_command',
     visibility: 'list',

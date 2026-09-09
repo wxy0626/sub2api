@@ -149,6 +149,12 @@ const (
 	channelCacheDBTimeout = 10 * time.Second
 )
 
+// ChannelCachePubSub 用于跨实例通知渠道缓存失效。
+type ChannelCachePubSub interface {
+	NotifyUpdate(context.Context) error
+	SubscribeUpdates(context.Context, func())
+}
+
 // ChannelService 渠道管理服务
 type ChannelService struct {
 	repo                 ChannelRepository
@@ -163,7 +169,7 @@ type ChannelService struct {
 // NewChannelService 创建渠道服务实例。
 // pricingService 仅供 ListAvailable 在渠道未配置定价时回落到全局 LiteLLM 数据；
 // 计费热路径走独立的 ModelPricingResolver，与此参数无关。可传 nil。
-func NewChannelService(repo ChannelRepository, groupRepo GroupRepository, authCacheInvalidator APIKeyAuthCacheInvalidator, pricingService *PricingService) *ChannelService {
+func NewChannelService(repo ChannelRepository, groupRepo GroupRepository, authCacheInvalidator APIKeyAuthCacheInvalidator, pricingService *PricingService, cachePubSub ...ChannelCachePubSub) *ChannelService {
 	s := &ChannelService{
 		repo:                 repo,
 		groupRepo:            groupRepo,

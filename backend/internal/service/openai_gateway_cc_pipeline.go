@@ -182,7 +182,25 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 	userAgent string,
 	grokCacheIdentity string,
 ) (*http.Response, error) {
-	return s.sendCCUpstreamRequestWithFirstOutputTimeout(ctx, c, account, targetURL, body, stream, bearerToken, userAgent, grokCacheIdentity, nil)
+	return s.sendCCUpstreamRequestWithSessionID(ctx, c, account, targetURL, body, stream, bearerToken, userAgent, grokCacheIdentity, "")
+}
+
+// sendCCUpstreamRequestWithSessionID 在共享 CC 请求管线中额外设置稳定的上游会话头。
+// Responses -> Chat fallback 需要同时传 prompt_cache_key 与 session_id，才能让支持
+// 前缀缓存的 Chat 上游把连续请求识别为同一会话；普通调用保持空值，不改变原有行为。
+func (s *OpenAIGatewayService) sendCCUpstreamRequestWithSessionID(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	targetURL string,
+	body []byte,
+	stream bool,
+	bearerToken string,
+	userAgent string,
+	grokCacheIdentity string,
+	sessionID string,
+) (*http.Response, error) {
+	return s.sendCCUpstreamRequestWithFirstOutputTimeoutAndSessionID(ctx, c, account, targetURL, body, stream, bearerToken, userAgent, grokCacheIdentity, nil, sessionID)
 }
 
 // errOpenAIFirstOutputWatchdogFired 哨兵错误：CC 上游请求在收到可用输出前被首输出
@@ -203,6 +221,22 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequestWithFirstOutputTimeout(
 	userAgent string,
 	grokCacheIdentity string,
 	firstOutput *openAIFirstOutputWatchdog,
+) (*http.Response, error) {
+	return s.sendCCUpstreamRequestWithFirstOutputTimeoutAndSessionID(ctx, c, account, targetURL, body, stream, bearerToken, userAgent, grokCacheIdentity, firstOutput, "")
+}
+
+func (s *OpenAIGatewayService) sendCCUpstreamRequestWithFirstOutputTimeoutAndSessionID(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	targetURL string,
+	body []byte,
+	stream bool,
+	bearerToken string,
+	userAgent string,
+	grokCacheIdentity string,
+	firstOutput *openAIFirstOutputWatchdog,
+	sessionID string,
 ) (*http.Response, error) {
 	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 	if firstOutput != nil {
@@ -251,6 +285,10 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequestWithFirstOutputTimeout(
 	// 使配置值获得除共享传输层强制头之外的最高优先级。
 	account.ApplyHeaderOverrides(upstreamReq.Header)
 	applyOpenCodeSessionHeader(c, account, targetURL, upstreamReq.Header)
+	if trimmedSessionID := strings.TrimSpace(sessionID); trimmedSessionID != "" {
+		// 会话头必须在账号覆写之后设置，避免被固定配置污染缓存会话。
+		upstreamReq.Header.Set("session_id", trimmedSessionID)
+	}
 
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {

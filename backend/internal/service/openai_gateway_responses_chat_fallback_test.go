@@ -5,6 +5,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -50,6 +52,9 @@ func TestForwardResponses_ForceChatCompletionsRoutesNonStreamingToChatCompletion
 	require.Equal(t, HTTPUpstreamProfileOpenAI, HTTPUpstreamProfileFromContext(upstream.lastReq.Context()))
 	require.Equal(t, "hello", gjson.GetBytes(upstream.lastBody, "messages.0.content").String())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "input").Exists())
+	promptCacheKey := gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String()
+	require.NotEmpty(t, promptCacheKey, "兼容 GPT 请求应向 Chat fallback 传递稳定缓存 key")
+	require.Equal(t, generateSessionUUID(promptCacheKey), upstream.lastReq.Header.Get("session_id"), "Chat fallback 必须用缓存 key 固定上游 session_id")
 	require.Equal(t, "response", gjson.Get(rec.Body.String(), "object").String())
 	require.Equal(t, "ok", gjson.Get(rec.Body.String(), "output.0.content.0.text").String())
 	require.Equal(t, 3, result.Usage.InputTokens)
@@ -59,6 +64,39 @@ func TestForwardResponses_ForceChatCompletionsRoutesNonStreamingToChatCompletion
 	require.Equal(t, "priority", *result.ServiceTier)
 	require.Equal(t, "default", result.UpstreamResponseServiceTier)
 	require.False(t, result.Stream)
+}
+
+func TestResolveResponsesFallbackPromptCacheKey_PreservesExplicitAndIsolatesAutoKey(t *testing.T) {
+	account := rawChatCompletionsTestAccount()
+	chatReq := &apicompat.ChatCompletionsRequest{
+		Model: "gpt-6-astra",
+		Messages: []apicompat.ChatMessage{
+			{Role: "user", Content: json.RawMessage("\\\"hello\\\"")},
+		},
+	}
+	responsesReq := &apicompat.ResponsesRequest{Model: "gpt-6-astra"}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Set("api_key", &APIKey{ID: 701})
+
+	key1, auto1 := resolveResponsesFallbackPromptCacheKey(c, account, responsesReq, chatReq, "gpt-6-astra")
+	key2, auto2 := resolveResponsesFallbackPromptCacheKey(c, account, responsesReq, chatReq, "gpt-6-astra")
+	require.True(t, auto1)
+	require.True(t, auto2)
+	require.NotEmpty(t, key1)
+	require.Equal(t, key1, key2, "同一账号、同一稳定前缀必须复用缓存 key")
+
+	c.Set("api_key", &APIKey{ID: 702})
+	keyOtherTenant, autoOtherTenant := resolveResponsesFallbackPromptCacheKey(c, account, responsesReq, chatReq, "gpt-6-astra")
+	require.True(t, autoOtherTenant)
+	require.NotEqual(t, key1, keyOtherTenant, "不同 API Key 不得共享自动生成的缓存 key")
+
+	responsesReq.PromptCacheKey = "client-cache-key"
+	c.Set("api_key", &APIKey{ID: 701})
+	explicit, autoExplicit := resolveResponsesFallbackPromptCacheKey(c, account, responsesReq, chatReq, "gpt-6-astra")
+	require.False(t, autoExplicit)
+	require.Equal(t, "client-cache-key", explicit, "客户端显式 key 必须原样保留")
 }
 
 // Scenario: 第三方无推理模型不收到兼容档位。
@@ -202,6 +240,9 @@ func TestForwardResponses_ForceChatCompletionsRoutesStreamingToChatCompletions(t
 	require.NotNil(t, result)
 	require.Equal(t, "http://upstream.example/v1/chat/completions", upstream.lastReq.URL.String())
 	require.True(t, gjson.GetBytes(upstream.lastBody, "stream_options.include_usage").Bool())
+	promptCacheKey := gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String()
+	require.NotEmpty(t, promptCacheKey, "Astra fallback 必须携带稳定缓存 key")
+	require.Equal(t, generateSessionUUID(promptCacheKey), upstream.lastReq.Header.Get("session_id"), "Astra fallback 必须用缓存 key 固定上游 session_id")
 	require.Contains(t, rec.Body.String(), "event: response.output_text.delta")
 	require.Contains(t, rec.Body.String(), `"delta":"he"`)
 	require.Contains(t, rec.Body.String(), "event: response.completed")

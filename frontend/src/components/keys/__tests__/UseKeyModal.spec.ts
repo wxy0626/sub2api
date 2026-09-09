@@ -408,8 +408,11 @@ describe('UseKeyModal', () => {
     })
     expect(parsedModels.models[0].supported_reasoning_levels.map((level: { effort: string }) => level.effort)).toEqual([
       'low',
+      'medium',
       'high',
-      'max'
+      'xhigh',
+      'max',
+      'ultra'
     ])
     expect(modelsJson).not.toContain('deepseek-v4-pro')
     expect(parsedModels.models.map((model: { slug: string }) => model.slug)).not.toContain('deepseek-chat')

@@ -89,6 +89,21 @@ func TestOpenAIForwardFirstOutputTimeoutIncludesResponseHeaderWait(t *testing.T)
 	}
 }
 
+func TestOpenAIFirstOutputGuardCloseDoesNotCancelActiveStream(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	guarded, guard := newOpenAIFirstOutputHeaderGuard(ctx, func() {}, time.Now().Add(time.Second))
+	guard.close()
+
+	select {
+	case <-guarded.Done():
+		t.Fatal("closing a disarmed first-output guard canceled the active upstream stream")
+	default:
+	}
+	require.False(t, guard.firedFlag())
+}
+
 func TestOpenAINativeFirstOutputTimeoutDisabledPreservesSynchronousStream(t *testing.T) {
 	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{
 		OpenAIFirstOutputTimeoutSeconds: 0,

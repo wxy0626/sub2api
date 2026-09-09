@@ -14,6 +14,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/sjson"
 	"go.uber.org/zap"
 )
 
@@ -71,10 +72,19 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	// 国产模型默认 effort 补充：需要 mappedModel 判定，推迟到 billingModel 算出之后。
 	reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, body, billingModel)
 	chatReq.Model = upstreamModel
+	promptCacheKey, compatPromptCacheInjected := resolveResponsesFallbackPromptCacheKey(c, account, &responsesReq, chatReq, upstreamModel)
 
 	chatBody, err := json.Marshal(chatReq)
 	if err != nil {
 		return nil, fmt.Errorf("marshal chat completions fallback request: %w", err)
+	}
+	if promptCacheKey != "" {
+		// Responses -> Chat fallback 不经过普通 Chat 路径的统一 key 注入边界，
+		// 这里把客户端 key 或兼容路径生成的稳定 key 写入最终出站 body。
+		chatBody, err = sjson.SetBytes(chatBody, "prompt_cache_key", promptCacheKey)
+		if err != nil {
+			return nil, fmt.Errorf("inject prompt cache key: %w", err)
+		}
 	}
 	// 流式注入 stream_options.include_usage 前先过账号感知跳过逻辑：
 	// 部分 astra 中转对该字段直接走坏（挂起+丢内容），见
@@ -106,6 +116,7 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 		zap.String("billing_model", billingModel),
 		zap.String("upstream_model", upstreamModel),
 		zap.Bool("stream", clientStream),
+		zap.Bool("compat_prompt_cache_key_injected", compatPromptCacheInjected),
 	)
 	SetOpsUpstreamModel(c, upstreamModel)
 
@@ -114,7 +125,16 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	if err != nil {
 		return nil, err
 	}
-	resp, err := s.sendCCUpstreamRequest(ctx, c, account, targetURL, chatBody, clientStream, apiKey, account.GetOpenAIUserAgent(), "")
+	var resp *http.Response
+	if promptCacheKey != "" {
+		sessionKey := promptCacheKey
+		if !compatPromptCacheInjected {
+			sessionKey = isolateOpenAIUpstreamSessionID(getAPIKeyIDFromContext(c), codexAccountIdentitySource(c, account), promptCacheKey)
+		}
+		resp, err = s.sendCCUpstreamRequestWithSessionID(ctx, c, account, targetURL, chatBody, clientStream, apiKey, account.GetOpenAIUserAgent(), "", generateSessionUUID(sessionKey))
+	} else {
+		resp, err = s.sendCCUpstreamRequest(ctx, c, account, targetURL, chatBody, clientStream, apiKey, account.GetOpenAIUserAgent(), "")
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -132,6 +152,33 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 		return s.streamChatCompletionsAsResponses(c, resp, account, originalModel, customTools, functionTools, toolSearch, namespaceTools, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
 	}
 	return s.bufferChatCompletionsAsResponses(c, resp, account, originalModel, customTools, functionTools, toolSearch, namespaceTools, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
+}
+
+// resolveResponsesFallbackPromptCacheKey 保留 Responses 客户端显式 key；缺失时仅对
+// OpenAI API Key 的 GPT-5/Astra 兼容请求生成稳定 key。自动生成的 key 按 API Key 隔离，
+// 避免不同租户的相同首轮提示互相复用上游缓存。
+func resolveResponsesFallbackPromptCacheKey(
+	c *gin.Context,
+	account *Account,
+	responsesReq *apicompat.ResponsesRequest,
+	chatReq *apicompat.ChatCompletionsRequest,
+	upstreamModel string,
+) (string, bool) {
+	if responsesReq == nil || chatReq == nil {
+		return "", false
+	}
+
+	promptCacheKey := strings.TrimSpace(responsesReq.PromptCacheKey)
+	autoInjected := false
+	if promptCacheKey == "" && account != nil && account.IsOpenAIApiKey() &&
+		shouldAutoInjectPromptCacheKeyForCompat(upstreamModel) {
+		promptCacheKey = deriveCompatPromptCacheKey(chatReq, upstreamModel)
+		autoInjected = promptCacheKey != ""
+		if autoInjected {
+			promptCacheKey = isolateOpenAISessionID(getAPIKeyIDFromContext(c), promptCacheKey)
+		}
+	}
+	return promptCacheKey, autoInjected
 }
 
 func (s *OpenAIGatewayService) bufferChatCompletionsAsResponses(

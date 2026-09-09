@@ -1205,16 +1205,16 @@ func TestEnsureOpenAIChatStreamUsageForAccountSkipsGLMAndRelayAstraStreamOptions
 	require.NoError(t, err)
 	require.True(t, gjson.GetBytes(body, "stream_options.include_usage").Bool())
 
-	// astra + 非官方端点：跳过注入（该类中转携带 stream_options 会挂起并丢内容）。
+	// astra + 非官方端点：请求 usage，由运行时流保护处理坏响应。
 	body, err = ensureOpenAIChatStreamUsageForAccount([]byte(`{"model":"gpt-6-astra","messages":[],"stream":true}`), relay, "gpt-6-astra")
 	require.NoError(t, err)
-	require.False(t, gjson.GetBytes(body, "stream_options").Exists())
+	require.True(t, gjson.GetBytes(body, "stream_options.include_usage").Bool())
 
-	// astra 变体名（gpt-6 别名 / 路径前缀）同样跳过。
+	// astra 变体名（gpt-6 别名 / 路径前缀）同样请求 usage。
 	for _, model := range []string{"gpt-6", "openai/gpt-6-astra"} {
 		body, err = ensureOpenAIChatStreamUsageForAccount([]byte(`{"model":"`+model+`","messages":[],"stream":true}`), relay, model)
 		require.NoError(t, err)
-		require.False(t, gjson.GetBytes(body, "stream_options").Exists(), "model=%s", model)
+		require.True(t, gjson.GetBytes(body, "stream_options.include_usage").Bool(), "model=%s", model)
 	}
 
 	// astra + 官方端点：官方支持该字段，照常注入保证计费。
@@ -1233,7 +1233,7 @@ func TestShouldSkipCCStreamUsageInjection_AccountVariants(t *testing.T) {
 	t.Parallel()
 
 	astra := "gpt-6-astra"
-	require.True(t, shouldSkipCCStreamUsageInjection(nil, astra), "无账号信息按非官方处理")
+	require.False(t, shouldSkipCCStreamUsageInjection(nil, astra), "无账号信息的 astra 也尝试获取 usage")
 	require.False(t, shouldSkipCCStreamUsageInjection(nil, "gpt-5.4"))
 
 	oauthChatGPT := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"base_url": "https://chatgpt.com/backend-api/codex"}}
@@ -1246,7 +1246,7 @@ func TestShouldSkipCCStreamUsageInjection_AccountVariants(t *testing.T) {
 	require.False(t, shouldSkipCCStreamUsageInjection(grok, astra), "grok 平台不适用 openai 官方判定之外的场景——保持注入")
 
 	cn := &Account{Platform: PlatformDeepseek, Type: AccountTypeAPIKey, Credentials: map[string]any{"base_url": "https://api.deepseek.com"}}
-	require.True(t, shouldSkipCCStreamUsageInjection(cn, astra), "非官方端点 astra 跳过")
+	require.False(t, shouldSkipCCStreamUsageInjection(cn, astra), "非官方端点 astra 也尝试获取 usage")
 }
 
 func TestBufferRawChatCompletions_RejectsOversizedResponse(t *testing.T) {

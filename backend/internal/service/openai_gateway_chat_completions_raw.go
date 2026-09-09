@@ -493,13 +493,8 @@ func ensureOpenAIChatStreamUsage(body []byte) ([]byte, error) {
 
 // ensureOpenAIChatStreamUsageForAccount 为兼容上游选择流式 usage 策略（账号感知）。
 //
-// 已知两类上游对 stream_options.include_usage 不兼容：
-//   - GLM OpenAI 兼容端点（尤其第三方中转）可能返回 422 拒绝该字段；
-//   - GPT-6 Astra 非官方端点（实测 napi.origintask.cn）：携带 stream_options 字段的
-//     流式请求会挂起 30-60s、丢弃全部内容增量且不返回 usage 块
-//     （include_usage=true/false 均复现；官方 api.openai.com 不受影响）。
-//
-// 跳过注入后上游不回 usage 块，该类请求计费记 0——回复可达性优先于计费完整性。
+// GLM OpenAI 兼容端点可能拒绝 stream_options；Astra relay 继续请求 usage，
+// 由流式空响应与截断防护隔离仍不兼容的上游行为。
 func ensureOpenAIChatStreamUsageForAccount(body []byte, account *Account, model string) ([]byte, error) {
 	if shouldSkipCCStreamUsageInjection(account, model) {
 		return body, nil
@@ -512,9 +507,6 @@ func shouldSkipCCStreamUsageInjection(account *Account, model string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(model))
 	if strings.HasPrefix(normalized, "glm-") {
 		return true
-	}
-	if isOpenAIGPT6AstraModel(model) {
-		return !isOpenAIOfficialBaseURL(account)
 	}
 	return false
 }

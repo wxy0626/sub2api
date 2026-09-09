@@ -27,6 +27,8 @@ const (
 	PlatformKimi     = "kimi"
 	PlatformZhipu    = "zhipu"
 	PlatformDeepseek = "deepseek"
+	// PlatformMiniMax 是 MiniMax 国产模型平台标识。
+	PlatformMiniMax = "minimax"
 	// PlatformDeepSeek 保留为旧代码兼容别名。
 	PlatformDeepSeek  = PlatformDeepseek
 	PlatformComposite = "composite"

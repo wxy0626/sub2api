@@ -399,7 +399,6 @@ func (s *OpenAIGatewayService) timeoutFailoverError(
 func (g *openAIFirstOutputHeaderGuard) close() {
 	g.once.Do(func() {
 		g.timer.Stop()
-		g.cancel()
 		g.release()
 	})
 }
