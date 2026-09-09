@@ -288,7 +288,7 @@ func (s *OpenAIGatewayService) SelectAccountForTokenCount(
 // NormalizeOpenAICompatiblePlatform 保留 Grok 与国产 OpenAI 兼容平台，其他平台归一为 OpenAI。
 func NormalizeOpenAICompatiblePlatform(platform string) string {
 	switch platform {
-	case PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek:
+	case PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax:
 		return platform
 	default:
 		return PlatformOpenAI
