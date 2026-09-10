@@ -36,6 +36,30 @@ func TestAstraUltraCatalogPreservesWorkflowMetadata(t *testing.T) {
 	require.Nil(t, model["multi_agent_version"])
 }
 
+func TestAstraIncompleteUpstreamReasoningLevelsKeepLocalHighEffortChoices(t *testing.T) {
+	// OpenAI-compatible upstreams may expose only the first four Astra levels.
+	// The local Codex descriptor remains authoritative for the two higher workflows.
+	reasoning := true
+	account := Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{
+		"base_url":      "https://relay.example/v1",
+		"model_mapping": map[string]any{"public-astra": "gpt-6-astra"},
+	}}
+	account.SetUpstreamModelMetadataSnapshot(UpstreamModelMetadataSnapshot{Models: map[string]UpstreamModelMetadata{
+		"gpt-6-astra": {
+			ID: "gpt-6-astra", Reasoning: &reasoning, DefaultReasoningLevel: "medium",
+			SupportedReasoningLevels: []string{"low", "medium", "high", "xhigh"},
+		},
+	}})
+
+	body, err := buildCodexModelsManifestForAccounts(
+		PlatformOpenAI, []string{"public-astra"}, []Account{account}, nil, nil, true,
+	)
+	require.NoError(t, err)
+	model := decodeCodexManifestModels(t, body)[0]
+	require.Equal(t, []string{"low", "medium", "high", "xhigh", "max", "ultra"}, effortsFromManifestModel(t, model))
+	require.Equal(t, "medium", model["default_reasoning_level"])
+}
+
 func TestAstraUltraCatalogPreservesExplicitWorkflowOverrides(t *testing.T) {
 	account := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
 		Credentials: map[string]any{"base_url": "https://relay.example/v1"}}

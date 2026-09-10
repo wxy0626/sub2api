@@ -356,9 +356,14 @@ func intersectUpstreamModelMetadata(modelID string, candidates []UpstreamModelMe
 func applyUpstreamModelMetadataToCodexDescriptor(
 	descriptor *configuredCodexModelDescriptor,
 	metadata codexModelMetadataOverride,
+	capabilityModelID string,
 ) {
 	if descriptor == nil {
 		return
+	}
+	capabilityModelID = strings.TrimSpace(capabilityModelID)
+	if capabilityModelID == "" {
+		capabilityModelID = descriptor.Slug
 	}
 	if strings.TrimSpace(metadata.DisplayName) != "" {
 		descriptor.DisplayName = strings.TrimSpace(metadata.DisplayName)
@@ -394,6 +399,10 @@ func applyUpstreamModelMetadataToCodexDescriptor(
 					Description: configuredCodexReasoningLevelDescription(level),
 				})
 			}
+			descriptor.SupportedReasoningLevels = repairIncompleteAstraReasoningLevels(
+				capabilityModelID,
+				descriptor.SupportedReasoningLevels,
+			)
 		}
 	}
 	if metadata.inputModalitiesConflict {
@@ -405,6 +414,71 @@ func applyUpstreamModelMetadataToCodexDescriptor(
 		descriptor.ContextWindow = metadata.ContextWindow
 		descriptor.MaxContextWindow = metadata.ContextWindow
 	}
+}
+
+// repairIncompleteAstraReasoningLevels 补齐 Astra 上游快照漏掉的 max/ultra。
+// 只有已包含 low/medium/high/xhigh 的不完整快照才会修复，供应商明确声明的
+// 其他能力集合继续保持原样。
+func repairIncompleteAstraReasoningLevels(
+	modelID string,
+	levels []configuredCodexReasoningLevel,
+) []configuredCodexReasoningLevel {
+	if !isOpenAIGPT6AstraModel(modelID) {
+		return levels
+	}
+
+	currentByEffort := make(map[string]configuredCodexReasoningLevel, len(levels))
+	for _, level := range levels {
+		currentByEffort[level.Effort] = level
+	}
+	for _, effort := range []string{"low", "medium", "high", "xhigh"} {
+		if _, ok := currentByEffort[effort]; !ok {
+			return levels
+		}
+	}
+
+	configured := configuredCodexGPTReasoningLevels(modelID)
+	configuredEfforts := make(map[string]struct{}, len(configured))
+	repaired := make([]configuredCodexReasoningLevel, 0, len(configured)+len(levels))
+	for _, level := range configured {
+		configuredEfforts[level.Effort] = struct{}{}
+		if current, ok := currentByEffort[level.Effort]; ok {
+			repaired = append(repaired, current)
+			continue
+		}
+		repaired = append(repaired, level)
+	}
+	for _, level := range levels {
+		if _, ok := configuredEfforts[level.Effort]; !ok {
+			repaired = append(repaired, level)
+		}
+	}
+	return repaired
+}
+
+// repairIncompleteAstraReasoningLevelsInManifestModel 将同一规则应用到原生上游清单。
+func repairIncompleteAstraReasoningLevelsInManifestModel(
+	model map[string]json.RawMessage,
+	modelID string,
+) bool {
+	if model == nil || !isOpenAIGPT6AstraModel(modelID) {
+		return false
+	}
+	rawLevels, ok := model["supported_reasoning_levels"]
+	if !ok || bytes.Equal(bytes.TrimSpace(rawLevels), []byte("null")) {
+		return false
+	}
+	var levels []configuredCodexReasoningLevel
+	if err := json.Unmarshal(rawLevels, &levels); err != nil {
+		return false
+	}
+	repaired := repairIncompleteAstraReasoningLevels(modelID, levels)
+	encodedLevels, err := json.Marshal(repaired)
+	if err != nil || bytes.Equal(bytes.TrimSpace(rawLevels), encodedLevels) {
+		return false
+	}
+	model["supported_reasoning_levels"] = encodedLevels
+	return true
 }
 
 func configuredCodexReasoningLevelDescription(level string) string {

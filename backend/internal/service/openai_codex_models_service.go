@@ -917,7 +917,7 @@ func buildCodexModelsManifest(
 		descriptor.Slug = modelID
 		descriptor.SupportsSearchTool = searchToolModels[modelID]
 		if metadata, ok := modelMetadata[modelID]; ok {
-			applyUpstreamModelMetadataToCodexDescriptor(&descriptor, metadata)
+			applyUpstreamModelMetadataToCodexDescriptor(&descriptor, metadata, metadataModelID)
 		}
 		if imageInputModels[modelID] {
 			// Apply the capability-derived modality after upstream metadata so
@@ -2224,6 +2224,7 @@ func applySyncedAPIKeyCodexModelMetadata(body []byte, account *Account, overwrit
 		applyUpstreamModelMetadataToCodexDescriptor(
 			&descriptor,
 			codexModelMetadataOverride{UpstreamModelMetadata: metadata},
+			lookupModel,
 		)
 		descriptorBody, err := json.Marshal(descriptor)
 		if err != nil {
@@ -2375,6 +2376,9 @@ func completeAPIKeyCodexModelsManifestMetadata(body []byte, completeAll bool, ac
 				return nil, fmt.Errorf("complete model %q: %w", slug, err)
 			}
 			modelChanged = merged || modelChanged
+		}
+		if repairIncompleteAstraReasoningLevelsInManifestModel(model, capabilityModel) {
+			modelChanged = true
 		}
 		if forceOfficialImage {
 			modalities, err := json.Marshal([]string{"text", "image"})

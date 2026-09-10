@@ -346,7 +346,7 @@ func TestNewConfiguredCodexModelDescriptorUsesProviderMetadataAndSafeFallback(t 
 	require.Equal(t, "none", gpt56.DefaultReasoningSummary)
 
 	gpt56Luna := newConfiguredCodexModelDescriptor("gpt-5.6-luna")
-	require.Equal(t, []string{"low", "medium", "high", "xhigh", "max"}, effortsFromConfiguredCodexLevels(gpt56Luna.SupportedReasoningLevels))
+	require.Equal(t, []string{"low", "medium", "high", "xhigh", "max", "ultra"}, effortsFromConfiguredCodexLevels(gpt56Luna.SupportedReasoningLevels))
 	require.Equal(t, "medium", *gpt56Luna.DefaultReasoningLevel)
 
 	gpt6Astra := newConfiguredCodexModelDescriptor("gpt-6-astra")
@@ -383,7 +383,7 @@ func TestNewConfiguredCodexModelDescriptorUsesProviderMetadataAndSafeFallback(t 
 	require.Equal(t, "GPT-5.5", gpt55.DisplayName)
 	require.NotNil(t, gpt55.DefaultReasoningLevel)
 	require.Equal(t, "medium", *gpt55.DefaultReasoningLevel)
-	require.Equal(t, []string{"low", "medium", "high", "xhigh"}, effortsFromConfiguredCodexLevels(gpt55.SupportedReasoningLevels))
+	require.Equal(t, []string{"low", "medium", "high", "xhigh", "ultra"}, effortsFromConfiguredCodexLevels(gpt55.SupportedReasoningLevels))
 	require.NotContains(t, gpt55.SupportedReasoningLevels, configuredCodexReasoningLevel{Effort: "max"})
 	require.NotNil(t, gpt55.DefaultVerbosity)
 	require.Equal(t, "low", *gpt55.DefaultVerbosity)
@@ -2032,7 +2032,7 @@ func TestConvertOpenAIModelListToCodexManifestUsesCompleteDescriptors(t *testing
 	requireCompleteConfiguredCodexModel(t, models[0], "gpt-5.5")
 	require.Equal(t, "GPT-5.5", models[0]["display_name"])
 	require.Equal(t, "medium", models[0]["default_reasoning_level"])
-	require.Len(t, models[0]["supported_reasoning_levels"], 4)
+	require.Len(t, models[0]["supported_reasoning_levels"], 5)
 }
 
 func TestCompleteAPIKeyCodexModelsManifestForClientPreservesProviderMetadata(t *testing.T) {
@@ -2095,6 +2095,24 @@ func TestCompleteAPIKeyCodexModelsManifestForClientUsesKnownGPTImageFallback(t *
 	require.Equal(t, []any{"text", "image"}, bySlug["gpt-5.6-sol"]["input_modalities"])
 	require.Equal(t, []any{"text"}, bySlug["company-coding-model"]["input_modalities"])
 	require.Equal(t, []any{"text"}, bySlug["gpt-4o"]["input_modalities"])
+}
+
+func TestCompleteAPIKeyCodexModelsManifestForClientRepairsIncompleteAstraLevels(t *testing.T) {
+	account := newCodexModelsAPIKeyTestAccount("https://upstream.example/v1")
+	account.Credentials["model_mapping"] = map[string]any{"public-astra": "gpt-6-astra"}
+	manifest := &OpenAIModelsResponse{Body: []byte(`{"models":[{
+		"slug":"public-astra",
+		"default_reasoning_level":"medium",
+		"supported_reasoning_levels":[
+			{"effort":"low"},{"effort":"medium"},{"effort":"high"},{"effort":"xhigh"}
+		]
+	}]}`)}
+
+	svc := &OpenAIGatewayService{}
+	require.NoError(t, svc.CompleteAPIKeyCodexModelsManifestForClient(manifest, account))
+	model := decodeCodexManifestModels(t, manifest.Body)[0]
+	require.Equal(t, []string{"low", "medium", "high", "xhigh", "max", "ultra"}, effortsFromManifestModel(t, model))
+	require.Equal(t, "medium", model["default_reasoning_level"])
 }
 
 // Scenario: 标准 /models 型号列表优先使用已同步账号能力，再使用本地 descriptor 兜底。
