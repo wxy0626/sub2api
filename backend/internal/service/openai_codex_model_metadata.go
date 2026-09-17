@@ -216,6 +216,22 @@ func groupCodexModelMetadata(
 			CodexToolCapabilities: metadata.CodexToolCapabilities,
 		}}
 	}
+	// 多候选 intersect 会把候选间差异折叠成显式 null（null 会阻止 Codex 客户端
+	// 注入 spawn_agent）。子代理运行时在 Codex 客户端本地执行，与上游无关，
+	// 因此只要本组存在 openai apikey 候选账号，就对 null/缺失默认声明 v1；
+	// 候选里已有的显式字符串配置（v1/v2）保持不变。
+	if platform == PlatformOpenAI {
+		existing, has := metadata.CodexToolCapabilities["multi_agent_version"]
+		if !has || bytes.Equal(bytes.TrimSpace(existing), []byte("null")) {
+			for i := range accounts {
+				account := &accounts[i]
+				if account.Platform == PlatformOpenAI && account.Type == AccountTypeAPIKey {
+					metadata.CodexToolCapabilities["multi_agent_version"] = json.RawMessage(`"v1"`)
+					break
+				}
+			}
+		}
+	}
 	if publicAlias {
 		metadata.DisplayName = modelID
 		metadata.Description = configuredCodexCustomDescription
