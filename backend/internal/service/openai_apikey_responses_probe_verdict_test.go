@@ -97,8 +97,15 @@ func TestProbeOpenAIAPIKeyResponsesSupport_ConclusiveResponsesStillPersist(t *te
 		{
 			name:   "completed_with_function_call",
 			status: http.StatusOK,
-			body:   `{"status":"completed","output":[{"type":"function_call","name":"probe_ping"}]}`,
+			body:   `{"status":"completed","output":[{"type":"function_call","name":"probe_ping","namespace":"functions.collaboration"}]}`,
 			want:   true,
+		},
+		{
+			// 上游自行摊平（缺 namespace 字段）→ Codex 无法路由执行器，判不支持。
+			name:   "completed_flat_function_call",
+			status: http.StatusOK,
+			body:   `{"status":"completed","output":[{"type":"function_call","name":"probe_ping"}]}`,
+			want:   false,
 		},
 		{
 			// 火山方舟 coding/v3 × kimi-k2.6：端点在、跑完了、就是不产出 function_call。
@@ -119,7 +126,7 @@ func TestProbeOpenAIAPIKeyResponsesSupport_ConclusiveResponsesStillPersist(t *te
 			// 响应体没有 status 字段（第三方兼容上游常见）时维持既有行为。
 			name:   "no_status_field",
 			status: http.StatusOK,
-			body:   `{"output":[{"type":"function_call","name":"probe_ping"}]}`,
+			body:   `{"output":[{"type":"function_call","name":"probe_ping","namespace":"functions.collaboration"}]}`,
 			want:   true,
 		},
 		{

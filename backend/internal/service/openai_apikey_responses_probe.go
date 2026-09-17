@@ -30,12 +30,21 @@ const responsesProbeMaxBodyBytes = 256 * 1024
 // 那种响应不能用来判定工具能力,见 responsesProbeVerdictIsConclusive。
 const openaiResponsesProbeMaxOutputTokens = 512
 
+// openaiResponsesProbeNamespace 是探测请求使用的 namespace 容器名，与 Codex
+// 客户端下发协作类工具（spawn_agent 等）时的容器名保持一致。
+const openaiResponsesProbeNamespace = "functions.collaboration"
+
 // openaiResponsesProbePayload 构造探测用的 Responses 请求体。
 //
 // 关键设计:请求携带一个工具并以 tool_choice=required 强制模型调用它。这样
 // 一个真正支持 Responses 工具调用的上游必须在响应里产出 function_call 输出项;
 // 而"端点存在、基础补全可用、但工具调用坏掉"的上游(如火山方舟 coding/v3 ×
 // kimi-k2.6,只回 reasoning、不产出 function_call)会被这一步暴露出来。
+//
+// 工具用 namespace 容器包裹（对齐 Codex 实际下发格式）：能透过 namespace 并在
+// function_call 里原样回传 namespace 字段的上游才适合 Responses 透传；静默丢弃
+// 或自行摊平 namespace 的上游会被判定为不支持，网关改走内建 Chat Completions
+// 桥（由 sub2api 负责摊平与还原）。
 //
 // Stream=false 便于一次性读取 output 数组判定;不带 instructions 以免干扰。
 func openaiResponsesProbePayload(modelID string) []byte {
@@ -54,15 +63,21 @@ func openaiResponsesProbePayload(modelID string) []byte {
 		},
 		"tools": []map[string]any{
 			{
-				"type":        "function",
-				"name":        "probe_ping",
-				"description": "Capability probe. Call to acknowledge.",
-				"parameters": map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"ok": map[string]any{"type": "boolean"},
+				"type": "namespace",
+				"name": openaiResponsesProbeNamespace,
+				"tools": []map[string]any{
+					{
+						"type":        "function",
+						"name":        "probe_ping",
+						"description": "Capability probe. Call to acknowledge.",
+						"parameters": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"ok": map[string]any{"type": "boolean"},
+							},
+							"required": []string{"ok"},
+						},
 					},
-					"required": []string{"ok"},
 				},
 			},
 		},
@@ -317,10 +332,16 @@ func decideResponsesProbeSupport(status int, body []byte) bool {
 	if status == http.StatusUnprocessableEntity && responsesProbeBodyRejectsResponses(body) {
 		return false
 	}
+	// litellm/智谱等上游对 tools 里的 namespace 等专有类型直接 400/422
+	// "type is illegal"。这类响应说明上游会硬拒绝 Codex 的 namespace 容器，
+	// 判为不支持，让网关改走内建 Chat Completions 桥。
+	if (status == http.StatusBadRequest || status == http.StatusUnprocessableEntity) && responsesProbeBodyRejectsToolType(body) {
+		return false
+	}
 	if status < 200 || status >= 300 {
 		return true
 	}
-	return responsesProbeBodyHasFunctionCall(body)
+	return responsesProbeBodyHasNamespaceFunctionCall(body)
 }
 
 // responsesProbeBodyRejectsResponses 判断探测响应正文是否明确表示不支持
@@ -378,6 +399,56 @@ func responsesProbeBodyHasFunctionCall(body []byte) bool {
 	}
 	for _, item := range output.Array() {
 		if strings.TrimSpace(item.Get("type").String()) == "function_call" {
+			return true
+		}
+	}
+	return false
+}
+
+// responsesProbeBodyHasNamespaceFunctionCall 判断 output 里是否存在回传了
+// namespace 字段且与探测声明容器名一致的 function_call 输出项。
+//
+// 仅存在 function_call 不够：Codex 客户端按「namespace+工具名」路由执行器，
+// 上游若静默丢弃 namespace 或自行摊平（回传的 function_call 缺 namespace
+// 字段），子代理等 namespace 工具在 Codex 侧必然 unsupported call。此时应
+// 判定该上游不适合 Responses 透传，改走内建 Chat Completions 桥。
+func responsesProbeBodyHasNamespaceFunctionCall(body []byte) bool {
+	output := gjson.GetBytes(body, "output")
+	if !output.IsArray() {
+		return false
+	}
+	for _, item := range output.Array() {
+		if strings.TrimSpace(item.Get("type").String()) != "function_call" {
+			continue
+		}
+		if strings.TrimSpace(item.Get("namespace").String()) == openaiResponsesProbeNamespace {
+			return true
+		}
+	}
+	return false
+}
+
+// responsesProbeBodyRejectsToolType 判断探测响应正文是否明确拒绝探测使用的
+// namespace 工具类型（例如 litellm/智谱链路的 "tools[N].type:type is illegal"）。
+//
+// 为避免误判无关的参数校验错误，必须同时满足：
+//  1. 正文提到 tool/tools（工具相关错误）；
+//  2. 正文包含 illegal / unsupported / not support 等拒识信号。
+func responsesProbeBodyRejectsToolType(body []byte) bool {
+	msg := strings.ToLower(responsesProbeErrorMessage(body))
+	if msg == "" || (!strings.Contains(msg, "tool") && !strings.Contains(msg, "工具")) {
+		return false
+	}
+	rejectionSignals := []string{
+		"illegal",
+		"unsupported",
+		"not support",
+		"不支持",
+		"unknown type",
+		"invalid type",
+	}
+	for _, sig := range rejectionSignals {
+		if strings.Contains(msg, sig) {
 			return true
 		}
 	}
