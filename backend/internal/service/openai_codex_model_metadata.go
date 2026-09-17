@@ -50,6 +50,17 @@ func accountCodexToolCapabilities(account *Account, modelID string) map[string]j
 	if metadata, ok := account.GetUpstreamModelMetadata(modelID); ok {
 		applyCodexToolCapabilities(capabilities, metadata.CodexToolCapabilities, true)
 	}
+	// Codex 客户端按模型清单里的 multi_agent_version 决定是否注入 spawn_agent。
+	// 官方 luna/astra 等模型清单自带该字段，而自定义中转模型（flash-glm 等）
+	// 生成的清单没有，导致子代理工具永远不声明。子代理运行时在 Codex 客户端
+	// 本地执行，上游只需正确往返 namespace 工具调用（Responses 透传或内建
+	// CC 桥均已处理），因此对所有 OpenAI APIKey 账号的模型默认声明 v1；
+	// overwrite=false 保证账号显式配置与 astra v2 等既有值优于此默认。
+	if account.IsOpenAI() && account.Type == AccountTypeAPIKey {
+		applyCodexToolCapabilities(capabilities, map[string]json.RawMessage{
+			"multi_agent_version": json.RawMessage(`"v1"`),
+		}, false)
+	}
 	if account.IsOpenAI() && shouldForwardOpenAIResponsesViaRawChatCompletions(account) {
 		// This bridge implements client-side tool discovery, even without a native manifest.
 		applyCodexToolCapabilities(capabilities, map[string]json.RawMessage{"supports_search_tool": json.RawMessage("true")}, false)
