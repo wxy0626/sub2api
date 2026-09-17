@@ -197,9 +197,16 @@ func groupCodexModelMetadata(
 		metadata, ok := account.GetUpstreamModelMetadata(lookupModel)
 		if !ok {
 			if explicitTargetsConflict {
+				// 冲突早退也必须携带能力默认：多账号映射到不同上游时，
+				// multi_agent_version 等客户端能力与具体上游无关（子代理
+				// 运行时在 Codex 客户端本地执行），漏掉会让清单里出现
+				// 显式 null，阻止 Codex 注入 spawn_agent。
 				return codexModelMetadataOverride{
 					reasoningConflict:       true,
 					inputModalitiesConflict: true,
+					UpstreamModelMetadata: UpstreamModelMetadata{
+						CodexToolCapabilities: accountCodexToolCapabilities(account, lookupModel),
+					},
 				}, true
 			}
 			missingMetadata = true

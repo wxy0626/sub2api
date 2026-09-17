@@ -33,7 +33,9 @@ func TestAstraUltraCatalogPreservesWorkflowMetadata(t *testing.T) {
 	require.NoError(t, err)
 	model = decodeCodexManifestModels(t, body)[0]
 	require.Nil(t, model["multi_agent_reasoning_effort"], "do not advertise one account's override for all peers")
-	require.Nil(t, model["multi_agent_version"])
+	// multi_agent 运行时在 Codex 客户端本地执行，与上游无关：peer 账号也
+	// 默认声明 v1（见 accountCodexToolCapabilities），不再折叠为 null。
+	require.Equal(t, "v1", model["multi_agent_version"])
 }
 
 func TestAstraIncompleteUpstreamReasoningLevelsKeepLocalHighEffortChoices(t *testing.T) {
