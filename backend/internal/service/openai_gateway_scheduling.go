@@ -1182,6 +1182,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 	// rewriting the durable binding here would make a short burst migrate the
 	// whole conversation to a cache-cold account.
 	stickySpillover := false
+	var stickyWaitAccount *Account
 	if sessionHash != "" {
 		accountID := stickyAccountID
 		if accountID > 0 && !isExcluded(accountID) {
@@ -1217,17 +1218,10 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 							return selection, nil
 						}
 
-						// 粘性账号满载：等待队列未满则原地排队；队列已满才做一次性
-						// 容量溢出（stickySpillover 只对本次请求生效，不迁移持久绑定）。
-						waitingCount, _ := s.concurrencyService.GetAccountWaitingCount(ctx, accountID)
-						if waitingCount < cfg.StickySessionMaxWaiting {
-							return s.newSelectionResult(ctx, account, false, nil, &AccountWaitPlan{
-								AccountID:      accountID,
-								MaxConcurrency: account.Concurrency,
-								Timeout:        cfg.StickySessionWaitTimeout,
-								MaxWaiting:     cfg.StickySessionMaxWaiting,
-							})
-						}
+						// 粘性账号满载时先继续探测同组其他账号，避免把请求
+						// 直接排到已占满的账号上。只有所有候选都抢不到槽位后，
+						// 才使用这个账号生成等待计划。
+						stickyWaitAccount = account
 						stickySpillover = true
 					}
 				}
@@ -1443,6 +1437,20 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 					return selection, nil
 				}
 			}
+		}
+	}
+
+	// 所有候选都未能抢到槽位后，优先保留粘性账号原有的等待语义。
+	// 这一步必须位于 Layer 2 之后，确保存在空闲账号时先完成切号。
+	if stickyWaitAccount != nil {
+		waitingCount, _ := s.concurrencyService.GetAccountWaitingCount(ctx, stickyWaitAccount.ID)
+		if waitingCount < cfg.StickySessionMaxWaiting {
+			return s.newSelectionResult(ctx, stickyWaitAccount, false, nil, &AccountWaitPlan{
+				AccountID:      stickyWaitAccount.ID,
+				MaxConcurrency: stickyWaitAccount.Concurrency,
+				Timeout:        cfg.StickySessionWaitTimeout,
+				MaxWaiting:     cfg.StickySessionMaxWaiting,
+			})
 		}
 	}
 
