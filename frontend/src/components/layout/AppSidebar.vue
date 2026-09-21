@@ -129,50 +129,20 @@
       <!-- Regular User View -->
       <template v-else-if="!appStore.backendModeEnabled">
         <div class="sidebar-section">
-          <template v-for="item in userNavItems" :key="item.path">
-            <template v-if="item.children?.length">
-              <button
-                type="button"
-                class="sidebar-link mb-1 w-full"
-                :class="{ 'sidebar-link-active': isGroupActive(item) && !isGroupExpanded(item), 'sidebar-link-collapsed': sidebarCollapsed }"
-                :title="sidebarCollapsed ? item.label : undefined"
-                @click="handleGroupClick(item)"
-              >
-                <component :is="item.icon" class="h-5 w-5 flex-shrink-0" />
-                <span class="sidebar-label sidebar-label-flex" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">
-                  <span class="min-w-0 truncate">{{ item.label }}</span>
-                  <ChevronDownIcon class="h-4 w-4 flex-shrink-0 transition-transform duration-200" :class="isGroupExpanded(item) ? 'rotate-180' : ''" />
-                </span>
-              </button>
-              <div v-if="!sidebarCollapsed && isGroupExpanded(item)" class="mb-1 ml-4 border-l border-gray-200 pl-2 dark:border-dark-600">
-                <router-link
-                  v-for="child in item.children"
-                  :key="child.path"
-                  :to="child.path"
-                  class="sidebar-link mb-0.5 py-1.5 text-sm"
-                  :class="{ 'sidebar-link-active': route.path === child.path }"
-                  @click="handleMenuItemClick(child.path)"
-                >
-                  <span v-if="child.iconSvg" class="h-4 w-4 flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(child.iconSvg)"></span>
-                  <component v-else :is="child.icon" class="h-4 w-4 flex-shrink-0" />
-                  <span>{{ child.label }}</span>
-                </router-link>
-              </div>
-            </template>
-            <router-link
-              v-else
-              :to="item.path"
-              class="sidebar-link mb-1"
-              :class="{ 'sidebar-link-active': isActive(item.path), 'sidebar-link-collapsed': sidebarCollapsed }"
-              :title="sidebarCollapsed ? item.label : undefined"
-              :data-tour="item.path === '/keys' ? 'sidebar-my-keys' : undefined"
-              @click="handleMenuItemClick(item.path)"
-            >
-              <span v-if="item.iconSvg" class="h-5 w-5 flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
-              <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" />
-              <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
-            </router-link>
-          </template>
+          <router-link
+            v-for="item in userNavItems"
+            :key="item.path"
+            :to="item.path"
+            class="sidebar-link mb-1"
+            :class="{ 'sidebar-link-active': isActive(item.path), 'sidebar-link-collapsed': sidebarCollapsed }"
+            :title="sidebarCollapsed ? item.label : undefined"
+            :data-tour="item.path === '/keys' ? 'sidebar-my-keys' : undefined"
+            @click="handleMenuItemClick(item.path)"
+          >
+            <span v-if="item.iconSvg" class="h-5 w-5 flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
+            <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" />
+            <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
+          </router-link>
         </div>
       </template>
     </nav>
@@ -226,7 +196,6 @@ import VersionBadge from '@/components/common/VersionBadge.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { sanitizeSvg } from '@/utils/sanitize'
 import { sanitizeUrl } from '@/utils/url'
-import { isLocalGatewayUrl } from '@/utils/platformMenu'
 import { FeatureFlags, makeSidebarFlag } from '@/utils/featureFlags'
 import { useBatchImageAccess } from '@/composables/useBatchImageAccess'
 
@@ -636,21 +605,6 @@ const OrderListIcon = {
     )
 }
 
-const GridIcon = {
-  render: () =>
-    h(
-      'svg',
-      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
-      [
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'M3.75 5.25A1.5 1.5 0 015.25 3.75h3.5a1.5 1.5 0 011.5 1.5v3.5a1.5 1.5 0 01-1.5 1.5h-3.5a1.5 1.5 0 01-1.5-1.5v-3.5zm8 0a1.5 1.5 0 011.5-1.5h3.5a1.5 1.5 0 011.5 1.5v3.5a1.5 1.5 0 01-1.5 1.5h-3.5a1.5 1.5 0 01-1.5-1.5v-3.5zm-8 8a1.5 1.5 0 011.5-1.5h3.5a1.5 1.5 0 011.5 1.5v3.5a1.5 1.5 0 01-1.5 1.5h-3.5a1.5 1.5 0 01-1.5-1.5v-3.5zm8 0a1.5 1.5 0 011.5-1.5h3.5a1.5 1.5 0 011.5 1.5v3.5a1.5 1.5 0 01-1.5 1.5h-3.5a1.5 1.5 0 01-1.5-1.5v-3.5z'
-        })
-      ]
-    )
-}
-
 const ChevronDoubleRightIcon = {
   render: () =>
     h(
@@ -754,9 +708,6 @@ function buildSelfNavItems(withDashboard: boolean): NavItem[] {
   if (withDashboard) {
     items.push({ path: '/dashboard', label: t('nav.dashboard'), icon: DashboardIcon })
   }
-  const platformItems = buildPlatformNavItems(customMenuItemsForUser.value)
-  items.push(...platformItems.local)
-  if (platformItems.other.length > 0) items.push(platformItems.otherGroup)
   items.push(
     { path: '/keys', label: t('nav.apiKeys'), icon: KeyIcon },
     { path: '/batch-image', label: t('nav.batchImage'), icon: BatchImageIcon, hideInSimpleMode: true, featureFlag: flagBatchImageAccess },
@@ -769,25 +720,14 @@ function buildSelfNavItems(withDashboard: boolean): NavItem[] {
     { path: '/redeem', label: t('nav.redeem'), icon: GiftIcon, hideInSimpleMode: true },
     { path: '/affiliate', label: t('nav.affiliate'), icon: UsersIcon, hideInSimpleMode: true, featureFlag: flagAffiliate },
     { path: '/profile', label: t('nav.profile'), icon: UserIcon },
+    ...customMenuItemsForUser.value.map((item): NavItem => ({
+      path: `/custom/${item.id}`,
+      label: item.label,
+      icon: null,
+      iconSvg: item.icon_svg,
+    })),
   )
   return items
-}
-
-function customMenuToNavItem(item: (typeof customMenuItemsForUser.value)[number]): NavItem {
-  return { path: `/custom/${item.id}`, label: item.label, icon: null, iconSvg: item.icon_svg }
-}
-
-function buildPlatformNavItems(items: typeof customMenuItemsForUser.value) {
-  const local = items.filter((item) => isLocalGatewayUrl(item.url)).map(customMenuToNavItem)
-  const other = items.filter((item) => !isLocalGatewayUrl(item.url))
-  const otherGroup: NavItem = {
-    path: '/platforms',
-    label: t('nav.morePlatforms'),
-    icon: GridIcon,
-    expandOnly: true,
-    children: other.map(customMenuToNavItem),
-  }
-  return { local, other, otherGroup }
 }
 
 // finalizeNav 合并三重过滤：featureFlag 过滤 + simple 模式过滤。
@@ -885,22 +825,22 @@ const adminNavItems = computed((): NavItem[] => {
   ]
 
   const visible = applyFeatureFlags(baseItems)
-  const platformItems = buildPlatformNavItems(customMenuItemsForAdmin.value)
-  const dashboardIndex = visible.findIndex((item) => item.path === '/admin/dashboard')
-  if (dashboardIndex >= 0) {
-    visible.splice(dashboardIndex + 1, 0, ...platformItems.local)
-    if (platformItems.other.length > 0) visible.splice(dashboardIndex + 1 + platformItems.local.length, 0, platformItems.otherGroup)
-  }
 
   // 简单模式下，在系统设置前插入 API密钥
   if (authStore.isSimpleMode) {
     const filtered = visible.filter(item => !item.hideInSimpleMode)
     filtered.push({ path: '/keys', label: t('nav.apiKeys'), icon: KeyIcon })
     filtered.push({ path: '/admin/settings', label: t('nav.settings'), icon: CogIcon })
+    for (const cm of customMenuItemsForAdmin.value) {
+      filtered.push({ path: `/custom/${cm.id}`, label: cm.label, icon: null, iconSvg: cm.icon_svg })
+    }
     return filtered
   }
 
   visible.push({ path: '/admin/settings', label: t('nav.settings'), icon: CogIcon })
+  for (const cm of customMenuItemsForAdmin.value) {
+    visible.push({ path: `/custom/${cm.id}`, label: cm.label, icon: null, iconSvg: cm.icon_svg })
+  }
   return visible
 })
 
