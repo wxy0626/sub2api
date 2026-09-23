@@ -37,6 +37,10 @@ var (
 	// declarations (custom, namespace, web_search, or tool_search entries)
 	// that only a native OpenAI Responses route can serve."
 	openAIResponsesNativeToolsMessagePattern = regexp.MustCompile(`(?i)native\s+responses\s+tool\s+declarations`)
+	// OpenRouter 等上游不声明 unsupported_parameter，而是直接拒绝服务端工具：
+	// `Server tool "openrouter:tool_search", "openrouter:web_search" failed: invalid request (400)`。
+	// 命中即证明该上游只接受 function 工具，应与上面的 native 工具拒绝走同一剥离重试。
+	openAIResponsesServerToolFailedMessagePattern = regexp.MustCompile(`(?i)server\s+tool\b[^\n]*\bfailed\b[^\n]*\binvalid\s+request\b`)
 )
 
 type openAIResponsesRejectedFieldRetryState struct {
@@ -140,11 +144,14 @@ func normalizeOpenAIResponsesRejectedFieldRetryBody(statusCode int, body, respon
 			return retryBody, "tool parameter root type rejection", true, nil
 		}
 	}
-	// 部分兼容上游（如 platform.experientiallabs.ai）不支持 Responses 原生工具
-	// 声明（web_search 等服务端工具；custom/tool_search/namespace 已被透传适配
-	// 转为 function），报 param=tools + unsupported_parameter。剥离全部非
-	// function 工具条目后重试——function 是各家上游的最小公分母。
-	if code == "unsupported_parameter" && (param == "tools" || openAIResponsesNativeToolsMessagePattern.MatchString(message)) {
+	// 部分兼容上游不支持 Responses 原生工具声明（web_search 等服务端工具；
+	// custom/tool_search/namespace 已被透传适配转为 function）：
+	//   - platform.experientiallabs.ai 报 param=tools + unsupported_parameter
+	//   - OpenRouter 报 `Server tool "openrouter:web_search" failed: invalid request`
+	// 任一种都证明该上游只接受 function 工具，剥离全部非 function 条目后重试——
+	// function 是各家上游的最小公分母。
+	if (code == "unsupported_parameter" && (param == "tools" || openAIResponsesNativeToolsMessagePattern.MatchString(message))) ||
+		openAIResponsesServerToolFailedMessagePattern.MatchString(message) {
 		return stripOpenAIResponsesUnsupportedServerTools(body)
 	}
 	// 同类上游也不接受 message content 的字符串简写（官方 API 允许），报

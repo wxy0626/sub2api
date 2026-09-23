@@ -850,3 +850,21 @@ func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyDoesNotStripToolsOnUnknow
 	require.NoError(t, err)
 	require.False(t, changed)
 }
+
+// OpenRouter 不返回 unsupported_parameter，而是直接拒绝服务端工具（如
+// `Server tool "openrouter:web_search" failed: invalid request`）。命中该文案
+// 同样证明上游只接受 function 工具，应走同一剥离重试路径。
+func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyStripsServerToolFailedRejection(t *testing.T) {
+	body := []byte(`{"model":"flash","tools":[{"type":"web_search"},{"type":"function","name":"exec","parameters":{"type":"object"}}]}`)
+	responseBody := []byte(`{"error":{"code":"400","message":"Server tool \"openrouter:tool_search\", \"openrouter:web_search\" failed: invalid request (400)","type":"invalid_request_error"}}`)
+
+	retryBody, reason, changed, err := normalizeOpenAIResponsesRejectedFieldRetryBody(http.StatusBadRequest, body, responseBody)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "native responses tools rejection", reason)
+
+	tools := gjson.GetBytes(retryBody, "tools").Array()
+	require.Len(t, tools, 1)
+	require.Equal(t, "function", tools[0].Get("type").String())
+	require.Equal(t, "exec", tools[0].Get("name").String())
+}

@@ -149,6 +149,23 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		body = adaptedBody
 		setOpenAIResponsesClientToolMapping(c, mapping)
 	}
+	if isOpenRouterOpenAIAccount(account) {
+		if needsOpenAIResponsesClientToolAdaptation(body) {
+			adaptedBody, mapping, adaptErr := adaptOpenAIResponsesClientTools(body)
+			if adaptErr != nil {
+				return nil, fmt.Errorf("adapt OpenRouter Responses client tools: %w", adaptErr)
+			}
+			body = adaptedBody
+			setOpenAIResponsesClientToolMapping(c, mapping)
+		}
+		strippedBody, _, stripped, stripErr := stripOpenAIResponsesUnsupportedServerTools(body)
+		if stripErr != nil {
+			return nil, fmt.Errorf("strip OpenRouter unsupported server tools: %w", stripErr)
+		}
+		if stripped {
+			body = strippedBody
+		}
+	}
 
 	originalBody := body
 	requestView := newOpenAIRequestView(body)
