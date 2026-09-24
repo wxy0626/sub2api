@@ -351,6 +351,28 @@ func createTestPayload(modelID string) (map[string]any, error) {
 	}, nil
 }
 
+// resolveAccountTestModelID 将显式传入的测试模型名解析为账号映射后的上游真名。
+// 空值留给平台分支补默认模型；这样测试仍能与生产转发使用同一个模型语义。
+func resolveAccountTestModelID(account *Account, modelID string) string {
+	requestedModel := strings.TrimSpace(modelID)
+	if account == nil || requestedModel == "" {
+		return requestedModel
+	}
+	mappedModel, matched := account.ResolveMappedModel(requestedModel)
+	if matched && strings.TrimSpace(mappedModel) != "" {
+		return strings.TrimSpace(mappedModel)
+	}
+	return requestedModel
+}
+
+// resolveAccountTestModelWithDefault 先补平台默认模型，再统一解析账号映射。
+func resolveAccountTestModelWithDefault(account *Account, modelID, defaultModelID string) string {
+	if strings.TrimSpace(modelID) == "" {
+		return resolveAccountTestModelID(account, defaultModelID)
+	}
+	return resolveAccountTestModelID(account, modelID)
+}
+
 // TestAccountConnection tests an account's connection by sending a test request
 // All account types use full Claude Code client characteristics, only auth header differs
 // modelID is optional - if empty, defaults to claude.DefaultTestModel
@@ -365,7 +387,8 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Account not found")
 	}
-	finishTestUsage := s.startAccountTestUsage(c, account, modelID, mode)
+	// 用量记录使用映射后的模型；请求模型仍交给分支做一次映射，保持与转发一致。
+	finishTestUsage := s.startAccountTestUsage(c, account, resolveAccountTestModelID(account, modelID), mode)
 	defer func() { finishTestUsage(err) }()
 
 	// 统一同步测试结果与调度状态，保证每个账号结束后立即反映在列表和调度器。
@@ -435,11 +458,7 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 }
 
 func (s *AccountTestService) testCNProviderChatCompletionsConnection(c *gin.Context, account *Account, modelID string, prompt string) error {
-	testModelID := strings.TrimSpace(modelID)
-	if testModelID == "" {
-		testModelID = openai.DefaultTestModel
-	}
-	testModelID = account.GetMappedModel(testModelID)
+	testModelID := resolveAccountTestModelWithDefault(account, modelID, openai.DefaultTestModel)
 
 	authToken := strings.TrimSpace(account.GetOpenAIProtocolAPIKey())
 	if authToken == "" {
@@ -457,19 +476,18 @@ func (s *AccountTestService) testCNProviderChatCompletionsConnection(c *gin.Cont
 
 // testDeepSeekAccountConnection 测试 DeepSeek API Key 账号，并按模型选择协议。
 func (s *AccountTestService) testDeepSeekAccountConnection(c *gin.Context, account *Account, modelID string, prompt string, mode string) error {
-	testModelID := strings.TrimSpace(modelID)
-	if testModelID == "" {
-		testModelID = "deepseek-chat"
-		if mode == AccountTestModeResponses {
-			testModelID = DeepSeekResponsesModel
-		}
+	defaultModelID := "deepseek-chat"
+	if mode == AccountTestModeResponses {
+		defaultModelID = DeepSeekResponsesModel
 	}
+	testModelID := resolveAccountTestModelWithDefault(account, modelID, defaultModelID)
 	if mode == AccountTestModeResponses && !strings.EqualFold(testModelID, DeepSeekResponsesModel) {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("DeepSeek 模型 %q 不支持 /responses；只有 %s 支持 Responses，请改用 Chat Completions 或选择 %s。", testModelID, DeepSeekResponsesModel, DeepSeekResponsesModel))
 	}
 	if mode == AccountTestModeResponses {
 		// 只有 deepseek-v4-flash 进入现有的 Responses 诊断流程。
-		return s.testOpenAIAccountConnection(c, account, testModelID, prompt, mode)
+		// 模型已完成一次账号映射，转为内部参数进入 OpenAI 诊断，避免通配符二次映射。
+		return s.testOpenAIAccountConnectionWithResolvedModel(c, account, testModelID, prompt, mode)
 	}
 	if mode == AccountTestModeCompact {
 		return s.sendErrorAndEnd(c, "DeepSeek 不支持 /v1/responses/compact 测试，请使用 Chat Completions 或 deepseek-v4-flash 的 Responses 测试。")
@@ -488,19 +506,14 @@ func (s *AccountTestService) testDeepSeekAccountConnection(c *gin.Context, accou
 	return s.testOpenAIChatCompletionsConnection(c, account, testModelID, prompt, normalizedBaseURL, authToken)
 }
 
-// testClaudeAccountConnection tests an Anthropic Claude account's connection
+// testClaudeAccountConnection tests an Anthropic Claude account's connection.
+// Bedrock / Vertex 分支在各自辅助函数内按渠道语义解析模型，避免这里先行映射后二次改写。
 func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account *Account, modelID string) error {
 	ctx := c.Request.Context()
 
-	// Determine the model to use
-	testModelID := modelID
+	testModelID := strings.TrimSpace(modelID)
 	if testModelID == "" {
 		testModelID = claude.DefaultTestModel
-	}
-
-	// API Key 账号测试连接时也需要应用通配符模型映射。
-	if account.Type == "apikey" {
-		testModelID = account.GetMappedModel(testModelID)
 	}
 
 	// Bedrock accounts use a separate test path
@@ -510,6 +523,8 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 	if account.Type == AccountTypeServiceAccount {
 		return s.testClaudeVertexServiceAccountConnection(c, ctx, account, testModelID)
 	}
+
+	testModelID = resolveAccountTestModelID(account, testModelID)
 
 	// Determine authentication method and API URL
 	var authToken string
@@ -794,30 +809,27 @@ func (s *AccountTestService) testBedrockAccountConnection(c *gin.Context, ctx co
 	return nil
 }
 
-// testOpenAIAccountConnection tests an OpenAI account's connection
+// testOpenAIAccountConnection 测试 OpenAI 账号连接，并在进入协议分支前应用一次模型映射。
 func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account *Account, modelID string, prompt string, mode string) error {
-	ctx := c.Request.Context()
-	mode = normalizeAccountTestMode(mode)
-
 	// 工作区测活固定使用文本模型，确保请求始终走 ChatGPT Codex Responses 链路。
-	if mode == AccountTestModeWorkspace {
+	if normalizeAccountTestMode(mode) == AccountTestModeWorkspace {
 		modelID = openai.DefaultTestModel
 		prompt = ""
 	}
+	testModelID := resolveAccountTestModelWithDefault(account, modelID, openai.DefaultTestModel)
+	return s.testOpenAIAccountConnectionWithResolvedModel(c, account, testModelID, prompt, mode)
+}
 
-	// Default to openai.DefaultTestModel for OpenAI testing
-	testModelID := modelID
-	if testModelID == "" {
-		testModelID = openai.DefaultTestModel
-	}
+// testOpenAIAccountConnectionWithResolvedModel 接收已完成一次账号映射的模型名。
+// 内部重试和 DeepSeek Responses 诊断复用该入口，避免通配符映射被二次应用。
+func (s *AccountTestService) testOpenAIAccountConnectionWithResolvedModel(c *gin.Context, account *Account, testModelID string, prompt string, mode string) error {
+	ctx := c.Request.Context()
+	mode = normalizeAccountTestMode(mode)
 
 	// API Key 只有在用户明确选择 Responses 模式时才进入 Responses 诊断。
 	// default/跟随账号配置固定使用 Chat Completions，不能再被账号历史能力探测
 	// 结果自动切换到 /v1/responses；这对所有 OpenAI 兼容代理都成立。
 	isAPIKeyResponsesDiagnostic := mode == AccountTestModeResponses && account.Type == AccountTypeAPIKey
-	if !isAPIKeyResponsesDiagnostic {
-		testModelID = account.GetMappedModel(testModelID)
-	}
 	if mode == AccountTestModeCompact {
 		return s.testOpenAICompactConnection(c, account, testModelID)
 	}
@@ -1035,7 +1047,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 				return s.sendErrorAndEnd(c, fmt.Sprintf("Agent Identity task recovery failed: %s", err.Error()))
 			}
 			c.Request = c.Request.WithContext(markAgentIdentityTaskRecoveryTried(ctx))
-			return s.testOpenAIAccountConnection(c, account, modelID, prompt, mode)
+			return s.testOpenAIAccountConnectionWithResolvedModel(c, account, testModelID, prompt, mode)
 		}
 		if resp.StatusCode == http.StatusTooManyRequests {
 			s.reconcileOpenAI429State(ctx, account, resp.Header, body)
@@ -2494,21 +2506,7 @@ func (s *AccountTestService) reconcileOpenAI429State(ctx context.Context, accoun
 func (s *AccountTestService) testGeminiAccountConnection(c *gin.Context, account *Account, modelID string, prompt string) error {
 	ctx := c.Request.Context()
 
-	// Determine the model to use
-	testModelID := modelID
-	if testModelID == "" {
-		testModelID = geminicli.DefaultTestModel
-	}
-
-	// For static upstream credentials with model mapping, map the model
-	if account.Type == AccountTypeAPIKey || account.Type == AccountTypeServiceAccount {
-		mapping := account.GetModelMapping()
-		if len(mapping) > 0 {
-			if mappedModel, exists := mapping[testModelID]; exists {
-				testModelID = mappedModel
-			}
-		}
-	}
+	testModelID := resolveAccountTestModelWithDefault(account, modelID, geminicli.DefaultTestModel)
 
 	// Set SSE headers
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
@@ -2572,7 +2570,9 @@ func (s *AccountTestService) testGeminiAccountConnection(c *gin.Context, account
 // APIKey 类型走原生协议（与 gateway_handler 路由一致），OAuth/Upstream 走 CRS 中转。
 func (s *AccountTestService) routeAntigravityTest(c *gin.Context, account *Account, modelID string, prompt string) error {
 	if account.Type == AccountTypeAPIKey {
-		if strings.HasPrefix(modelID, "gemini-") {
+		// 协议路由看映射后的真实模型；请求仍交给分支做一次统一映射。
+		mappedModelID := resolveAccountTestModelID(account, modelID)
+		if strings.HasPrefix(mappedModelID, "gemini-") {
 			return s.testGeminiAccountConnection(c, account, modelID, prompt)
 		}
 		return s.testClaudeAccountConnection(c, account, modelID)
@@ -2585,12 +2585,20 @@ func (s *AccountTestService) routeAntigravityTest(c *gin.Context, account *Accou
 func (s *AccountTestService) testAntigravityAccountConnection(c *gin.Context, account *Account, modelID string) error {
 	ctx := c.Request.Context()
 
-	testModelID := antigravityConnectionTestModel(modelID)
+	testModelID := strings.TrimSpace(modelID)
+	if testModelID == "" {
+		testModelID = defaultAntigravityTestModel
+	}
+	// 事件与用量展示使用映射后的实际模型；请求仍由 TestConnection 只映射一次。
+	actualModelID := mapAntigravityModel(account, testModelID)
+	if actualModelID == "" {
+		actualModelID = testModelID
+	}
 
 	if s.antigravityGatewayService == nil {
 		return s.sendErrorAndEnd(c, "Antigravity gateway service not configured")
 	}
-	beginAccountTestUsageRequest(c, testModelID, "/v1internal:streamGenerateContent")
+	beginAccountTestUsageRequest(c, actualModelID, "/v1internal:streamGenerateContent")
 
 	// Set SSE headers
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
@@ -2600,12 +2608,17 @@ func (s *AccountTestService) testAntigravityAccountConnection(c *gin.Context, ac
 	c.Writer.Flush()
 
 	// Send test_start event
-	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
+	s.sendEvent(c, TestEvent{Type: "test_start", Model: actualModelID})
 
 	// 调用 AntigravityGatewayService.TestConnection（复用协议转换逻辑）
 	result, err := s.antigravityGatewayService.TestConnection(ctx, account, testModelID)
 	if err != nil {
 		return s.sendErrorAndEnd(c, err.Error())
+	}
+	if result.MappedModel != "" {
+		// 保留结果兜底，确保用量记录与网关最终实际发送的模型一致。
+		testModelID = result.MappedModel
+		beginAccountTestUsageRequest(c, testModelID, "/v1internal:streamGenerateContent")
 	}
 	recordAccountTestUsageStatus(c, http.StatusOK)
 

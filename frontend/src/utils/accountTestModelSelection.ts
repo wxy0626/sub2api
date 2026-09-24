@@ -45,6 +45,46 @@ export function collectAccountMappingModelIDs(
     .filter(modelID => modelID.length > 0)
 }
 
+// resolveAccountTestMappedModel 按后端 model_mapping 语义解析测试用的上游真实模型名。
+// 精确映射优先；通配符仅支持末尾 *，多个命中时按最长模式优先、同长度按字典序。
+export function resolveAccountTestMappedModel(
+  modelID: string,
+  modelMapping?: Record<string, unknown> | null
+): string {
+  const requestedModel = modelID.trim()
+  if (!requestedModel || !modelMapping || typeof modelMapping !== 'object') {
+    return requestedModel
+  }
+
+  const exactTarget = modelMapping[requestedModel]
+  if (typeof exactTarget === 'string' && exactTarget.trim()) {
+    return exactTarget.trim()
+  }
+
+  let matchedPattern = ''
+  let matchedTarget = ''
+  for (const [rawPattern, rawTarget] of Object.entries(modelMapping)) {
+    const pattern = rawPattern.trim()
+    const target = typeof rawTarget === 'string' ? rawTarget.trim() : ''
+    if (!pattern || !target) continue
+
+    const matched = pattern.endsWith('*')
+      ? requestedModel.startsWith(pattern.slice(0, -1))
+      : pattern === requestedModel
+    if (!matched) continue
+
+    if (
+      pattern.length > matchedPattern.length ||
+      (pattern.length === matchedPattern.length && pattern < matchedPattern)
+    ) {
+      matchedPattern = pattern
+      matchedTarget = target
+    }
+  }
+
+  return matchedTarget || requestedModel
+}
+
 // 账号连接测试的统一首选模型 ID：可用列表含 Luna 时优先使用。
 const defaultTestModelID = 'gpt-5.6-luna'
 
@@ -74,8 +114,14 @@ export interface AccountTestModelSelection {
 }
 
 // resolveAccountTestModeForModel 统一决定账号测试模型对应的协议，避免弹窗与快速测试分叉。
-export function resolveAccountTestModeForModel(platform: AccountPlatform, modelID: string): AccountTestMode {
-  if (platform === 'deepseek' && modelID.trim().toLowerCase() === 'deepseek-v4-flash') {
+// DeepSeek 的协议能力由映射后的上游模型决定，不能按请求侧别名判断。
+export function resolveAccountTestModeForModel(
+  platform: AccountPlatform,
+  modelID: string,
+  modelMapping?: Record<string, unknown> | null
+): AccountTestMode {
+  const resolvedModelID = resolveAccountTestMappedModel(modelID, modelMapping)
+  if (platform === 'deepseek' && resolvedModelID.toLowerCase() === 'deepseek-v4-flash') {
     return 'responses'
   }
   return 'default'

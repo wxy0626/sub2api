@@ -377,7 +377,7 @@ import { buildApiUrl } from '@/api/client'
 import { ADMIN_UI_REQUEST_HEADER } from '@/api/adminUIRequest'
 import { adminAPI } from '@/api/admin'
 import { normalizeDisplayErrorMessage } from '@/utils/errorMessage'
-import { collectAccountMappingModelIDs, resolveAccountTestModeForModel, resolveAccountTestModelSelection } from '@/utils/accountTestModelSelection'
+import { collectAccountMappingModelIDs, resolveAccountTestMappedModel, resolveAccountTestModeForModel, resolveAccountTestModelSelection } from '@/utils/accountTestModelSelection'
 import type { AccountTestMode } from '@/api/admin/accounts'
 import type { Account, ClaudeModel } from '@/types'
 
@@ -440,6 +440,9 @@ let testModeSaveTask: Promise<void> | null = null
 const isOpenAIAccount = computed(() => props.account?.platform === 'openai')
 const isDeepSeekAccount = computed(() => props.account?.platform === 'deepseek')
 const isGrokAccount = computed(() => props.account?.platform === 'grok')
+const accountModelMapping = computed(
+  () => props.account?.credentials?.model_mapping as Record<string, unknown> | undefined
+)
 const supportsTestMode = computed(() => isOpenAIAccount.value || isDeepSeekAccount.value)
 const grokTestModeOptions = computed(() => [
   { value: 'text', label: t('admin.accounts.grok.testModeText') },
@@ -831,7 +834,8 @@ watch(
 
 watch(selectedModelId, () => {
   // DeepSeek 的 Responses 仅适用于 V4 Flash，切换到普通模型时自动回到 Chat。
-  if (isDeepSeekAccount.value && testMode.value === 'responses' && selectedModelId.value.trim().toLowerCase() !== 'deepseek-v4-flash') {
+  const resolvedModelID = resolveAccountTestMappedModel(selectedModelId.value, accountModelMapping.value)
+  if (isDeepSeekAccount.value && testMode.value === 'responses' && resolvedModelID.toLowerCase() !== 'deepseek-v4-flash') {
     testMode.value = 'default'
   }
   if (supportsImageTest.value && !testPrompt.value.trim()) {
@@ -868,11 +872,19 @@ const loadAvailableModels = async () => {
     selectedModelId.value = selection.modelId
     // 未保存模式的 DeepSeek 账号让 V4 Flash 直接使用 Responses，其余模型使用 Chat。
     if (isDeepSeekAccount.value && !props.account.extra?.account_test_mode) {
-      const defaultMode = resolveAccountTestModeForModel(props.account.platform, selection.modelId)
+      const defaultMode = resolveAccountTestModeForModel(
+        props.account.platform,
+        selection.modelId,
+        accountModelMapping.value
+      )
       testMode.value = defaultMode
       persistedTestMode = defaultMode
     }
-    if (isDeepSeekAccount.value && testMode.value === 'responses' && selection.modelId.trim().toLowerCase() !== 'deepseek-v4-flash') {
+    const resolvedSelectionModelID = resolveAccountTestMappedModel(
+      selection.modelId,
+      accountModelMapping.value
+    )
+    if (isDeepSeekAccount.value && testMode.value === 'responses' && resolvedSelectionModelID.toLowerCase() !== 'deepseek-v4-flash') {
       testMode.value = 'default'
     }
   } catch (error) {

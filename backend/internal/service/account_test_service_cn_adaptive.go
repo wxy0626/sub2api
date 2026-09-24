@@ -21,11 +21,7 @@ const accountTestSuppressCompletionContextKey = "account_test_suppress_completio
 // adaptive CN-provider account. Zhipu uses Chat Completions plus Anthropic;
 // DeepSeek and Kimi additionally use their native Responses endpoints.
 func (s *AccountTestService) testCNProviderAdaptiveConnection(c *gin.Context, account *Account, modelID string, prompt string) error {
-	testModelID := strings.TrimSpace(modelID)
-	if testModelID == "" {
-		testModelID = openai.DefaultTestModel
-	}
-	testModelID = account.GetMappedModel(testModelID)
+	testModelID := resolveAccountTestModelWithDefault(account, modelID, openai.DefaultTestModel)
 
 	authToken := strings.TrimSpace(account.GetOpenAIProtocolAPIKey())
 	if authToken == "" {
@@ -218,11 +214,7 @@ func (s *AccountTestService) doCNProviderAdaptiveRequest(req *http.Request, acco
 func (s *AccountTestService) testCNProviderAnthropicConnection(c *gin.Context, account *Account, modelID string) error {
 	ctx := c.Request.Context()
 
-	testModelID := strings.TrimSpace(modelID)
-	if testModelID == "" {
-		testModelID = claude.DefaultTestModel
-	}
-	testModelID = account.GetMappedModel(testModelID)
+	testModelID := resolveAccountTestModelWithDefault(account, modelID, claude.DefaultTestModel)
 
 	authToken := strings.TrimSpace(account.GetOpenAIProtocolAPIKey())
 	if authToken == "" {

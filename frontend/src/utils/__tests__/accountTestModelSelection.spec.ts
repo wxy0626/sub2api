@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   collectAccountMappingModelIDs,
+  resolveAccountTestMappedModel,
   resolveAccountTestModeForModel,
   resolveAccountTestModelSelection
 } from '@/utils/accountTestModelSelection'
@@ -138,6 +139,20 @@ describe('accountTestModelSelection', () => {
     expect(resolveAccountTestModeForModel('deepseek', 'DeepSeek-V4-Flash')).toBe('responses')
     expect(resolveAccountTestModeForModel('deepseek', 'deepseek-chat')).toBe('default')
     expect(resolveAccountTestModeForModel('openai', 'deepseek-v4-flash')).toBe('default')
+  })
+
+  it('DeepSeek 按映射后的真实模型判断 Responses 协议', () => {
+    expect(
+      resolveAccountTestModeForModel('deepseek', 'flash-alias', {
+        'flash-alias': 'deepseek-v4-flash'
+      })
+    ).toBe('responses')
+    expect(
+      resolveAccountTestMappedModel('flash-preview-2026', {
+        'flash-*': 'deepseek-v4-flash',
+        'flash-preview-*': 'deepseek-v4-pro'
+      })
+    ).toBe('deepseek-v4-pro')
   })
 
   it('OpenAI 账号白名单（model_mapping）中的模型即使未标记 upstream 也全部放行', () => {

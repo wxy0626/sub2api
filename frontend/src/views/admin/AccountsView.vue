@@ -642,7 +642,7 @@ import { buildGrokUsageRefreshKey, buildOpenAIUsageRefreshKey } from '@/utils/ac
 import { formatDateTime, formatRelativeTime } from '@/utils/format'
 import { proxyExpiryBadgeClass, proxyExpiryLabelKey } from '@/utils/proxyExpiry'
 import { extractApiErrorMessage } from '@/utils/apiError'
-import { collectAccountMappingModelIDs, resolveAccountTestModeForModel, resolveAccountTestModelSelection } from '@/utils/accountTestModelSelection'
+import { collectAccountMappingModelIDs, resolveAccountTestMappedModel, resolveAccountTestModeForModel, resolveAccountTestModelSelection } from '@/utils/accountTestModelSelection'
 import type { AccountTestMode } from '@/api/admin/accounts'
 import { sanitizeUrl } from '@/utils/url'
 import { getFloatingPanelPosition } from '@/utils/floatingPanel'
@@ -2321,10 +2321,12 @@ const testAccountWithSelectedModel = async (account: Account | undefined, accoun
 const resolveSavedAccountTestMode = (account: Account, modelID: string): AccountTestMode | undefined => {
   if (account.platform !== 'openai' && account.platform !== 'deepseek') return undefined
   const mode = account.extra?.account_test_mode
+  const modelMapping = account.credentials?.model_mapping as Record<string, unknown> | undefined
   if (account.platform === 'deepseek') {
     if (mode === 'default') return mode
-    if (mode === 'responses' && modelID.trim().toLowerCase() === 'deepseek-v4-flash') return mode
-    return resolveAccountTestModeForModel(account.platform, modelID)
+    const resolvedModelID = resolveAccountTestMappedModel(modelID, modelMapping)
+    if (mode === 'responses' && resolvedModelID.toLowerCase() === 'deepseek-v4-flash') return mode
+    return resolveAccountTestModeForModel(account.platform, modelID, modelMapping)
   }
   return mode === 'responses' || mode === 'compact' || mode === 'workspace' || mode === 'default'
     ? mode

@@ -128,6 +128,31 @@ func TestAccountTestService_AdaptiveDeepSeekAlsoTestsResponsesEndpoint(t *testin
 	require.Contains(t, recorder.Body.String(), "已通过原生 /responses 验证")
 }
 
+// TestAccountTestService_AdaptiveDeepSeekUsesMappedModelForEveryEndpoint 验证
+// 显式测试别名时，Chat、Anthropic、Responses 三条测试链都发送映射后的上游真名。
+func TestAccountTestService_AdaptiveDeepSeekUsesMappedModelForEveryEndpoint(t *testing.T) {
+	account := adaptiveCNAccountTestAccount(321, PlatformDeepseek)
+	account.Credentials["model_mapping"] = map[string]any{
+		"flash-alias": "deepseek-v4-flash",
+	}
+	svc, upstream := adaptiveCNAccountTestService(
+		account,
+		adaptiveCNChatTestResponse(),
+		adaptiveCNAnthropicTestResponse(),
+		adaptiveCNResponsesTestResponse(),
+	)
+	c, recorder := newTestContext()
+
+	err := svc.TestAccountConnection(c, account.ID, "flash-alias", "", AccountTestModeDefault)
+
+	require.NoError(t, err)
+	require.Len(t, upstream.requests, 3)
+	for index := range upstream.requests {
+		require.Equal(t, "deepseek-v4-flash", gjson.GetBytes(upstream.bodies[index], "model").String())
+	}
+	require.Contains(t, recorder.Body.String(), `"type":"test_start","model":"deepseek-v4-flash"`)
+}
+
 func TestAccountTestService_AdaptiveKimiAlsoTestsResponsesEndpoint(t *testing.T) {
 	account := adaptiveCNAccountTestAccount(306, PlatformKimi)
 	svc, upstream := adaptiveCNAccountTestService(
