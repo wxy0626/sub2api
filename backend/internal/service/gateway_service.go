@@ -1409,12 +1409,29 @@ func mixedListingModelAllowed(groupPlatform, model string) bool {
 }
 
 func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64, platform string) []string {
+	models, _ := s.resolveAvailableModels(ctx, groupID, platform)
+	return models
+}
+
+// ResolveAvailableModels 返回分组模型列表，并显式告知调用方是否可以回退到静态默认模型。
+// useStaticFallback=false 表示列表来自显式映射或实时上游目录，即使为空也必须按已确认结果展示，
+// 避免上游失败时伪造静态模型。
+func (s *GatewayService) ResolveAvailableModels(ctx context.Context, groupID *int64, platform string) ([]string, bool) {
+	return s.resolveAvailableModels(ctx, groupID, platform)
+}
+
+func (s *GatewayService) resolveAvailableModels(ctx context.Context, groupID *int64, platform string) ([]string, bool) {
 	cacheKey := modelsListCacheKey(groupID, platform)
 	if s.modelsListCache != nil {
 		if cached, found := s.modelsListCache.Get(cacheKey); found {
-			if models, ok := cached.([]string); ok {
+			switch value := cached.(type) {
+			case cachedModelsList:
 				modelsListCacheHitTotal.Add(1)
-				return cloneStringSlice(models)
+				return cloneStringSlice(value.models), value.useStaticFallback
+			case []string:
+				// 兼容旧缓存值：无法区分 nil/空切片时按已确认结果处理。
+				modelsListCacheHitTotal.Add(1)
+				return cloneStringSlice(value), false
 			}
 		}
 	}
@@ -1430,7 +1447,7 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 	}
 
 	if err != nil || len(accounts) == 0 {
-		return nil
+		return nil, true
 	}
 
 	// Filter by platform if specified. Mixed scheduling (a gemini group routing
@@ -1450,12 +1467,18 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 	modelSet := make(map[string]struct{})
 	// hasAnyMapping 同时表示结果是否已被账号映射或实时目录明确确认，避免动态目录为空时误用静态默认模型。
 	hasAnyMapping := false
+	// hasLiveDiscovery 表示分组包含需要上游实时目录的账号（DeepSeek、Grok API Key）。
+	hasLiveDiscovery := false
+	// liveDiscoveryNoFetcherPlatforms 记录未注入上游目录读取器、因而无法解析实时目录的平台。
+	liveDiscoveryNoFetcherPlatforms := make(map[string]struct{})
 
-	for _, acc := range accounts {
+	for i := range accounts {
+		acc := &accounts[i]
+
 		isGrokAPIKey := acc.Platform == PlatformGrok && acc.Type == AccountTypeAPIKey
 		if isGrokAPIKey {
 			// Grok API Key 的空配置不能调用 GetModelMapping，因为该方法会注入静态默认映射。
-			mapping, hasExplicitMapping := gatewayExplicitModelMapping(&acc)
+			mapping, hasExplicitMapping := gatewayExplicitModelMapping(acc)
 			if hasExplicitMapping {
 				hasAnyMapping = true
 				for model := range mapping {
@@ -1465,10 +1488,13 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 			}
 			if s.upstreamModelsFetcher == nil {
 				// 未注入实时目录读取器时也必须保持空目录，不能用静态 Grok 模型冒充可调用模型。
+				hasLiveDiscovery = true
+				liveDiscoveryNoFetcherPlatforms[acc.Platform] = struct{}{}
 				hasAnyMapping = true
 				continue
 			}
-			models, fetchErr := s.upstreamModelsFetcher.FetchUpstreamSupportedModels(ctx, &acc)
+			hasLiveDiscovery = true
+			models, fetchErr := s.upstreamModelsFetcher.FetchUpstreamSupportedModels(ctx, acc)
 			if fetchErr == nil {
 				for _, model := range models {
 					model = strings.TrimSpace(model)
@@ -1484,6 +1510,12 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 
 		// Grok OAuth、Antigravity 及其他平台继续复用原有隐式默认映射语义。
 		mapping := acc.GetModelMapping()
+		// Passthrough routing accepts models independently of model_mapping, so a
+		// stale mapping on a passthrough account must not narrow the public list.
+		// 跳过该映射，交给下方默认目录补齐。
+		if platform == PlatformOpenAI && acc.IsOpenAIPassthroughEnabled() {
+			mapping = nil
+		}
 		for model := range mapping {
 			// Accounts pulled in through mixed scheduling only contribute the
 			// models that belong to the listing platform (e.g. an antigravity
@@ -1491,12 +1523,14 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 			if platform != "" && acc.Platform != platform && !mixedListingModelAllowed(platform, model) {
 				continue
 			}
-			continue
+			modelSet[model] = struct{}{}
+			hasAnyMapping = true
 		}
 
 		if acc.Platform == PlatformDeepSeek && s.upstreamModelsFetcher != nil {
+			hasLiveDiscovery = true
 			// DeepSeek 空映射表示开放上游目录，按该账号凭据获取真实模型。
-			models, fetchErr := s.upstreamModelsFetcher.FetchUpstreamSupportedModels(ctx, &acc)
+			models, fetchErr := s.upstreamModelsFetcher.FetchUpstreamSupportedModels(ctx, acc)
 			if fetchErr != nil {
 				// 一个账号目录失败不应遮挡同组其他账号的可用模型。
 				continue
@@ -1513,13 +1547,50 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 		}
 	}
 
+	if len(modelSet) == 0 && hasLiveDiscovery {
+		grokStaticCatalogAllowed := false
+		if _, grokUnresolved := liveDiscoveryNoFetcherPlatforms[PlatformGrok]; grokUnresolved {
+			// Grok API Key 需要实时目录但读取器未注入，无法确认上游目录，
+			// 按平台静态目录展示（与只读列表的历史行为一致）。
+			grokStaticCatalogAllowed = true
+		}
+		if len(liveDiscoveryNoFetcherPlatforms) == 0 {
+			// 上游目录读取器已生效但没有可用模型，按已确认的空目录返回，禁止静态回退。
+			if s.modelsListCache != nil {
+				s.modelsListCache.Set(cacheKey, cachedModelsList{models: []string{}}, s.modelsListCacheTTL)
+				modelsListCacheStoreTotal.Add(1)
+			}
+			return []string{}, false
+		}
+		// 只有 DeepSeek 空配置且没有 Grok API Key 时沿用 Claude 兼容静态目录。
+		if _, deepSeekUnresolved := liveDiscoveryNoFetcherPlatforms[PlatformDeepSeek]; deepSeekUnresolved && !grokStaticCatalogAllowed {
+			if s.modelsListCache != nil {
+				s.modelsListCache.Set(cacheKey, cachedModelsList{useStaticFallback: true}, s.modelsListCacheTTL)
+				modelsListCacheStoreTotal.Add(1)
+			}
+			return nil, true
+		}
+		if grokStaticCatalogAllowed {
+			if s.modelsListCache != nil {
+				s.modelsListCache.Set(cacheKey, cachedModelsList{useStaticFallback: true}, s.modelsListCacheTTL)
+				modelsListCacheStoreTotal.Add(1)
+			}
+			return nil, true
+		}
+		if s.modelsListCache != nil {
+			s.modelsListCache.Set(cacheKey, cachedModelsList{models: []string{}}, s.modelsListCacheTTL)
+			modelsListCacheStoreTotal.Add(1)
+		}
+		return []string{}, false
+	}
+
 	// If no account has model_mapping, return nil (use default)
 	if !hasAnyMapping {
 		if s.modelsListCache != nil {
-			s.modelsListCache.Set(cacheKey, []string(nil), s.modelsListCacheTTL)
+			s.modelsListCache.Set(cacheKey, cachedModelsList{useStaticFallback: true}, s.modelsListCacheTTL)
 			modelsListCacheStoreTotal.Add(1)
 		}
-		return nil
+		return nil, true
 	}
 
 	// Convert to slice
@@ -1534,10 +1605,17 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 	}
 
 	if s.modelsListCache != nil {
-		s.modelsListCache.Set(cacheKey, cloneStringSlice(models), s.modelsListCacheTTL)
+		s.modelsListCache.Set(cacheKey, cachedModelsList{models: cloneStringSlice(models)}, s.modelsListCacheTTL)
 		modelsListCacheStoreTotal.Add(1)
 	}
-	return cloneStringSlice(models)
+	return cloneStringSlice(models), false
+}
+
+// cachedModelsList 是 modelsListCache 的值类型，显式保存是否允许静态默认回退，
+// 避免 nil 与空切片在缓存后丢失语义。
+type cachedModelsList struct {
+	models            []string
+	useStaticFallback bool
 }
 
 // gatewayExplicitModelMapping 读取网关模型列表专用的显式 model_mapping。

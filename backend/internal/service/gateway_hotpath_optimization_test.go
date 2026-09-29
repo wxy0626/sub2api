@@ -10,6 +10,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 	gocache "github.com/patrickmn/go-cache"
 	"github.com/stretchr/testify/require"
@@ -647,6 +648,101 @@ func TestGetAvailableModels_ErrorAndGlobalListBranches(t *testing.T) {
 	models := svcOK.GetAvailableModels(context.Background(), nil, "")
 	require.Equal(t, []string{"claude-3-5-sonnet", "gemini-2.5-pro"}, models)
 	require.Equal(t, int64(1), okRepo.listAllCalls.Load())
+}
+
+func TestGetAvailableModels_OpenAIPassthroughUsesDefaultFallback(t *testing.T) {
+	groupID := int64(10)
+
+	tests := []struct {
+		name     string
+		accounts []Account
+		want     []string
+	}{
+		{
+			name: "passthrough only ignores stale mapping",
+			accounts: []Account{
+				{
+					ID:          1,
+					Platform:    PlatformOpenAI,
+					Credentials: map[string]any{"model_mapping": map[string]any{"stale-model": "upstream-model"}},
+					Extra:       map[string]any{"openai_passthrough": true},
+				},
+			},
+			want: nil,
+		},
+		{
+			// The passthrough account serves the default set (its stale mapping is
+			// ignored), while the ordinary account's mapping still reaches the list.
+			name: "passthrough contributes defaults alongside ordinary account mapping",
+			accounts: []Account{
+				{
+					ID:          2,
+					Platform:    PlatformOpenAI,
+					Credentials: map[string]any{"model_mapping": map[string]any{"configured-model": "configured-upstream"}},
+				},
+				{
+					ID:          3,
+					Platform:    PlatformOpenAI,
+					Credentials: map[string]any{"model_mapping": map[string]any{"stale-model": "upstream-model"}},
+					Extra:       map[string]any{"openai_passthrough": true},
+				},
+			},
+			want: dedupeAndSortModelIDs(append([]string{"configured-model"}, openai.DefaultModelIDs()...)),
+		},
+		{
+			name: "ordinary accounts preserve mapped whitelist",
+			accounts: []Account{
+				{
+					ID:          4,
+					Platform:    PlatformOpenAI,
+					Credentials: map[string]any{"model_mapping": map[string]any{"configured-model": "configured-upstream"}},
+				},
+			},
+			want: []string{"configured-model"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &modelsListAccountRepoStub{byGroup: map[int64][]Account{groupID: tt.accounts}}
+			svc := &GatewayService{
+				accountRepo:        repo,
+				modelsListCache:    gocache.New(time.Minute, time.Minute),
+				modelsListCacheTTL: time.Minute,
+			}
+
+			got := svc.GetAvailableModels(context.Background(), &groupID, PlatformOpenAI)
+			require.Equal(t, tt.want, got)
+			require.NotContains(t, got, "stale-model", "passthrough mapping must never reach the public list")
+		})
+	}
+}
+
+func TestGetAvailableModels_GlobalListPreservesMappedModelsWithOpenAIPassthrough(t *testing.T) {
+	groupID := int64(11)
+	repo := &modelsListAccountRepoStub{
+		byGroup: map[int64][]Account{
+			groupID: {
+				{
+					ID:       1,
+					Platform: PlatformOpenAI,
+					Extra:    map[string]any{"openai_passthrough": true},
+				},
+				{
+					ID:          2,
+					Platform:    PlatformAnthropic,
+					Credentials: map[string]any{"model_mapping": map[string]any{"claude-mapped": "claude-upstream"}},
+				},
+			},
+		},
+	}
+	svc := &GatewayService{
+		accountRepo:        repo,
+		modelsListCache:    gocache.New(time.Minute, time.Minute),
+		modelsListCacheTTL: time.Minute,
+	}
+
+	require.Equal(t, []string{"claude-mapped"}, svc.GetAvailableModels(context.Background(), &groupID, ""))
 }
 
 // TestGetAvailableModels_GrokAPIKeyEmptyMappingUsesUpstreamFetcher 锁定 Grok 空 mapping 不被静态默认映射遮蔽。

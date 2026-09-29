@@ -330,6 +330,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		for {
 			selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, sessionKey, reqModel, fs.FailedAccountIDs, "", int64(0)) // Gemini 不使用会话限制
 			if err != nil {
+				if failoverClientGone(c) {
+					reqLog.Info("gateway.account_select_aborted_client_disconnected", zap.Error(err))
+					return
+				}
 				if len(fs.FailedAccountIDs) == 0 {
 					cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, reqModel, reqModel, service.PlatformGemini)
 					if !cls.ModelNotFound {
@@ -660,6 +664,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			)
 			selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), currentAPIKey.GroupID, sessionKey, reqModel, fs.FailedAccountIDs, parsedReq.MetadataUserID, subject.UserID)
 			if err != nil {
+				if failoverClientGone(c) {
+					reqLog.Info("gateway.account_select_aborted_client_disconnected", zap.Error(err))
+					return
+				}
 				if len(fs.FailedAccountIDs) == 0 {
 					cls := classifyNoAccountErrorFromGin(c, h.gatewayService, currentAPIKey, reqModel, reqModel, platform)
 					if !cls.ModelNotFound {
@@ -1144,7 +1152,8 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 		availableModels := h.compositeAvailableModels(c.Request.Context(), groupID)
 		if apiKey != nil && apiKey.Group != nil && apiKey.Group.ModelAllowlistEnabled() {
 			source := availableModels
-			if len(source) == 0 {
+			// 分组已确认没有可调用模型时不再补静态默认，避免展示未经上游确认的模型。
+			if len(source) == 0 && !h.groupHasSchedulableAccounts(c.Request.Context(), groupID) {
 				source = defaultModelIDsForPlatform(service.PlatformComposite)
 			}
 			writeAllowlistedModelsList(c, service.PlatformComposite, apiKey.Group.ModelAllowlist.FilterForListing(source))
@@ -1154,19 +1163,37 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 			writeModelsList(c, service.PlatformComposite, availableModels)
 			return
 		}
+		if h.groupHasSchedulableAccounts(c.Request.Context(), groupID) {
+			writeModelsList(c, service.PlatformComposite, availableModels)
+			return
+		}
 		writeModelsList(c, service.PlatformComposite, defaultModelIDsForPlatform(service.PlatformComposite))
 		return
 	}
 
 	// Get available models from account configurations for the selected group platform.
-	availableModels := h.gatewayService.GetAvailableModels(c.Request.Context(), groupID, platform)
+	availableModels, useStaticFallback := h.gatewayService.ResolveAvailableModels(c.Request.Context(), groupID, platform)
 	if apiKey != nil && apiKey.Group != nil && apiKey.Group.ModelAllowlistEnabled() {
-		source := modelListingSource(platform, availableModels, defaultModelIDsForPlatform(platform))
+		source := modelListingSource(platform, availableModels, defaultModelIDsForPlatform(platform), useStaticFallback)
 		writeAllowlistedModelsList(c, platform, apiKey.Group.ModelAllowlist.FilterForListing(source))
 		return
 	}
 
 	if len(availableModels) > 0 {
+		writeModelsList(c, platform, availableModels)
+		return
+	}
+
+	// DeepSeek、Kimi、智谱、MiniMax、OpenCode 等平台没有独立静态模型目录，
+	// default 分支的 Claude 列表只适用于 Anthropic 兼容客户端，绝不能当作
+	// 这些平台的上游目录。
+	if !hasStaticDefaultModelCatalog(platform) {
+		writeModelsList(c, platform, availableModels)
+		return
+	}
+
+	// 列表已被账号映射或实时上游目录确认（即使为空）时不再补静态默认模型。
+	if !useStaticFallback {
 		writeModelsList(c, platform, availableModels)
 		return
 	}
@@ -1251,15 +1278,27 @@ func (h *GatewayHandler) codexModelIDsForGroup(ctx context.Context, group *servi
 		return fallbackModels
 	}
 
-	availableModels := h.gatewayService.GetAvailableModels(ctx, groupID, platform)
+	availableModels, useStaticFallback := h.gatewayService.ResolveAvailableModels(ctx, groupID, platform)
 	fallbackModels := defaultCodexModelIDsForPlatform(platform)
 	if group.ModelAllowlistEnabled() {
-		return group.ModelAllowlist.FilterForListing(modelListingSource(platform, availableModels, fallbackModels))
+		return group.ModelAllowlist.FilterForListing(modelListingSource(platform, availableModels, fallbackModels, useStaticFallback))
 	}
 	if len(availableModels) > 0 {
 		return availableModels
 	}
+	if !useStaticFallback {
+		return availableModels
+	}
 	return fallbackModels
+}
+
+// groupHasSchedulableAccounts 报告分组是否还有可调度账号，用于判断空白模型列表
+// 是“尚未解析”还是“已确认没有可调用模型”。
+func (h *GatewayHandler) groupHasSchedulableAccounts(ctx context.Context, groupID *int64) bool {
+	if h == nil || h.gatewayService == nil {
+		return false
+	}
+	return len(h.gatewayService.GetSchedulablePlatforms(ctx, groupID)) > 0
 }
 
 func (h *GatewayHandler) compositeAvailableModels(ctx context.Context, groupID *int64) []string {
@@ -1407,16 +1446,30 @@ func writeOpenAIModelsList(c *gin.Context, modelIDs []string) {
 }
 
 // modelListingSource 汇总模型列表过滤的候选来源：账号映射键（availableModels）
-// 与平台默认列表（fallbackModels）。账号映射为空时回落默认列表；Anthropic
-// 平台两者取并集，其余平台以账号映射键为准。
-func modelListingSource(platform string, availableModels, fallbackModels []string) []string {
-	if len(availableModels) == 0 {
+// 与平台默认列表（fallbackModels）。仅当分组未由账号映射或实时目录确认，
+// 或映射为空但仍允许静态默认时回落默认列表；Anthropic 平台两者取并集，
+// 其余平台以账号映射键为准。
+func modelListingSource(platform string, availableModels, fallbackModels []string, useStaticFallback bool) []string {
+	if len(availableModels) == 0 && useStaticFallback {
 		return fallbackModels
 	}
 	if platform == service.PlatformAnthropic {
+		// Anthropic 兼容目录固定包含 Claude 静态默认，映射只做增量。
 		return mergeModelIDs(availableModels, fallbackModels)
 	}
 	return availableModels
+}
+
+// hasStaticDefaultModelCatalog 报告平台是否有独立于 Claude 默认列表的静态模型目录。
+// 国产供应商与多协议网关依赖账号映射或上游实时目录，没有静态目录时不得回落 Claude 列表。
+func hasStaticDefaultModelCatalog(platform string) bool {
+	switch platform {
+	case service.PlatformAnthropic, service.PlatformOpenAI, service.PlatformGemini,
+		service.PlatformAntigravity, service.PlatformGrok, service.PlatformComposite:
+		return true
+	default:
+		return false
+	}
 }
 
 func defaultCodexModelIDsForPlatform(platform string) []string {
@@ -1971,8 +2024,13 @@ func (h *GatewayHandler) handleStreamingAwareErrorWithCode(c *gin.Context, statu
 // Writer 已被写过时（ping 已 flush）走 streamStarted 分支，
 // 让 handleStreamingAwareError 通过 SSE 发协议合规的终止事件，
 // 否则下游收到的就是 silent EOF。
+// 客户端已断开时不补写，响应未提交则标记 499（见 failoverClientGone）。
 func (h *GatewayHandler) ensureForwardErrorResponse(c *gin.Context, streamStarted bool) bool {
 	if c == nil || c.Writer == nil {
+		return false
+	}
+	if c.Request != nil && errors.Is(c.Request.Context().Err(), context.Canceled) {
+		failoverClientGone(c)
 		return false
 	}
 	if service.IsResponseCommitted(c) {
