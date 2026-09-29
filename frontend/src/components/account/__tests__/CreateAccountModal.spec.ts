@@ -227,6 +227,24 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
 
   afterEach(() => vi.useRealTimers())
 
+  it('opts account credentials out of browser password saving', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await selectButtonByText(wrapper, 'API Key')
+
+    const form = wrapper.get('form#create-account-form')
+    expect(form.attributes('autocomplete')).toBe('off')
+    expect(form.attributes('data-form-type')).toBe('other')
+
+    const secretInput = form.get('input[type="password"]')
+    expect(secretInput.attributes('autocomplete')).toBe('new-password')
+    expect(secretInput.attributes('data-1p-ignore')).toBeDefined()
+    expect(secretInput.attributes('data-lpignore')).toBe('true')
+    expect(secretInput.attributes('data-bwignore')).toBe('true')
+    expect(secretInput.attributes('data-form-type')).toBe('other')
+    wrapper.unmount()
+  })
+
   it('defaults to OpenAI and places it first in the platform selector', () => {
     const wrapper = mountModal()
     const platformButtons = wrapper.find('[data-tour="account-form-platform"]').findAll('button')

@@ -11,6 +11,9 @@ set "LOCALPORT=7897"
 set "FORWARD=172.17.0.1:17897:127.0.0.1:7897"
 set "HOST=root@118.31.186.169"
 set "ERR=%LOGDIR%\sub2api-proxy-tunnel.err.log"
+set "OUT=%LOGDIR%\sub2api-proxy-tunnel.out.log"
+:: 系统自带 Windows PowerShell，用于隐藏启动 ssh，避免弹出最小化控制台窗口
+set "SYSPWSH=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
 
 :: 单实例：锁文件存在说明已有守护在跑
 if exist "%LOCK%" exit /b 0
@@ -32,7 +35,8 @@ if not errorlevel 1 (
   goto loop
 )
 call :state connecting "本地 Mihomo 已就绪，正在建立 SSH 反向隧道"
-start "" /min ssh.exe -i "%KEY%" -N -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o TCPKeepAlive=yes -R %FORWARD% %HOST%
+:: start /min 会弹出最小化 ssh 窗口，改用 Start-Process -WindowStyle Hidden（日志落盘便于排查）
+"%SYSPWSH%" -NoProfile -NonInteractive -Command "Start-Process -FilePath 'ssh.exe' -ArgumentList @('-i','%KEY%','-N','-o','BatchMode=yes','-o','ExitOnForwardFailure=yes','-o','ServerAliveInterval=30','-o','ServerAliveCountMax=3','-o','TCPKeepAlive=yes','-R','%FORWARD%','%HOST%') -WindowStyle Hidden -RedirectStandardOutput '%OUT%' -RedirectStandardError '%ERR%'"
 ping -n 1 -w 1500 127.0.0.1 >nul
 wmic process where "name='ssh.exe' and commandline like '%%%FORWARD%%%'" get ProcessId 2>nul | findstr /r "[0-9]" >nul
 if not errorlevel 1 call :state connected "SSH 反向隧道已建立"

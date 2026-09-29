@@ -29,6 +29,9 @@ const (
 	PlatformDeepseek = "deepseek"
 	// PlatformMiniMax 是 MiniMax 国产模型平台标识。
 	PlatformMiniMax = "minimax"
+	// PlatformOpenCodeGo 是 OpenCode 平台（Zen 按量 / Go 订阅）标识。
+	// 值保持 opencode_go，兼容已落库的分组、配额与 Composite 路由。
+	PlatformOpenCodeGo = "opencode_go"
 	// PlatformDeepSeek 保留为旧代码兼容别名。
 	PlatformDeepSeek  = PlatformDeepseek
 	PlatformComposite = "composite"
@@ -38,6 +41,8 @@ const (
 const (
 	AccountModePayG   = "payg"
 	AccountModeCoding = "coding"
+	AccountModeZen    = "zen"
+	AccountModeGo     = "go"
 )
 
 // API protocol constants for Chinese model providers.

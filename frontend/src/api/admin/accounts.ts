@@ -4,6 +4,7 @@
  */
 
 import { apiClient, buildApiUrl } from '../client'
+import type { OpenAIReferralRefreshResult, OpenAIReferralSendResult } from '@/types/openaiReferrals'
 import type {
   Account,
   AccountListItem,

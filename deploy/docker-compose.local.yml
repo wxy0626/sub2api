@@ -268,8 +268,12 @@ services:
         soft: 100000
         hard: 100000
     volumes:
-      # Local directory mapping for easy migration
-      - ./redis_data:/data:Z
+      # 2026-09-13 迁移：原为 bind mount（./redis_data:/data:Z）。
+      # redis 启用了 --appendonly yes + --appendfsync everysec，即每秒 fsync；
+      # bind mount 经 WSL 9P 层写入不可靠，与 postgres 在 2026-08-17 遇到的 WAL
+      # 损坏同源。故改用 Docker named volume（WSL ext4 原生块设备）。
+      # 迁移前数据已备份，详见 outputs/backups/redis_data-20260913-0746。
+      - sub2api-redis-data:/data
     # The command is one quoted script for the inner `sh -c`. Compose keeps
     # the newlines inside the quoted string, so every line needs a trailing
     # `\` — without it, `redis-server` on the first line runs with no flags
@@ -307,3 +311,6 @@ networks:
 volumes:
   sub2api-pgdata:
     name: sub2api-pgdata
+  # 2026-09-13 新增：redis 持久化由 bind mount 迁至 named volume，原因见 redis 服务注释。
+  sub2api-redis-data:
+    name: sub2api-redis-data

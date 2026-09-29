@@ -42,6 +42,8 @@
     <form
       v-if="step === 1"
       id="create-account-form"
+      autocomplete="off"
+      data-form-type="other"
       @submit.prevent="handleSubmit"
       class="space-y-5"
     >
@@ -1136,6 +1138,11 @@
             <input
               v-model="upstreamApiKey"
               :type="secretVisible.upstreamApiKey ? 'text' : 'password'"
+              autocomplete="new-password"
+              data-1p-ignore
+              data-lpignore="true"
+              data-bwignore="true"
+              data-form-type="other"
               required
               class="input w-full pr-10 font-mono"
               placeholder="sk-..."
@@ -1445,6 +1452,11 @@
             <input
               v-model="apiKeyValue"
               :type="secretVisible.apiKey ? 'text' : 'password'"
+              autocomplete="new-password"
+              data-1p-ignore
+              data-lpignore="true"
+              data-bwignore="true"
+              data-form-type="other"
               required
               class="input w-full pr-10 font-mono"
               data-testid="account-api-key-input"
@@ -1938,6 +1950,11 @@
               <input
                 v-model="bedrockSecretAccessKey"
                 :type="secretVisible.bedrockSecretAccessKey ? 'text' : 'password'"
+                autocomplete="new-password"
+                data-1p-ignore
+                data-lpignore="true"
+                data-bwignore="true"
+                data-form-type="other"
                 required
                 class="input w-full pr-10 font-mono"
               />
@@ -1964,6 +1981,11 @@
               <input
                 v-model="bedrockSessionToken"
                 :type="secretVisible.bedrockSessionToken ? 'text' : 'password'"
+                autocomplete="new-password"
+                data-1p-ignore
+                data-lpignore="true"
+                data-bwignore="true"
+                data-form-type="other"
                 class="input w-full pr-10 font-mono"
               />
               <button
@@ -1993,6 +2015,11 @@
             <input
               v-model="bedrockApiKeyValue"
               :type="secretVisible.bedrockApiKey ? 'text' : 'password'"
+              autocomplete="new-password"
+              data-1p-ignore
+              data-lpignore="true"
+              data-bwignore="true"
+              data-form-type="other"
               required
               class="input w-full pr-10 font-mono"
             />
@@ -4010,7 +4037,6 @@ import QuotaLimitCard from '@/components/account/QuotaLimitCard.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import GrokBaseUrlPresets from '@/components/account/GrokBaseUrlPresets.vue'
 import CnBaseUrlPresets from '@/components/account/CnBaseUrlPresets.vue'
-import OpenCodeGoProtocolRulesEditor from '@/components/account/OpenCodeGoProtocolRulesEditor.vue'
 import HeaderOverrideEditor from '@/components/account/HeaderOverrideEditor.vue'
 import { allSelectedGroupsEnableLongContextPricing } from '@/components/account/longContextBilling'
 import {
@@ -4022,12 +4048,16 @@ import {
   cnSupportsNativeResponses,
   defaultCNAdaptiveBaseUrls,
   defaultCNBaseUrl,
+  defaultOpenCodeProtocolRules,
   isHeaderOverrideCapable,
   validateHeaderOverrideRows,
   type CnAccountMode,
   type CnApiProtocol,
   type CnNativeApiProtocol,
-  type HeaderOverrideRow
+  type HeaderOverrideRow,
+  type CnProviderPlatform,
+  type OpenCodeAccountMode,
+  type OpenCodeGoProtocolRule
 } from '@/components/account/credentialsBuilder'
 import {
   formatDateTimeLocalInput,
@@ -4214,6 +4244,11 @@ const adaptiveBaseUrls = ref<Record<CnNativeApiProtocol, string>>({
 const isCNPlatform = computed(
   () => form.platform === 'kimi' || form.platform === 'zhipu' || form.platform === 'deepseek'
 )
+const isOpenCodeGoPlatform = computed(() => form.platform === 'opencode_go')
+const isMultiProtocolPlatform = computed(() => isCNPlatform.value || isOpenCodeGoPlatform.value)
+function currentOpenCodeOrCNMode(): CnAccountMode | OpenCodeAccountMode {
+  return isOpenCodeGoPlatform.value ? openCodeAccountMode.value : accountMode.value
+}
 // CnBaseUrlPresets 的 platform prop 是平台字面量联合类型，模板里不能写
 // `as` 断言（其中的 `|` 会被 eslint 误判为 Vue2 filter 语法），经此 computed 传递。
 const cnPresetPlatform = computed<'kimi' | 'zhipu' | 'deepseek'>(() => {
@@ -4221,10 +4256,6 @@ const cnPresetPlatform = computed<'kimi' | 'zhipu' | 'deepseek'>(() => {
     return form.platform
   }
   return 'kimi'
-})
-const adaptivePresetPlatform = computed<CnProviderPlatform | 'opencode_go'>(() => {
-  if (form.platform === 'opencode_go') return 'opencode_go'
-  return cnPresetPlatform.value
 })
 // 当前平台可选的协议档（responses 仅 deepseek / kimi）。
 const cnProtocolOptions = computed<Array<{ value: CnApiProtocol; labelKey: string }>>(() => {
@@ -4247,8 +4278,13 @@ const cnAdaptiveProtocolOptions = computed<Array<{ value: CnNativeApiProtocol; l
   return opts
 })
 
-function resetAdaptiveBaseUrls() {
-  adaptiveBaseUrls.value = { chat_completions: '', anthropic: '', responses: '' }
+function resetAdaptiveBaseUrls(
+  platform?: CnProviderPlatform | 'opencode_go',
+  mode?: CnAccountMode | OpenCodeAccountMode
+) {
+  adaptiveBaseUrls.value = platform && mode
+    ? defaultCNAdaptiveBaseUrls(platform, mode)
+    : { chat_completions: '', anthropic: '', responses: '' }
 }
 // 当前选中平台的品牌色（选中卡片描边 / 图标底色），与 platformColors 取色一致。
 const cnAccentActiveClass = computed(() => {
@@ -4287,16 +4323,6 @@ function selectCNPlatform(platform: 'kimi' | 'zhipu' | 'deepseek') {
   }
   apiKeyBaseUrl.value = ''
   resetAdaptiveBaseUrls()
-}
-function selectOpenCodeGoPlatform() {
-  form.platform = 'opencode_go'
-  form.type = 'apikey'
-  accountCategory.value = 'apikey'
-  apiProtocol.value = 'adaptive'
-  openCodeAccountMode.value = 'zen'
-  apiKeyBaseUrl.value = defaultCNBaseUrl('opencode_go', openCodeAccountMode.value, 'adaptive')
-  resetAdaptiveBaseUrls('opencode_go', openCodeAccountMode.value)
-  openCodeGoProtocolRules.value = cloneOpenCodeGoProtocolRules(defaultOpenCodeProtocolRules(openCodeAccountMode.value))
 }
 // 账号类型 / 协议变更时同步默认 base url。
 watch(openCodeAccountMode, (mode, previousMode) => {
@@ -5784,13 +5810,18 @@ const handleSubmit = async () => {
   // 国产供应商：账号模式 + 协议 + 对应端点写入凭据；后端按 account_mode 路由
   // 额度/余额探测，按 api_protocol 路由转发端点与格式。注意 CN apikey 走本函数
   // 的通用路径（直接 doCreateAccount），不经过 createAccountAndFinish。
-  if (form.platform === 'kimi' || form.platform === 'zhipu' || form.platform === 'deepseek') {
-    credentials.account_mode = accountMode.value
+  if (
+    form.platform === 'kimi' ||
+    form.platform === 'zhipu' ||
+    form.platform === 'deepseek' ||
+    form.platform === 'opencode_go'
+  ) {
+    credentials.account_mode = currentOpenCodeOrCNMode()
     credentials.api_protocol = apiProtocol.value
     if (apiProtocol.value === 'adaptive') {
       const defaults = defaultCNAdaptiveBaseUrls(
         form.platform,
-        form.platform === 'opencode_go' ? openCodeAccountMode.value : accountMode.value
+        currentOpenCodeOrCNMode()
       )
       const protocolBaseUrls: Record<string, string> = {}
       for (const item of cnAdaptiveProtocolOptions.value) {

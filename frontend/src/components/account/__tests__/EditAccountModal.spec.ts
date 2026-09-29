@@ -338,6 +338,22 @@ describe('EditAccountModal', () => {
 
   afterEach(() => vi.useRealTimers())
 
+  it('opts account credentials out of browser password saving', () => {
+    const wrapper = mountModal()
+
+    const form = wrapper.get('form#edit-account-form')
+    expect(form.attributes('autocomplete')).toBe('off')
+    expect(form.attributes('data-form-type')).toBe('other')
+
+    const secretInput = form.get('input[type="password"]')
+    expect(secretInput.attributes('autocomplete')).toBe('new-password')
+    expect(secretInput.attributes('data-1p-ignore')).toBeDefined()
+    expect(secretInput.attributes('data-lpignore')).toBe('true')
+    expect(secretInput.attributes('data-bwignore')).toBe('true')
+    expect(secretInput.attributes('data-form-type')).toBe('other')
+    wrapper.unmount()
+  })
+
   it('sets expiry presets from now instead of extending the saved expiry', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date('2028-02-29T12:34:00'))

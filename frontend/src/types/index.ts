@@ -1224,6 +1224,11 @@ export interface Account {
       available_count?: number
       credits?: { expires_at?: string }[]
     }
+    codex_credits_snapshot?: {
+      credits: { has_credits: boolean; unlimited: boolean; balance: string | null } | null
+      fetched_at: number
+    }
+    codex_referral_snapshot?: import('./openaiReferrals').OpenAIReferralEligibility | null
     // OpenAI OAuth 自动重置额度配置与运行状态。
     auto_reset_credit_enabled?: boolean
     auto_reset_credit_5h_threshold?: number

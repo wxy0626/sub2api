@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"log/slog"
 	"net/http"
@@ -3232,6 +3233,33 @@ func (h *AccountHandler) SyncUpstreamModels(c *gin.Context) {
 	if h.accountTestService == nil {
 		response.InternalError(c, "Account test service is not configured")
 		return
+	}
+
+	// Use unsaved credentials from the edit form for this sync only.
+	var overrides struct {
+		APIKey  string `json:"api_key"`
+		BaseURL string `json:"base_url"`
+	}
+	if c.Request.Body != nil {
+		if bindErr := c.ShouldBindJSON(&overrides); bindErr != nil && bindErr != io.EOF {
+			response.BadRequest(c, "Invalid upstream model sync parameters: "+bindErr.Error())
+			return
+		}
+	}
+	if strings.TrimSpace(overrides.APIKey) != "" || strings.TrimSpace(overrides.BaseURL) != "" {
+		credentials := make(map[string]any, len(account.Credentials)+2)
+		for key, value := range account.Credentials {
+			credentials[key] = value
+		}
+		if strings.TrimSpace(overrides.APIKey) != "" {
+			credentials["api_key"] = strings.TrimSpace(overrides.APIKey)
+		}
+		if strings.TrimSpace(overrides.BaseURL) != "" {
+			credentials["base_url"] = strings.TrimSpace(overrides.BaseURL)
+		}
+		accountCopy := *account
+		accountCopy.Credentials = credentials
+		account = &accountCopy
 	}
 
 	catalog, err := h.accountTestService.SyncUpstreamModelCatalog(c.Request.Context(), account)

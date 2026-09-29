@@ -181,6 +181,8 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	// 开始后由流式 handler 停表。仅 OpenAI 平台启用（Grok 桥接沿用自身超时策略）。
 	firstOutputTimeout := time.Duration(0)
 	firstOutputEffort := ""
+	reasoningEffort := extractOpenAIReasoningEffortFromBody(upstreamBody, upstreamModel, billingModel, originalModel)
+	reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, upstreamBody, upstreamModel)
 	if account.Platform == PlatformOpenAI {
 		if reasoningEffort != nil {
 			firstOutputEffort = *reasoningEffort

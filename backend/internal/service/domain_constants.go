@@ -49,6 +49,8 @@ const (
 	PlatformDeepseek    = domain.PlatformDeepseek
 	// PlatformMiniMax 是 MiniMax 平台别名，供服务层统一复用。
 	PlatformMiniMax = domain.PlatformMiniMax
+	// PlatformOpenCodeGo 是 OpenCode 平台别名。
+	PlatformOpenCodeGo = domain.PlatformOpenCodeGo
 	// PlatformDeepSeek 保留为旧代码兼容别名。
 	PlatformDeepSeek  = domain.PlatformDeepSeek
 	PlatformComposite = domain.PlatformComposite
@@ -82,6 +84,8 @@ const (
 	DefaultZhipuCodingBaseURL = "https://open.bigmodel.cn/api/coding/paas/v4"
 	DefaultDeepseekBaseURL    = "https://api.deepseek.com"
 	DefaultMiniMaxBaseURL     = "https://api.minimaxi.com/v1"
+	DefaultOpenCodeGoBaseURL  = "https://opencode.ai/zen/go/v1"
+	DefaultOpenCodeZenBaseURL = "https://opencode.ai/zen/v1"
 )
 
 // 国产供应商 Anthropic 协议端点的默认 base_url（上游路径为 {base}/v1/messages）。

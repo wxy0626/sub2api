@@ -129,9 +129,6 @@ const emit = defineEmits(['close', 'success'])
 const { t } = useI18n()
 const appStore = useAppStore()
 
-// 用户平台配额编辑顺序，DeepSeek 与其他平台一样支持独立额度。
-const PLATFORMS: PlatformQuotaPlatform[] = ['anthropic', 'openai', 'gemini', 'antigravity', 'grok', 'deepseek']
-
 interface QuotaRow {
   platform: PlatformQuotaPlatform
   daily_limit_usd: number | null

@@ -14,32 +14,57 @@ set "SGCONF=%ROOT%\.codex\runtime\sub2api-singapore-mihomo.yaml"
 set "CVHOME=%APPDATA%\io.github.clash-verge-rev.clash-verge-rev"
 set "MIHOMO=D:\VPN\Clash Verge\verge-mihomo.exe"
 set "SGPORT=17998"
+:: 后台进程统一用系统自带 Windows PowerShell 隐藏启动，避免依赖 pwsh 是否在 PATH 中
+set "SYSPWSH=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
 
 :: 确保日志目录存在
 if not exist "%LOGDIR%" mkdir "%LOGDIR%"
+if not exist "%SYSPWSH%" (
+  echo [sub2api] 错误：未找到系统自带 Windows PowerShell：%SYSPWSH%。后台进程无法隐藏启动，请修复系统 PowerShell 后重试。
+  call :fail
+  exit /b 1
+)
+
+:: Docker CLI 可能不在 PATH（见 AGENTS.md 记录），显式补上，
+:: 避免把「命令找不到」误判成「引擎未就绪」而走进启动等待流程
+set "DOCKERBIN=C:\Users\Administrator\AppData\Local\Programs\DockerDesktop\resources\bin"
+if exist "%DOCKERBIN%\docker.exe" set "PATH=%DOCKERBIN%;%PATH%"
 
 echo [sub2api] 检查 Docker Desktop 是否已就绪...
 docker info >nul 2>&1
-if errorlevel 1 (
-  echo [sub2api] 未检测到 Docker 引擎，正在启动 Docker Desktop...
-  if exist "%DOCKERAPP%" ( start "" "%DOCKERAPP%" ) else ( echo [sub2api] 错误：未找到 Docker Desktop 程序：%DOCKERAPP% & exit /b 1 )
-  set "N=0"
-  :dockerwait
-  set /a N+=1
-  if %N% gtr 45 (
-    echo [sub2api] 错误：Docker Desktop 在 90 秒内仍未就绪。请手动启动 Docker Desktop 后重试。
-    exit /b 1
-  )
-  echo [sub2api] 等待 Docker 引擎就绪 (%N%/45)...
-  ping -n 1 -w 2000 127.0.0.1 >nul
-  docker info >nul 2>&1
-  if errorlevel 1 goto dockerwait
+if not errorlevel 1 goto docker_ready
+
+echo [sub2api] 未检测到 Docker 引擎，正在启动 Docker Desktop...
+if not exist "%DOCKERAPP%" (
+  echo [sub2api] 错误：未找到 Docker Desktop 程序：%DOCKERAPP%
+  call :fail
+  exit /b 1
 )
+start "" "%DOCKERAPP%"
+
+:: 等待引擎就绪：必须用 goto 循环、且计数变量用 !N!（延迟展开）。
+:: 教训：放进括号块内用 %N% 会在「解析期」展开为空，cmd 直接报
+:: "45 was unexpected at this time" 终止脚本 —— 且无论 Docker 是否已启动都会炸。
+set "N=0"
+:dockerwait
+set /a N+=1
+if !N! gtr 45 (
+  echo [sub2api] 错误：Docker Desktop 在 90 秒内仍未就绪。请手动启动 Docker Desktop 后重试。
+  call :fail
+  exit /b 1
+)
+echo [sub2api] 等待 Docker 引擎就绪 (!N!/45)...
+ping -n 1 -w 2000 127.0.0.1 >nul
+docker info >nul 2>&1
+if errorlevel 1 goto dockerwait
+
+:docker_ready
 
 echo [sub2api] 检查本地定制镜像是否存在...
 call :getenv SUB2API_IMAGE IMG
 if not defined IMG (
   echo [sub2api] 错误：未在 %DEPLOY%\.env 中找到 SUB2API_IMAGE，无法继续。
+  call :fail
   exit /b 1
 )
 echo !IMG! | findstr /R "/" >nul
@@ -47,6 +72,7 @@ if errorlevel 1 (
   docker image inspect !IMG! >nul 2>&1
   if errorlevel 1 (
     echo [sub2api] 错误：本地定制镜像不存在：!IMG!。请先在项目根目录执行 "docker build -t !IMG! ." 生成该标签，或在 .env 中将 SUB2API_IMAGE 改为已存在的镜像标签。脚本不会自动替换镜像，以免启动未经确认的代码版本。
+    call :fail
     exit /b 1
   )
 )
@@ -57,6 +83,7 @@ docker compose --env-file .env -f docker-compose.local.yml up -d
 if errorlevel 1 (
   echo [sub2api] 错误：容器启动失败，Docker Compose 退出码 %ERRORLEVEL%。请执行 "docker compose --env-file .env -f docker-compose.local.yml ps" 与 "docker compose --env-file .env -f docker-compose.local.yml logs --tail=100 sub2api" 查看具体原因。
   popd
+  call :fail
   exit /b 1
 )
 popd
@@ -65,7 +92,10 @@ echo [sub2api] 启动日本 SSH 反向隧道守护（后台）...
 call :startguard jp
 echo [sub2api] 启动新加坡专用代理 Mihomo（后台）...
 call :startsgproxy
-if errorlevel 1 exit /b 1
+if errorlevel 1 (
+  call :fail
+  exit /b 1
+)
 echo [sub2api] 启动新加坡 SSH 反向隧道守护（后台）...
 call :startguard sg
 
@@ -73,6 +103,7 @@ echo [sub2api] 登记本地新加坡代理到账号列表...
 call :register_sg_proxy
 if errorlevel 1 (
   echo [sub2api] 错误：新加坡专用代理与 SSH 隧道已建立，但未能安全登记到本地账号代理列表。请查看 %LOGDIR%\sub2api-local-singapore-proxy-registration.log 与容器代理探测日志。
+  call :fail
   exit /b 1
 )
 
@@ -82,6 +113,7 @@ set "N=0"
 set /a N+=1
 if %N% gtr 30 (
   echo [sub2api] 错误：端口 8080 在 60 秒内未通过健康检查，服务可能未正常启动。
+  call :fail
   exit /b 1
 )
 curl.exe -s -o NUL -w "%%{http_code}" %HEALTH% 2>nul | findstr /R "^200$" >nul
@@ -122,7 +154,8 @@ set "FORWARD=172.17.0.1:17898:127.0.0.1:17998"
 if exist "!LOCK!" del /f /q "!LOCK!" >nul 2>&1
 wmic process where "name='ssh.exe' and commandline like '%%!FORWARD!%%'" call terminate >nul 2>&1
 ping -n 1 -w 1000 127.0.0.1 >nul
-start "sub2api-tunnel-!G!" /min cmd /c "!TOOLS!\sub2api-tunnel-!G!.cmd"
+:: start /min 会留下常驻的最小化控制台窗口，改用 Start-Process -WindowStyle Hidden 无窗口后台运行
+"%SYSPWSH%" -NoProfile -NonInteractive -Command "Start-Process -FilePath 'cmd.exe' -ArgumentList '/c','!TOOLS!\sub2api-tunnel-!G!.cmd' -WindowStyle Hidden"
 goto :eof
 
 :: ===== 子程序：启动新加坡专用 Mihomo 代理（若未运行则启动）=====
@@ -140,8 +173,9 @@ if not exist "%MIHOMO%" (
   echo [sub2api] 错误：未找到 Mihomo 程序 %MIHOMO%。请确认 Clash Verge 安装目录。
   exit /b 1
 )
-echo [sub2api] 启动新加坡专用 Mihomo 实例...
-start "" /min "%MIHOMO%" -d "%CVHOME%" -f "%SGCONF%"
+echo [sub2api] 启动新加坡专用 Mihomo 实例（无窗口后台运行）...
+:: start /min 会让 mihomo 控制台窗口常驻，改用 Start-Process -WindowStyle Hidden，并把日志写入 .codex\log
+"%SYSPWSH%" -NoProfile -NonInteractive -Command "Start-Process -FilePath '%MIHOMO%' -ArgumentList @('-d','%CVHOME%','-f','%SGCONF%') -WindowStyle Hidden -RedirectStandardOutput '%LOGDIR%\sub2api-singapore-mihomo.out.log' -RedirectStandardError '%LOGDIR%\sub2api-singapore-mihomo.err.log'"
 set "N=0"
 :sgwait
 set /a N+=1
@@ -211,4 +245,11 @@ if "%OK%"=="0" (
 
 echo %DATE% %TIME% 本地新加坡代理已可选择：新加坡家宽12-Mihomo（容器探测通过）。 >> "%REGLOG%"
 echo [sub2api] 本地新加坡代理已登记成功。
+goto :eof
+
+:: ===== 子程序：失败时暂停，避免双击运行时窗口一闪而过、看不到失败原因 =====
+:fail
+echo.
+echo [sub2api] 启动失败，按任意键关闭窗口...
+pause >nul
 goto :eof

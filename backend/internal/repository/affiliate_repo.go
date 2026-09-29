@@ -1135,13 +1135,6 @@ func nullableFloat64Ptr(v sql.NullFloat64) *float64 {
 	return &v.Float64
 }
 
-func nullableInt64Ptr(v sql.NullInt64) *int64 {
-	if !v.Valid {
-		return nil
-	}
-	return &v.Int64
-}
-
 func generateAffiliateCode() (string, error) {
 	buf := make([]byte, affiliateCodeLength)
 	if _, err := rand.Read(buf); err != nil {

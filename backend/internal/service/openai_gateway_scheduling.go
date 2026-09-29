@@ -66,6 +66,9 @@ func explicitOpenAISessionID(c *gin.Context, body []byte) string {
 		return ""
 	}
 
+	if sessionID := explicitCodexThreadSessionID(c, body); sessionID != "" {
+		return sessionID
+	}
 	sessionID := explicitOpenAIHeaderSessionID(c)
 	if sessionID == "" && len(body) > 0 {
 		sessionID = strings.TrimSpace(openAIRequestPayloadView(body).Get("prompt_cache_key").String())
@@ -102,6 +105,12 @@ func explicitOpenAIRequestSessionID(c *gin.Context, body []byte) string {
 		return ""
 	}
 
+	// Codex 子线程通常继承父会话的 session-id/prompt_cache_key，但每个
+	// thread_id 才是独立的工作会话。优先使用 thread_id，避免大量并行
+	// 子代理被粘到同一个账号后一起等待该账号的并发槽位。
+	if sessionID := explicitCodexThreadSessionID(c, body); sessionID != "" {
+		return sessionID
+	}
 	sessionID := explicitOpenAIHeaderSessionID(c)
 	if sessionID == "" && isGrokRequestContext(c) {
 		sessionID = strings.TrimSpace(c.GetHeader(grokConversationIDHeader))
@@ -113,6 +122,57 @@ func explicitOpenAIRequestSessionID(c *gin.Context, body []byte) string {
 		sessionID = grokPreviousResponseSessionSeed(body)
 	}
 	return sessionID
+}
+
+// explicitCodexThreadSessionID 提取 Codex 请求的独立 thread_id。
+//
+// Codex 多 Agent 请求可能同时携带父会话的 session-id、prompt_cache_key，
+// 以及当前子线程的 thread_id。路由粘性必须使用后者，否则并行子代理会
+// 错误共享一个账号的并发槽位。返回值带命名空间，避免与普通客户端的
+// session-id 发生哈希碰撞。
+func explicitCodexThreadSessionID(c *gin.Context, body []byte) string {
+	var threadID string
+	if c != nil {
+		for _, header := range []string{"thread-id", "x-codex-thread-id"} {
+			if candidate := strings.TrimSpace(c.GetHeader(header)); candidate != "" {
+				threadID = candidate
+				break
+			}
+		}
+		if threadID == "" {
+			threadID = codexThreadIDFromTurnMetadata(c.GetHeader(codexTurnMetadataHeader))
+		}
+	}
+
+	if threadID == "" && len(body) > 0 {
+		payload := openAIRequestPayloadView(body)
+		for _, path := range []string{
+			"client_metadata.thread_id",
+			"thread_id",
+		} {
+			if candidate := strings.TrimSpace(payload.Get(path).String()); candidate != "" {
+				threadID = candidate
+				break
+			}
+		}
+		if threadID == "" {
+			threadID = codexThreadIDFromTurnMetadata(
+				payload.Get("client_metadata.x-codex-turn-metadata").String(),
+			)
+		}
+	}
+	if threadID == "" {
+		return ""
+	}
+	return "codex-thread:" + threadID
+}
+
+func codexThreadIDFromTurnMetadata(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || !gjson.Valid(raw) {
+		return ""
+	}
+	return strings.TrimSpace(gjson.Get(raw, "thread_id").String())
 }
 
 // grokPreviousResponseSessionSeed returns a stable sticky seed from a Responses
