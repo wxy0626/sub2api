@@ -8,13 +8,14 @@ import {
   buildModelMappingObject,
   getDefaultModelWhitelist,
   getModelsByPlatform,
+  getPresetMappingsByPlatform,
   isAllowedSyncedModel,
   restrictSyncedModels,
   splitModelMappingObject
 } from '../useModelWhitelist'
 
 describe('useModelWhitelist', () => {
-  it('openai 模型列表仅保留 GPT-5.5、GPT-5.6 和 GPT Image 系列', () => {
+  it('openai 模型列表保留本地筛选并包含 GPT-6 系列', () => {
     const models = getModelsByPlatform('openai')
 
     expect(models).toContain('gpt-5.5')
@@ -24,6 +25,19 @@ describe('useModelWhitelist', () => {
     expect(models).not.toContain('gpt-5.3-codex-spark')
     expect(models).not.toContain('gpt-5.2')
     expect(models).not.toContain('gpt-4o-audio-preview')
+    expect(models).toContain('gpt-6')
+    expect(models).toContain('gpt-6-astra')
+    expect(models).toContain('gpt-6.1-sol')
+    expect(models).toContain('gpt-6-sol')
+    expect(models).toContain('gpt-6-luna')
+  })
+
+  it('openai 预设映射包含 GPT-6 别名和 Astra', () => {
+    expect(getPresetMappingsByPlatform('openai')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: 'GPT-6.1 Sol', from: 'gpt-6.1-sol', to: 'gpt-6.1-sol' }),
+      expect.objectContaining({ label: 'GPT-6', from: 'gpt-6', to: 'gpt-6' }),
+      expect.objectContaining({ label: 'GPT-6 Astra', from: 'gpt-6-astra', to: 'gpt-6-astra' })
+    ]))
   })
 
   it('openai 模型列表不再暴露已下线的 ChatGPT 登录 Codex 模型', () => {

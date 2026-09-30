@@ -166,13 +166,17 @@ export default {
       noGroupDescription:
         '此 API 密钥尚未分配分组，请先在密钥列表中点击分组列进行分配，然后才能查看使用配置。',
       codexModelCatalog: {
+        mode: '目录来源',
+        remote: '远程目录（Codex 0.156.0+）',
+        local: '本地文件（旧版客户端）',
+        oversized: '完整目录超过远程加载的 1 MiB 限制，已改为本地文件。请下载目录并保存到配置中的路径。',
         title: 'Codex 模型目录',
-        description: '获取 Codex 配置所需的当前模型目录。',
-        download: '下载目录',
+        description: 'Codex 会使用配置中的认证信息加载并刷新远程目录。使用本地文件模式时，请在下方获取目录并保存到配置中的路径。',
         fetch: '获取目录',
         retry: '重试',
-        modelsCount: '可用模型：{count} 个',
-        errorDescription: '获取模型目录失败，请检查密钥、分组和网络连接。'
+        download: '下载目录',
+        modelsCount: '已获取 {count} 个模型',
+        errorDescription: '无法使用当前 API Key 获取模型目录。'
       },
       openai: {
         description: '将以下配置文件添加到 Codex CLI 配置目录中。',
@@ -233,12 +237,27 @@ export default {
         description: '配置 DeepSeek Codex CLI，让请求通过当前 Sub2API DeepSeek 分组发送。Responses 目录仅包含 deepseek-v4-flash，deepseek-v4-pro 使用 Chat Completions。',
         configTomlHint: '请将 config.toml 和 models.json 保存到同一个 .codex 目录，并保留配置中的 ~/.codex/models.json 路径。',
         note: '将 config.toml 和 models.json 保存到 ~/.codex，然后启动 Codex 使用 DeepSeek Responses API。',
-        noteWindows: '将 config.toml 和 models.json 保存到 %USERPROFILE%\\.codex，然后启动 Codex 使用 DeepSeek Responses API。'
+        noteWindows: '将 config.toml 和 models.json 保存到 %USERPROFILE%\\.codex，然后启动 Codex 使用 DeepSeek Responses API。',
+        codexDescription: '使用 API Key 配置 Codex，并通过当前 DeepSeek 分组发送请求。',
+        codexConfigTomlHint: '保存 config.toml 后重启 Codex，客户端会加载远程目录。使用本地文件模式时，还需下载目录并保存到配置中的路径。',
+        codexNote: '启动 Codex 前先导出 SUB2API_API_KEY。下载的目录只包含模型元数据，不包含 API Key。'
+      },
+      minimax: {
+        description: '通过当前 MiniMax 分组配置 Claude Code、Codex 或 OpenCode。',
+        codexDescription: '使用 API Key 配置 Codex，并通过当前 MiniMax 分组发送请求。',
+        codexConfigTomlHint: '保存 config.toml 后重启 Codex，客户端会加载远程目录。使用本地文件模式时，还需下载目录并保存到配置中的路径。',
+        codexNote: '启动 Codex 前先导出 SUB2API_API_KEY。下载的目录只包含模型元数据，不包含 API Key。'
+      },
+      composite: {
+        description: '通过当前 Composite 路由分组配置受支持的客户端。',
+        codexDescription: '使用 API Key 和当前 Composite 分组的完整模型目录配置 Codex。',
+        codexConfigTomlHint: '保存 config.toml 后重启 Codex，客户端会加载远程目录。使用本地文件模式时，还需下载目录并保存到配置中的路径。',
+        codexNote: '启动 Codex 前先导出 SUB2API_API_KEY；分组会根据目录中选中的模型路由请求。'
       },
       routedCodex: {
-        description: '通过当前分组将 Codex 请求路由到兼容平台。',
-        note: '请使用生成的配置并确认当前分组已绑定可用账号。',
-        configTomlHint: '请将配置保存到 Codex 配置目录，并使用环境变量提供 API Key。'
+        description: '使用当前路由分组的完整模型目录配置 Codex。',
+        configTomlHint: '保存 config.toml 后重启 Codex，客户端会加载远程目录。使用本地文件模式时，还需下载目录并保存到配置中的路径。',
+        note: '启动 Codex 前先导出 SUB2API_API_KEY。下载的目录只包含模型元数据，不包含 API Key。'
       },
       opencode: {
         title: 'OpenCode 配置示例',
