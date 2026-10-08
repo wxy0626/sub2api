@@ -119,6 +119,14 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	// /v1/responses 降级到 raw CC 的出站与 forwardAsRawChatCompletions 共用同一个
 	// 独立 Ollama Cloud token 钩子；chatReq.Model 已是模型映射后的 upstreamModel。
 	chatBody = clampOllamaCloudUpstreamMaxTokens(account, chatBody)
+	// Claude 5.5 的 litellm 路径会把 reasoning_effort/thinking 误翻译成
+	// thinking.type=enabled 并直接 400；出站前归一为 output_config.effort。
+	claude55Effort := resolveClaude55ChatReasoningEffort(chatBody, reasoningEffort)
+	if normalizedBody, changed, normalizeErr := normalizeClaude55ChatReasoning(chatBody, upstreamModel, claude55Effort); normalizeErr != nil {
+		return nil, normalizeErr
+	} else if changed {
+		chatBody = normalizedBody
+	}
 	// Keep the final outbound tier for usage-time reconciliation. A policy
 	// filter that removes the field therefore leaves this nil.
 	serviceTier := extractOpenAIServiceTierFromBody(chatBody)
@@ -694,4 +702,68 @@ func ensureDeepSeekChatReasoningPlaceholders(account *Account, body []byte) []by
 		return body
 	}
 	return updated
+}
+
+// resolveClaude55ChatReasoningEffort 保留客户端显式给出的 minimal；通用 effort
+// 提取器会把 minimal 归一成空，导致 Claude 5.5 的 adaptive 修复漏命中。
+func resolveClaude55ChatReasoningEffort(body []byte, extracted *string) string {
+	raw := strings.TrimSpace(explicitRequestedReasoningEffortFromBody(body))
+	if raw != "" && NormalizeMaxReasoningEffort(raw) != "" {
+		return raw
+	}
+	if extracted != nil {
+		return *extracted
+	}
+	return raw
+}
+
+// normalizeClaude55ChatReasoning 把 Responses→Chat 降级及 Chat Completions
+// 直转出站的 reasoning_effort 改写成 Claude 5.5 接受的 output_config 协议。
+//
+// 背景（2026-10 实测）：laxarouter/litellm 上游收到 reasoning_effort 时会自行
+// 翻译成 thinking.type=enabled，直接返回 400
+// "thinking.type.enabled is not supported for this model"。
+// 继续保留 thinking 字段也不稳定：真实 Codex 请求未带 max_tokens 时，litellm
+// 仍会把 thinking.adaptive 误判成 enabled。实测仅下发 output_config.effort、
+// 移除旧 reasoning_effort / thinking 后，流式完整请求可通过。
+// effort 为 none 或不支持时保持原样，交给上游按关闭处理。
+func normalizeClaude55ChatReasoning(body []byte, model, effort string) ([]byte, bool, error) {
+	if !isClaude55SignedThinkingModel(model) {
+		return body, false, nil
+	}
+	// NormalizeMaxReasoningEffort 同时完成别名归一（x-high→xhigh）与白名单校验；
+	// none/空值返回空串，表示不注入 output effort。
+	normalized := NormalizeMaxReasoningEffort(effort)
+	thinkingType := strings.TrimSpace(gjson.GetBytes(body, "thinking.type").String())
+	// 显式 thinking=enabled 也属于旧协议，即使没有 effort 也必须移除。
+	if normalized == "" && !strings.EqualFold(thinkingType, "enabled") {
+		return body, false, nil
+	}
+
+	out := body
+	changed := false
+	if gjson.GetBytes(out, "thinking").Exists() {
+		next, err := sjson.DeleteBytes(out, "thinking")
+		if err != nil {
+			return body, false, fmt.Errorf("delete claude 5.5 legacy thinking: %w", err)
+		}
+		out, changed = next, true
+	}
+	if normalized != "" && strings.TrimSpace(gjson.GetBytes(out, "output_config.effort").String()) == "" {
+		next, err := sjson.SetBytes(out, "output_config.effort", normalized)
+		if err != nil {
+			return body, false, fmt.Errorf("set claude 5.5 output effort: %w", err)
+		}
+		out, changed = next, true
+	}
+	// Claude 5.5 的思考档位统一由 output_config.effort 表达，旧字段会让
+	// litellm 再次落入 thinking.type=enabled 的兼容转换。
+	if gjson.GetBytes(out, "reasoning_effort").Exists() {
+		next, err := sjson.DeleteBytes(out, "reasoning_effort")
+		if err != nil {
+			return body, false, fmt.Errorf("delete claude 5.5 legacy reasoning_effort: %w", err)
+		}
+		out, changed = next, true
+	}
+	return out, changed, nil
 }

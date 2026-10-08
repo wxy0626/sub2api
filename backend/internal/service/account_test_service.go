@@ -53,6 +53,24 @@ const (
 	openAIWorkspaceDeactivatedErrorMessage = "ChatGPT 工作区已停用（402）：该工作区已被停用"
 )
 
+// errAccountTestStateManaged 表示分支已自行处理账号状态，统一 defer 不再重复写状态。
+var errAccountTestStateManaged = errors.New("account test state already managed")
+
+type accountTestStateManagedError struct {
+	error
+}
+
+func (e accountTestStateManagedError) Unwrap() error {
+	return errAccountTestStateManaged
+}
+
+func markAccountTestStateManaged(err error) error {
+	if err == nil {
+		return nil
+	}
+	return accountTestStateManagedError{error: err}
+}
+
 // TestEvent represents a SSE event for account testing
 type TestEvent struct {
 	Type     string `json:"type"`
@@ -428,6 +446,9 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 			return
 		}
 		if err != nil {
+			if errors.Is(err, errAccountTestStateManaged) {
+				return
+			}
 			if setErrorErr := s.accountRepo.SetError(ctx, account.ID, accountTestErrorDetail(account, err.Error())); setErrorErr != nil {
 				log.Printf("failed to mark tested account as error: account_id=%d error=%v", account.ID, setErrorErr)
 			}
@@ -487,6 +508,10 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 
 	if account.IsOpenCodeGo() {
 		return s.testOpenCodeGoAccountConnection(c, account, modelID, prompt)
+	}
+
+	if account.IsTypeSafe() {
+		return s.testTypeSafeAccountConnection(c, account, prompt)
 	}
 
 	return s.testClaudeAccountConnection(c, account, modelID)

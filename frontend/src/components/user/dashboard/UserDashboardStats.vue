@@ -259,6 +259,7 @@ const PLATFORM_LABELS: Record<string, string> = {
   zhipu: 'Zhipu GLM',
   deepseek: 'DeepSeek',
   minimax: 'MiniMax',
+  typesafe: 'TypeSafe / Jev',
 }
 
 const platformLabel = (p: string) => PLATFORM_LABELS[p] ?? p
@@ -286,7 +287,7 @@ const platformCards = computed<FusedPlatformCard[]>(() => {
   }
 
   // 用户成本卡片排序，DeepSeek 作为独立平台显示在现有平台之后。
-  const PLATFORM_ORDER = ['anthropic', 'openai', 'gemini', 'antigravity', 'grok', 'deepseek']
+  const PLATFORM_ORDER = ['anthropic', 'openai', 'gemini', 'antigravity', 'grok', 'deepseek', 'typesafe']
   const cards: FusedPlatformCard[] = []
 
   for (const p of platforms) {

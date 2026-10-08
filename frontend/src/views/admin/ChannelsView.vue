@@ -764,8 +764,9 @@ let abortController: AbortController | null = null
 
 // ── Platform config ──
 // 渠道平台配置顺序，国产供应商作为独立 OpenAI-compatible 平台展示。
-const platformOrder: GroupPlatform[] = ['anthropic', 'openai', 'gemini', 'antigravity', 'grok', 'kimi', 'zhipu', 'deepseek']
-const compositePlatforms: GroupPlatform[] = ['anthropic', 'openai', 'gemini', 'antigravity', 'grok']
+// Composite pricing/mapping may target every concrete schedulable provider.
+const platformOrder: GroupPlatform[] = ['anthropic', 'openai', 'gemini', 'antigravity', 'grok', 'kimi', 'zhipu', 'deepseek', 'minimax', 'opencode_go', 'typesafe']
+const compositePlatforms: GroupPlatform[] = [...platformOrder]
 
 // ── Helpers ──
 function formatDate(value: string): string {

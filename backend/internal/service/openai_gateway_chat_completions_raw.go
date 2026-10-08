@@ -192,6 +192,14 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	firstOutputEffort := ""
 	reasoningEffort := extractOpenAIReasoningEffortFromBody(upstreamBody, upstreamModel, billingModel, originalModel)
 	reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, upstreamBody, upstreamModel)
+	// Claude 5.5 的 litellm 路径会把 reasoning_effort/thinking 误翻译成
+	// thinking.type=enabled；出站前归一为 output_config.effort。
+	claude55Effort := resolveClaude55ChatReasoningEffort(upstreamBody, reasoningEffort)
+	if normalizedBody, changed, normalizeErr := normalizeClaude55ChatReasoning(upstreamBody, upstreamModel, claude55Effort); normalizeErr != nil {
+		return nil, normalizeErr
+	} else if changed {
+		upstreamBody = normalizedBody
+	}
 	if account.Platform == PlatformOpenAI {
 		if reasoningEffort != nil {
 			firstOutputEffort = *reasoningEffort

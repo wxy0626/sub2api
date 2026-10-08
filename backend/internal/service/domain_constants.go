@@ -44,12 +44,12 @@ const (
 	PlatformGemini      = domain.PlatformGemini
 	PlatformAntigravity = domain.PlatformAntigravity
 	PlatformGrok        = domain.PlatformGrok
-	PlatformKimi        = domain.PlatformKimi
-	PlatformZhipu       = domain.PlatformZhipu
-	PlatformDeepseek    = domain.PlatformDeepseek
-	// PlatformMiniMax 是 MiniMax 平台别名，供服务层统一复用。
-	PlatformMiniMax = domain.PlatformMiniMax
-	// PlatformOpenCodeGo 是 OpenCode 平台别名。
+	// 国产 OpenAI 兼容供应商（与 grok 一样经 OpenAI 网关转发）。
+	PlatformKimi       = domain.PlatformKimi
+	PlatformZhipu      = domain.PlatformZhipu
+	PlatformDeepseek   = domain.PlatformDeepseek
+	PlatformMiniMax    = domain.PlatformMiniMax
+	PlatformTypeSafe   = domain.PlatformTypeSafe
 	PlatformOpenCodeGo = domain.PlatformOpenCodeGo
 	// PlatformDeepSeek 保留为旧代码兼容别名。
 	PlatformDeepSeek  = domain.PlatformDeepSeek
@@ -136,6 +136,7 @@ var AllowedQuotaPlatforms = []string{
 	PlatformDeepseek,
 	PlatformMiniMax,
 	PlatformOpenCodeGo,
+	PlatformTypeSafe,
 }
 
 // DeepSeekDefaultModelIDs 是前端选择器和 Codex 配置保留的最新 DeepSeek 候选模型。

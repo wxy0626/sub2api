@@ -205,6 +205,45 @@
             <PlatformIcon platform="deepseek" size="sm" />
             DeepSeek
           </button>
+          <button
+            type="button"
+            @click="selectCNPlatform('minimax')"
+            :class="[
+              'flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2.5 text-sm font-medium transition-all',
+              form.platform === 'minimax'
+                ? 'bg-white text-rose-600 shadow-sm dark:bg-dark-600 dark:text-rose-400'
+                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
+            ]"
+          >
+            <PlatformIcon platform="minimax" size="sm" />
+            MiniMax
+          </button>
+          <button
+            type="button"
+            @click="selectOpenCodeGoPlatform()"
+            :class="[
+              'flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2.5 text-sm font-medium transition-all',
+              form.platform === 'opencode_go'
+                ? 'bg-white text-amber-700 shadow-sm dark:bg-dark-600 dark:text-amber-300'
+                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
+            ]"
+          >
+            <PlatformIcon platform="opencode_go" size="sm" />
+            OpenCode
+          </button>
+          <button
+            type="button"
+            @click="selectTypeSafePlatform()"
+            :class="[
+              'flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2.5 text-sm font-medium transition-all',
+              form.platform === 'typesafe'
+                ? 'bg-white text-sky-700 shadow-sm dark:bg-dark-600 dark:text-sky-300'
+                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
+            ]"
+          >
+            <PlatformIcon platform="typesafe" size="sm" />
+            TypeSafe / Jev
+          </button>
         </div>
       </div>
 
@@ -1387,17 +1426,7 @@
             type="text"
             class="input"
             data-testid="account-base-url-input"
-            :placeholder="
-              form.platform === 'openai'
-                ? 'https://api.openai.com'
-                : form.platform === 'gemini'
-                  ? 'https://generativelanguage.googleapis.com'
-                  : form.platform === 'grok'
-                    ? 'https://api.x.ai/v1'
-                    : form.platform === 'deepseek'
-                      ? 'https://api.deepseek.com'
-                    : 'https://api.anthropic.com'
-            "
+            :placeholder="apiKeyBaseUrlPlaceholder"
           />
           <p v-if="baseUrlHint" class="input-hint">{{ baseUrlHint }}</p>
           <GrokBaseUrlPresets
@@ -1460,17 +1489,7 @@
               required
               class="input w-full pr-10 font-mono"
               data-testid="account-api-key-input"
-              :placeholder="
-                form.platform === 'openai'
-                  ? 'sk-proj-...'
-                  : form.platform === 'gemini'
-                    ? 'AIza...'
-                    : form.platform === 'grok'
-                      ? 'xai-...'
-                      : form.platform === 'deepseek'
-                        ? 'sk-...'
-                      : 'sk-ant-...'
-              "
+              :placeholder="apiKeyValuePlaceholder"
             />
             <button
               type="button"
@@ -4052,6 +4071,7 @@ import {
   defaultCNAdaptiveBaseUrls,
   defaultCNBaseUrl,
   defaultOpenCodeProtocolRules,
+  isCNProviderPlatform,
   isHeaderOverrideCapable,
   validateHeaderOverrideRows,
   type CnAccountMode,
@@ -4132,6 +4152,50 @@ const apiKeyHint = computed(() => {
   if (form.platform === 'deepseek') return t('admin.accounts.deepseek.apiKeyHint')
   if (isCNPlatform.value) return t('admin.accounts.cnProviders.apiKeyHint')
   return t('admin.accounts.apiKeyHint')
+})
+
+// Base URL / API Key 占位符：国产供应商随账号类型变化。
+const apiKeyBaseUrlPlaceholder = computed(() => {
+  if (isMultiProtocolPlatform.value) {
+    const mode = form.platform === 'opencode_go' ? openCodeAccountMode.value : accountMode.value
+    return defaultCNBaseUrl(form.platform, mode, apiProtocol.value) || 'https://api.example.com'
+  }
+  switch (form.platform) {
+    case 'openai':
+      return 'https://api.openai.com'
+    case 'gemini':
+      return 'https://generativelanguage.googleapis.com'
+    case 'grok':
+      return 'https://api.x.ai/v1'
+    case 'typesafe':
+      return 'https://api.typesafe.ai'
+    default:
+      return 'https://api.anthropic.com'
+  }
+})
+
+const apiKeyValuePlaceholder = computed(() => {
+  switch (form.platform) {
+    case 'openai':
+      return 'sk-proj-...'
+    case 'gemini':
+      return 'AIza...'
+    case 'grok':
+      return 'xai-...'
+    case 'kimi':
+      return 'sk-...'
+    case 'zhipu':
+      return '<api-key>.<secret>'
+    case 'deepseek':
+      return 'sk-...'
+    case 'minimax':
+    case 'opencode_go':
+      return 'sk-...'
+    case 'typesafe':
+      return 'ts-...'
+    default:
+      return 'sk-ant-...'
+  }
 })
 
 interface Props {
@@ -4244,9 +4308,7 @@ const adaptiveBaseUrls = ref<Record<CnNativeApiProtocol, string>>({
   anthropic: '',
   responses: ''
 })
-const isCNPlatform = computed(
-  () => form.platform === 'kimi' || form.platform === 'zhipu' || form.platform === 'deepseek'
-)
+const isCNPlatform = computed(() => isCNProviderPlatform(form.platform))
 const isOpenCodeGoPlatform = computed(() => form.platform === 'opencode_go')
 const isMultiProtocolPlatform = computed(() => isCNPlatform.value || isOpenCodeGoPlatform.value)
 function currentOpenCodeOrCNMode(): CnAccountMode | OpenCodeAccountMode {
@@ -4254,11 +4316,15 @@ function currentOpenCodeOrCNMode(): CnAccountMode | OpenCodeAccountMode {
 }
 // CnBaseUrlPresets 的 platform prop 是平台字面量联合类型，模板里不能写
 // `as` 断言（其中的 `|` 会被 eslint 误判为 Vue2 filter 语法），经此 computed 传递。
-const cnPresetPlatform = computed<'kimi' | 'zhipu' | 'deepseek'>(() => {
-  if (form.platform === 'kimi' || form.platform === 'zhipu' || form.platform === 'deepseek') {
+const cnPresetPlatform = computed<CnProviderPlatform>(() => {
+  if (isCNProviderPlatform(form.platform)) {
     return form.platform
   }
   return 'kimi'
+})
+const adaptivePresetPlatform = computed<CnProviderPlatform | 'opencode_go'>(() => {
+  if (form.platform === 'opencode_go') return 'opencode_go'
+  return cnPresetPlatform.value
 })
 // 当前平台可选的协议档（responses 仅 deepseek / kimi）。
 const cnProtocolOptions = computed<Array<{ value: CnApiProtocol; labelKey: string }>>(() => {
@@ -4282,12 +4348,10 @@ const cnAdaptiveProtocolOptions = computed<Array<{ value: CnNativeApiProtocol; l
 })
 
 function resetAdaptiveBaseUrls(
-  platform?: CnProviderPlatform | 'opencode_go',
-  mode?: CnAccountMode | OpenCodeAccountMode
+  platform: CnProviderPlatform | 'opencode_go',
+  mode: CnAccountMode | OpenCodeAccountMode
 ) {
-  adaptiveBaseUrls.value = platform && mode
-    ? defaultCNAdaptiveBaseUrls(platform, mode)
-    : { chat_completions: '', anthropic: '', responses: '' }
+  adaptiveBaseUrls.value = defaultCNAdaptiveBaseUrls(platform, mode)
 }
 // 当前选中平台的品牌色（选中卡片描边 / 图标底色），与 platformColors 取色一致。
 const cnAccentActiveClass = computed(() => {
@@ -4298,6 +4362,10 @@ const cnAccentActiveClass = computed(() => {
       return 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20'
     case 'deepseek':
       return 'border-teal-500 bg-teal-50 dark:bg-teal-900/20'
+    case 'minimax':
+      return 'border-rose-500 bg-rose-50 dark:bg-rose-900/20'
+    case 'opencode_go':
+      return 'border-amber-500 bg-amber-50 dark:bg-amber-900/20'
     default:
       return 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
   }
@@ -4310,13 +4378,17 @@ const cnAccentIconClass = computed(() => {
       return 'bg-indigo-500 text-white'
     case 'deepseek':
       return 'bg-teal-500 text-white'
+    case 'minimax':
+      return 'bg-rose-500 text-white'
+    case 'opencode_go':
+      return 'bg-amber-500 text-white'
     default:
       return 'bg-primary-500 text-white'
   }
 })
 // 切换国产供应商平台：强制 apikey 类型，deepseek 无 coding 套餐故锁定 payg，
 // 协议回落 adaptive，并把 base url 重置为该平台默认端点。
-function selectCNPlatform(platform: 'kimi' | 'zhipu' | 'deepseek') {
+function selectCNPlatform(platform: CnProviderPlatform) {
   form.platform = platform
   form.type = 'apikey'
   accountCategory.value = 'apikey'
@@ -4324,34 +4396,78 @@ function selectCNPlatform(platform: 'kimi' | 'zhipu' | 'deepseek') {
   if (platform === 'deepseek') {
     accountMode.value = 'payg'
   }
-  apiKeyBaseUrl.value = ''
-  resetAdaptiveBaseUrls()
+  apiKeyBaseUrl.value = defaultCNBaseUrl(platform, accountMode.value, apiProtocol.value)
+  resetAdaptiveBaseUrls(platform, accountMode.value)
+}
+function selectOpenCodeGoPlatform() {
+  form.platform = 'opencode_go'
+  form.type = 'apikey'
+  accountCategory.value = 'apikey'
+  apiProtocol.value = 'adaptive'
+  openCodeAccountMode.value = 'zen'
+  apiKeyBaseUrl.value = defaultCNBaseUrl('opencode_go', openCodeAccountMode.value, 'adaptive')
+  resetAdaptiveBaseUrls('opencode_go', openCodeAccountMode.value)
+  openCodeGoProtocolRules.value = cloneOpenCodeGoProtocolRules(defaultOpenCodeProtocolRules(openCodeAccountMode.value))
+}
+function selectTypeSafePlatform() {
+  form.platform = 'typesafe'
+  form.type = 'apikey'
+  accountCategory.value = 'apikey'
+  apiKeyBaseUrl.value = 'https://api.typesafe.ai'
+  allowedModels.value = ['jev-latest']
 }
 // 账号类型 / 协议变更时同步默认 base url。
 watch(openCodeAccountMode, (mode, previousMode) => {
   if (!isOpenCodeGoPlatform.value) return
   if (apiProtocol.value === 'adaptive') {
-    void previousMode
-    void mode
-    apiKeyBaseUrl.value = ''
+    const previousDefaults = defaultCNAdaptiveBaseUrls('opencode_go', previousMode)
+    const nextDefaults = defaultCNAdaptiveBaseUrls('opencode_go', mode)
+    for (const item of cnAdaptiveProtocolOptions.value) {
+      if (!adaptiveBaseUrls.value[item.value] || adaptiveBaseUrls.value[item.value] === previousDefaults[item.value]) {
+        adaptiveBaseUrls.value[item.value] = nextDefaults[item.value]
+      }
+    }
+    apiKeyBaseUrl.value = adaptiveBaseUrls.value.chat_completions
+  } else {
+    apiKeyBaseUrl.value = defaultCNBaseUrl('opencode_go', mode, apiProtocol.value)
+  }
+  const previousRules = JSON.stringify(defaultOpenCodeProtocolRules(previousMode))
+  if (JSON.stringify(openCodeGoProtocolRules.value) === previousRules) {
+    openCodeGoProtocolRules.value = cloneOpenCodeGoProtocolRules(defaultOpenCodeProtocolRules(mode))
+  }
+})
+watch(accountMode, (mode, previousMode) => {
+  if (!isMultiProtocolPlatform.value || isOpenCodeGoPlatform.value) return
+  if (apiProtocol.value === 'adaptive') {
+    const previousDefaults = defaultCNAdaptiveBaseUrls(adaptivePresetPlatform.value, previousMode)
+    const nextDefaults = defaultCNAdaptiveBaseUrls(adaptivePresetPlatform.value, mode)
+    for (const item of cnAdaptiveProtocolOptions.value) {
+      if (!adaptiveBaseUrls.value[item.value] || adaptiveBaseUrls.value[item.value] === previousDefaults[item.value]) {
+        adaptiveBaseUrls.value[item.value] = nextDefaults[item.value]
+      }
+    }
+    apiKeyBaseUrl.value = adaptiveBaseUrls.value.chat_completions
     return
   }
-  apiKeyBaseUrl.value = ''
+  apiKeyBaseUrl.value = defaultCNBaseUrl(form.platform, mode, apiProtocol.value)
 })
 watch(apiProtocol, (protocol) => {
   if (!isMultiProtocolPlatform.value) return
   if (protocol === 'adaptive') {
-    void protocol
-    apiKeyBaseUrl.value = ''
+    const defaults = defaultCNAdaptiveBaseUrls(adaptivePresetPlatform.value, currentOpenCodeOrCNMode())
+    for (const item of cnAdaptiveProtocolOptions.value) {
+      if (!adaptiveBaseUrls.value[item.value]) adaptiveBaseUrls.value[item.value] = defaults[item.value]
+    }
+    apiKeyBaseUrl.value = adaptiveBaseUrls.value.chat_completions
     return
   }
-  apiKeyBaseUrl.value = ''
+  apiKeyBaseUrl.value = defaultCNBaseUrl(form.platform, currentOpenCodeOrCNMode(), protocol)
 })
 // 点击预设端点：同时回填 base url、账号类型与协议。
 function onCnPresetSelect(preset: { mode: CnAccountMode; protocol: CnApiProtocol; url: string }) {
   accountMode.value = preset.mode
   apiProtocol.value = preset.protocol
-  apiKeyBaseUrl.value = ''
+  apiKeyBaseUrl.value = preset.url
 }
 
 const syncPreviewCredentials = computed(() => {
@@ -4876,12 +4992,32 @@ watch(
   () => form.platform,
   (newPlatform) => {
     // Reset base URL based on platform
-    apiKeyBaseUrl.value = ''
+    if (isCNProviderPlatform(newPlatform) || newPlatform === 'opencode_go') {
+      const mode = newPlatform === 'opencode_go' ? openCodeAccountMode.value : accountMode.value
+      apiKeyBaseUrl.value = defaultCNBaseUrl(newPlatform, mode, apiProtocol.value)
+    } else {
+      apiKeyBaseUrl.value =
+        (newPlatform === 'openai')
+          ? 'https://api.openai.com'
+          : newPlatform === 'gemini'
+            ? 'https://generativelanguage.googleapis.com'
+            : newPlatform === 'grok'
+              ? 'https://api.x.ai/v1'
+              : newPlatform === 'typesafe'
+                ? 'https://api.typesafe.ai'
+              : 'https://api.anthropic.com'
+    }
     apiKeyImageBaseUrl.value = ''
     // Clear model-related settings
     allowedModels.value = []
     upstreamModelsPreviewed.value = false
     modelMappings.value = []
+    if (newPlatform === 'typesafe') {
+      accountCategory.value = 'apikey'
+      // Grok 等平台会把模式切到映射；TypeSafe 只用白名单写入 jev-latest。
+      modelRestrictionMode.value = 'whitelist'
+      allowedModels.value = ['jev-latest']
+    }
     // Antigravity: 默认使用映射模式并填充默认映射
     if (newPlatform === 'antigravity') {
       antigravityModelRestrictionMode.value = 'mapping'
@@ -5796,6 +5932,8 @@ const handleSubmit = async () => {
           ? 'https://api.x.ai/v1'
           : form.platform === 'deepseek'
             ? 'https://api.deepseek.com'
+            : form.platform === 'typesafe'
+              ? 'https://api.typesafe.ai'
           : 'https://api.anthropic.com'
 
   // Build credentials with optional model mapping

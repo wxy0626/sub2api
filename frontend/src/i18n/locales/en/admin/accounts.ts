@@ -94,6 +94,35 @@ export default {
       priorityUpdateFailed: 'Failed to update the account priority level. Enter an integer greater than or equal to 0 and try again.',
       priorityInvalid: 'Priority level must be an integer greater than or equal to 0. Enter a valid number and try again.',
       oauthType: 'OAuth',
+      setupToken: 'Setup Token',
+      apiKey: 'API Key',
+      // Schedulable toggle
+      schedulable: 'Schedulable',
+      schedulableHint: 'Enable to include this account in API request scheduling',
+      schedulableEnabled: 'Scheduling enabled',
+      schedulableDisabled: 'Scheduling disabled',
+      failedToToggleSchedulable: 'Failed to toggle scheduling status',
+      priorityQuick: {
+        raise: 'Raise priority (value -1)',
+        lower: 'Lower priority (value +1)',
+        editHint: 'Click to type a value; lower is used first',
+        failed: 'Failed to update priority'
+      },
+      groupCountTotal: '{count} groups total',
+      platforms: {
+        anthropic: 'Anthropic',
+        claude: 'Claude',
+        openai: 'OpenAI',
+        gemini: 'Gemini',
+        antigravity: 'Antigravity',
+        grok: 'Grok',
+        kimi: 'Kimi',
+        zhipu: 'Zhipu GLM',
+        deepseek: 'DeepSeek',
+        minimax: 'MiniMax',
+        opencode_go: 'OpenCode',
+        typesafe: 'TypeSafe / Jev',
+      },
       cnProviders: {
         accountMode: {
           title: 'Account mode',
@@ -186,26 +215,6 @@ export default {
         errors: {
           OPENCODE_GO_USAGE_REFRESH_RATE_LIMITED: 'Refresh is limited. Try again in {retry_after_seconds} seconds.'
         }
-      },
-      setupToken: 'Setup Token',
-      apiKey: 'API Key',
-      // Schedulable toggle
-      schedulable: 'Schedulable',
-      schedulableHint: 'Enable to include this account in API request scheduling',
-      schedulableEnabled: 'Scheduling enabled',
-      schedulableDisabled: 'Scheduling disabled',
-      failedToToggleSchedulable: 'Failed to toggle scheduling status',
-      groupCountTotal: '{count} groups total',
-      platforms: {
-        anthropic: 'Anthropic',
-        claude: 'Claude',
-        openai: 'OpenAI',
-        gemini: 'Gemini',
-        antigravity: 'Antigravity',
-        grok: 'Grok',
-        deepseek: 'DeepSeek',
-        minimax: 'MiniMax',
-        opencode_go: 'OpenCode',
       },
       types: {
         oauth: 'OAuth',
@@ -874,7 +883,7 @@ export default {
       customErrorCodes: 'Custom Error Codes',
       customErrorCodesHint: 'Only stop scheduling for selected error codes',
       customErrorCodesWarning:
-        'Only selected error codes will stop scheduling. Other errors will return 500.',
+        'Custom error codes only filter normal account-error handling (such as stopping scheduling or marking rate limits). They do not decide whether a request is retried or switched to another account. Unselected errors may still trigger a retry or an account switch, and the status returned to the client depends on the gateway path and error-passthrough rules; it is not always 500. An empty list applies no filtering.',
       customErrorCodes429Warning:
         '429 already has built-in rate limit handling. Adding it to custom error codes will disable the account instead of temporary rate limiting. Are you sure?',
       customErrorCodes529Warning:

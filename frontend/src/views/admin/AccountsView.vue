@@ -479,17 +479,11 @@
               @probe="handleProbeUpstreamBilling(row)"
             />
           </template>
-          <template #cell-priority="{ row, value }">
-            <input
-              :value="value"
-              type="number"
-              min="0"
-              step="1"
-              class="input w-20 py-1 text-sm"
-              :aria-label="t('admin.accounts.columns.priority')"
-              :disabled="updatingPriorityAccountIds.has(row.id)"
-              data-test="priority-input"
-              @change="handleAccountPriorityChange(row, $event)"
+          <template #cell-priority="{ row }">
+            <AccountPriorityCell
+              :account="row"
+              @updated="handleAccountUpdated"
+              @error="(message: string) => appStore.showError(message)"
             />
           </template>
           <template #header-scheduler_score="{ column }">
@@ -632,6 +626,7 @@ import AccountTodayStatsCell from '@/components/account/AccountTodayStatsCell.vu
 import AccountGroupsCell from '@/components/account/AccountGroupsCell.vue'
 import AccountCapacityCell from '@/components/account/AccountCapacityCell.vue'
 import UpstreamBillingRateCell from '@/components/account/UpstreamBillingRateCell.vue'
+import AccountPriorityCell from '@/components/account/AccountPriorityCell.vue'
 import PlatformTypeBadge from '@/components/common/PlatformTypeBadge.vue'
 import Icon from '@/components/icons/Icon.vue'
 import type { Column, ColumnReorderEvent } from '@/components/common/types'
@@ -791,8 +786,6 @@ const testingAccountIds = reactive(new Set<number>())
 const updatingProxyAccountIds = reactive(new Set<number>())
 // 正在更新并发容量的账号 ID：避免同一行在请求未完成时重复提交。
 const updatingCapacityAccountIds = reactive(new Set<number>())
-// 正在更新优先等级的账号 ID：避免同一行重复提交并在请求期间锁定输入框。
-const updatingPriorityAccountIds = reactive(new Set<number>())
 const showStats = ref(false)
 const showErrorPassthrough = ref(false)
 const showTLSFingerprintProfiles = ref(false)
@@ -2647,37 +2640,6 @@ const handleAccountProxyChange = async (account: Account, value: string | number
     appStore.showError(extractApiErrorMessage(error, t('admin.accounts.proxyUpdateFailed')))
   } finally {
     updatingProxyAccountIds.delete(account.id)
-  }
-}
-
-// 校验并通过既有账号更新接口保存列表中的优先等级，失败时恢复输入框并保留后端技术详情。
-const handleAccountPriorityChange = async (account: Account, event: Event) => {
-  const inputElement = event.currentTarget
-  if (!(inputElement instanceof HTMLInputElement)) return
-
-  const rawPriority = inputElement.value.trim()
-  const priority = Number(rawPriority)
-  if (!rawPriority || !Number.isSafeInteger(priority) || priority < 0) {
-    inputElement.value = String(account.priority)
-    appStore.showError(t('admin.accounts.priorityInvalid'))
-    return
-  }
-  if (priority === account.priority || updatingPriorityAccountIds.has(account.id)) {
-    inputElement.value = String(account.priority)
-    return
-  }
-
-  updatingPriorityAccountIds.add(account.id)
-  try {
-    const updatedAccount = await adminAPI.accounts.update(account.id, { priority })
-    patchAccountInList(updatedAccount)
-    appStore.showSuccess(t('admin.accounts.priorityUpdated'))
-  } catch (error) {
-    console.error('Failed to update account priority:', error)
-    inputElement.value = String(account.priority)
-    appStore.showError(extractApiErrorMessage(error, t('admin.accounts.priorityUpdateFailed')))
-  } finally {
-    updatingPriorityAccountIds.delete(account.id)
   }
 }
 
