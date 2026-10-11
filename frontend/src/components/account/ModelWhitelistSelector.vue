@@ -237,10 +237,10 @@ const canSyncUpstream = computed(() => {
   if (props.accountId) {
     if (!canSyncSavedAccountUpstream.value) return false
     if (normalizedPlatforms.value.length === 0) return true
-    return normalizedPlatforms.value.some(platform => upstreamSyncPlatforms.has(platform.toLowerCase()))
+    return normalizedPlatforms.value.some(supportsUpstreamModelSync)
   }
   if (props.syncCredentials) {
-    return upstreamSyncPlatforms.has(props.syncCredentials.platform.toLowerCase())
+    return supportsUpstreamModelSync(props.syncCredentials.platform)
   }
   return false
 })
@@ -348,8 +348,7 @@ const syncLatestSupportedModels = async () => {
 }
 
 const syncUpstreamModels = async () => {
-  if (isSyncingUpstream.value) return
-  if (!props.accountId && !props.syncCredentials) return
+  if (isSyncingUpstream.value || !canSyncUpstream.value) return
 
   isSyncingUpstream.value = true
   try {

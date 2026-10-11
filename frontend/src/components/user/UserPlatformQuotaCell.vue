@@ -29,7 +29,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { PlatformQuotaItem, PlatformQuotaPlatform } from '@/api/admin/users'
+import type { PlatformQuotaItem } from '@/api/admin/users'
+import { listPlatformIds } from '@/constants/platformCatalog'
 
 const props = defineProps<{ quotas?: PlatformQuotaItem[] }>()
 const { t } = useI18n()
@@ -48,7 +49,7 @@ const configured = computed(() => {
         q.monthly_limit_usd != null
     )
     .slice()
-    .sort((a, b) => PLATFORM_ORDER.indexOf(a.platform) - PLATFORM_ORDER.indexOf(b.platform))
+    .sort((a, b) => platformRank(a.platform) - platformRank(b.platform))
 })
 
 // 去尾零、最多 2 位小数：100→"100"，90.5→"90.5"，0.42→"0.42"

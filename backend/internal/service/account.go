@@ -1425,6 +1425,7 @@ func (a *Account) GetOpenAIBaseURL() string {
 	default:
 		return "https://api.openai.com"
 	}
+	return "https://api.openai.com"
 }
 
 // GetOpenAIImageBaseURL 返回 OpenAI 图片请求使用的独立 Base URL。
@@ -1480,7 +1481,8 @@ func (a *Account) GetAPIProtocol() string {
 	case APIProtocolChatCompletions:
 		return APIProtocolChatCompletions
 	}
-	if a.IsOpenCodeGo() {
+	// 按模型分流的供应商（多模型聚合平台）未显式配置时默认 adaptive。
+	if a.routesByModel() {
 		return APIProtocolAdaptive
 	}
 	return APIProtocolChatCompletions
@@ -1636,6 +1638,7 @@ func (a *Account) GetOpenAIFormatBaseURL() string {
 	default:
 		return a.GetOpenAIBaseURL()
 	}
+	return a.GetOpenAIBaseURL()
 }
 
 // GetCNAPIKey 返回国产 OpenAI 兼容供应商账号的 api_key 凭据（kimi/zhipu/deepseek）。
@@ -1657,6 +1660,18 @@ func (a *Account) GetCodingPlanProvider() string {
 	}
 	if a.IsOpenCodeGoPlan() {
 		return PlatformOpenCodeGo
+	}
+	if a.IsCommandCode() {
+		if a.commandCodeUsageSupported() {
+			return PlatformCommandCode
+		}
+		return ""
+	}
+	if a.IsCline() {
+		if a.clineAccountAPISupported() {
+			return PlatformCline
+		}
+		return ""
 	}
 	if a.GetAccountMode() != AccountModeCoding {
 		return ""

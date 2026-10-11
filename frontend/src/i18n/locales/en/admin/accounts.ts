@@ -79,6 +79,8 @@ export default {
       editAccount: 'Edit Account',
       deleteAccount: 'Delete Account',
       searchAccounts: 'Search accounts...',
+      moreFilters: 'More filters',
+      moreFiltersActive: 'More filters ({count} active)',
       notes: 'Notes',
       notesPlaceholder: 'Enter notes',
       notesHint: 'Notes are optional',
@@ -183,7 +185,7 @@ export default {
         },
         protocolRules: {
           title: 'Model protocol routing',
-          hint: 'In adaptive mode, each model is sent to a native upstream protocol. Use an exact ID or a trailing * glob (e.g. grok-*, qwen*). The first matching rule wins; unmatched models use Chat Completions.',
+          hint: 'In adaptive mode, each model is sent to a native upstream protocol. Use an exact ID or a trailing * glob (e.g. grok-*, qwen*). The first matching rule wins. If the inbound protocol is one the model also supports, the request passes through on that protocol without conversion; otherwise the selected protocol is used.',
           patternPlaceholder: 'grok-* or deepseek-v4-flash',
           add: 'Add rule',
           remove: 'Remove rule',
@@ -213,7 +215,8 @@ export default {
         refreshSuccess: 'OpenCode Go usage refreshed',
         refreshFailed: 'Failed to refresh OpenCode Go usage',
         errors: {
-          OPENCODE_GO_USAGE_REFRESH_RATE_LIMITED: 'Refresh is limited. Try again in {retry_after_seconds} seconds.'
+          OPENCODE_GO_USAGE_REFRESH_RATE_LIMITED: 'Refresh is limited. Try again in {retry_after_seconds} seconds.',
+          forbidden: 'Upstream returned 403: could be a missing/expired OpenCode Go subscription or a WAF/access-policy block; check the network path and HTTP status.'
         }
       },
       types: {

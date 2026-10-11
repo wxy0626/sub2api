@@ -86,6 +86,10 @@ const (
 	DefaultMiniMaxBaseURL     = "https://api.minimaxi.com/v1"
 	DefaultOpenCodeGoBaseURL  = "https://opencode.ai/zen/go/v1"
 	DefaultOpenCodeZenBaseURL = "https://opencode.ai/zen/v1"
+	// Command Code Provider API：Chat Completions / Responses / models 共用 /provider/v1 基址。
+	DefaultCommandCodeBaseURL = "https://api.commandcode.ai/provider/v1"
+	// Cline API：只提供 Chat Completions（{base}/chat/completions）与模型列表。
+	DefaultClineBaseURL = "https://api.cline.bot/api/v1"
 )
 
 // 国产供应商 Anthropic 协议端点的默认 base_url（上游路径为 {base}/v1/messages）。
@@ -99,16 +103,13 @@ const (
 	// OpenCode Go Anthropic 基址不含 /v1：nativeAnthropicTargetURL 会再拼 /v1/messages。
 	DefaultOpenCodeGoAnthropicBaseURL  = "https://opencode.ai/zen/go"
 	DefaultOpenCodeZenAnthropicBaseURL = "https://opencode.ai/zen"
+	// Command Code 的 Anthropic 端点为 /provider/v1/messages（Claude 系模型只在此端点提供）。
+	DefaultCommandCodeAnthropicBaseURL = "https://api.commandcode.ai/provider"
 )
 
 // IsCNProvider 报告 platform 是否为国产 OpenAI 兼容供应商（kimi/zhipu/deepseek）。
 func IsCNProvider(platform string) bool {
-	switch platform {
-	case PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax:
-		return true
-	default:
-		return false
-	}
+	return domain.IsCNProviderPlatform(platform)
 }
 
 // IsOpenCodeGo 报告 platform 是否为 OpenCode Go 订阅网关。
@@ -118,26 +119,14 @@ func IsOpenCodeGo(platform string) bool {
 
 // IsMultiProtocolAPIKeyProvider 报告 platform 是否为多协议 API Key 网关
 // （国产供应商 + OpenCode）：走 OpenAI 网关、支持 adaptive 协议分流。
+// 归属以 provider profile 登记为准（见 provider_profile.go）。
 func IsMultiProtocolAPIKeyProvider(platform string) bool {
-	return IsCNProvider(platform) || platform == PlatformOpenCodeGo
+	return LookupProviderProfile(platform) != nil
 }
 
-// AllowedQuotaPlatforms 是允许设置 user × platform quota 的平台列表（单一权威来源）。
-// ent/schema/user_platform_quota.go 的 Validate 函数独立维护（构建期约束），
-// 若新增平台需同步修改该 schema。
-var AllowedQuotaPlatforms = []string{
-	PlatformAnthropic,
-	PlatformOpenAI,
-	PlatformGemini,
-	PlatformAntigravity,
-	PlatformGrok,
-	PlatformKimi,
-	PlatformZhipu,
-	PlatformDeepseek,
-	PlatformMiniMax,
-	PlatformOpenCodeGo,
-	PlatformTypeSafe,
-}
+// AllowedQuotaPlatforms 是允许设置 user × platform quota 的平台列表：全部已登记的
+// 具体平台（domain/platforms.go），ent/schema/user_platform_quota.go 的校验同源。
+var AllowedQuotaPlatforms = domain.ConcretePlatformIDs()
 
 // DeepSeekDefaultModelIDs 是前端选择器和 Codex 配置保留的最新 DeepSeek 候选模型。
 var DeepSeekDefaultModelIDs = []string{
