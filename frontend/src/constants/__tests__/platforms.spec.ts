@@ -15,8 +15,8 @@ import { platformQuotaPlatforms } from '@/api/admin/users'
 
 // 改为读取平台清单之前的平台字面量，加上之后内置登记的 Command Code。
 const concretePlatforms = [
-  'openai',
   'anthropic',
+  'openai',
   'gemini',
   'antigravity',
   'grok',

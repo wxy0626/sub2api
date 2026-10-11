@@ -35,8 +35,11 @@ import { listPlatformIds } from '@/constants/platformCatalog'
 const props = defineProps<{ quotas?: PlatformQuotaItem[] }>()
 const { t } = useI18n()
 
-// 用户平台配额展示顺序，保持 DeepSeek 独立显示。
-const PLATFORM_ORDER: PlatformQuotaPlatform[] = ['anthropic', 'openai', 'gemini', 'antigravity', 'grok', 'deepseek', 'typesafe']
+// 按平台清单顺序展示；未登记的平台排在最后。
+function platformRank(platform: string): number {
+  const index = listPlatformIds().indexOf(platform)
+  return index === -1 ? Number.MAX_SAFE_INTEGER : index
+}
 
 // 仅展示「至少一档限额非空」的平台（配额列，非用量列）
 const configured = computed(() => {

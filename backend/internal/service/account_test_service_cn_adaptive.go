@@ -34,7 +34,7 @@ func (s *AccountTestService) testCNProviderAdaptiveConnection(c *gin.Context, ac
 	// completion events until every native adaptive endpoint has passed.
 	c.Set(accountTestSuppressCompletionContextKey, true)
 	defer c.Set(accountTestSuppressCompletionContextKey, false)
-	if err := s.testCNProviderChatCompletionsConnection(c, account, requestedModelID, prompt); err != nil {
+	if err := s.testCNProviderChatCompletionsConnection(c, account, modelID, prompt); err != nil {
 		return err
 	}
 

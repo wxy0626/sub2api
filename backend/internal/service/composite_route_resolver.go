@@ -81,10 +81,17 @@ func (r *CompositeRouteResolver) Resolve(ctx context.Context, groupID int64, mod
 		return decision, nil
 	}
 
+	hasExactRoutes := false
 	if r != nil && r.repo != nil && groupID > 0 {
 		routes, err := r.repo.ListByGroup(ctx, groupID, false)
 		if err != nil {
 			return decision, fmt.Errorf("list composite routes: %w", err)
+		}
+		for _, route := range routes {
+			if route.Enabled && route.MatchType == CompositeRouteMatchExact {
+				hasExactRoutes = true
+				break
+			}
 		}
 		if route, ok := matchCompositeRoute(routes, model, endpoint); ok {
 			upstreamModel := strings.TrimSpace(route.UpstreamModel)
@@ -135,7 +142,8 @@ func (r *CompositeRouteResolver) Resolve(ctx context.Context, groupID int64, mod
 
 	// OpenAI 兼容端点兜底：ownership 未接线/未命中且模型不可被内置检测器识别时，
 	// 不猜厂商，直接进入 OpenAI 调度桶（私有兼容上游可能暴露任意模型名）。
-	if isOpenAICompatibleCompositeEndpoint(endpoint) {
+	// 分组已配置精确路由时不兜底：未知模型名视为客户端错误，拒绝而非静默路由。
+	if isOpenAICompatibleCompositeEndpoint(endpoint) && !hasExactRoutes {
 		if _, detectable := DetectModelPlatform(model); !detectable {
 			return CompositeRouteDecision{
 				Matched:        true,

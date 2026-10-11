@@ -293,6 +293,13 @@ func (s *OpenAIGatewayService) ForwardCountTokensAsAnthropic(
 		return err
 	}
 
+	// 自定义 OpenAI 兼容中转通常不提供 responses/input_tokens 预检端点。
+	// count_tokens 不参与计费，直接本地估算，避免把上游 404 透传给 Claude。
+	if shouldEstimateOpenAIInputTokensLocally(account) {
+		writeAnthropicCountTokensLocalEstimate(c, account, prepared, 0, "custom_relay")
+		return nil
+	}
+
 	upstreamBody, err := marshalOpenAIUpstreamJSON(prepared.Request)
 	if err != nil {
 		writeAnthropicCountTokensError(c, http.StatusInternalServerError, "api_error", "Failed to build request")
@@ -341,7 +348,7 @@ func (s *OpenAIGatewayService) ForwardCountTokensAsAnthropic(
 	if resp.StatusCode >= 400 {
 		upstreamMsg := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
 		if account.Type == AccountTypeOAuth && isOpenAIOAuthInputTokensUnsupported(resp.StatusCode, respBody) {
-			writeOpenAIOAuthInputTokensFallback(c, account, prepared, resp.StatusCode)
+			writeAnthropicCountTokensLocalEstimate(c, account, prepared, resp.StatusCode, "oauth_unsupported")
 			return nil
 		}
 
@@ -494,27 +501,38 @@ func isOpenAIInputTokensUnsupported(statusCode int, body []byte) bool {
 		return false
 	}
 	msg := strings.ToLower(strings.TrimSpace(extractUpstreamErrorMessage(body)))
-	return strings.Contains(msg, "input_tokens") && strings.Contains(msg, "not found")
+	bodyLower := strings.ToLower(strings.TrimSpace(string(body)))
+	return (strings.Contains(msg, "input_tokens") && strings.Contains(msg, "not found")) ||
+		strings.Contains(msg, "unknown endpoint") ||
+		strings.Contains(bodyLower, "404 page not found")
 }
 
-func writeOpenAIOAuthInputTokensFallback(c *gin.Context, account *Account, prepared *openAIInputTokensCountPrepared, statusCode int) {
+func writeAnthropicCountTokensLocalEstimate(
+	c *gin.Context,
+	account *Account,
+	prepared *openAIInputTokensCountPrepared,
+	statusCode int,
+	reason string,
+) {
 	estimated := openAIInputTokensFallbackMinimum
 	if got, err := estimateOpenAIInputTokens(prepared.Request); err == nil {
 		if got > 0 {
 			estimated = got
 		}
-		logger.L().Info("openai count_tokens: oauth fallback to local tiktoken estimate",
+		logger.L().Info("openai count_tokens: local tiktoken estimate fallback",
 			zap.Int64("account_id", account.ID),
 			zap.Int("upstream_status", statusCode),
 			zap.Int("estimated_input_tokens", estimated),
 			zap.String("upstream_model", prepared.UpstreamModel),
+			zap.String("reason", reason),
 		)
 	} else {
-		logger.L().Warn("openai count_tokens: oauth local tiktoken fallback failed, using minimum estimate",
+		logger.L().Warn("openai count_tokens: local tiktoken estimate failed, using minimum estimate",
 			zap.Int64("account_id", account.ID),
 			zap.Int("upstream_status", statusCode),
 			zap.Int("estimated_input_tokens", estimated),
 			zap.String("upstream_model", prepared.UpstreamModel),
+			zap.String("reason", reason),
 			zap.Error(err),
 		)
 	}

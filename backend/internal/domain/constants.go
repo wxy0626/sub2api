@@ -33,7 +33,13 @@ const (
 	// 值保持 opencode_go 以兼容已落库的账号、分组、配额与 Composite 路由。
 	PlatformOpenCodeGo = "opencode_go"
 	// PlatformDeepSeek 保留为旧代码兼容别名。
-	PlatformDeepSeek  = PlatformDeepseek
+	PlatformDeepSeek = PlatformDeepseek
+	// PlatformCommandCode 是 Command Code Provider API（多模型聚合，积分计费，
+	// 订阅套餐另有 5 小时 / 每周滚动窗口）。
+	PlatformCommandCode = "command_code"
+	// PlatformCline 是 Cline API（多模型聚合，OpenAI 兼容 Chat Completions；按量积分计费，
+	// 另有 ClinePass 订阅）。
+	PlatformCline     = "cline"
 	PlatformComposite = "composite"
 )
 

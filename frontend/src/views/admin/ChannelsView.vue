@@ -765,10 +765,10 @@ const form = reactive({
 let abortController: AbortController | null = null
 
 // ── Platform config ──
-// 渠道平台配置顺序，国产供应商作为独立 OpenAI-compatible 平台展示。
+// 平台清单中的全部具体平台（展示顺序）。
+const platformOrder = computed<GroupPlatform[]>(() => listPlatformIds())
 // Composite pricing/mapping may target every concrete schedulable provider.
-const platformOrder: GroupPlatform[] = ['anthropic', 'openai', 'gemini', 'antigravity', 'grok', 'kimi', 'zhipu', 'deepseek', 'minimax', 'opencode_go', 'typesafe']
-const compositePlatforms: GroupPlatform[] = [...platformOrder]
+const compositePlatforms = platformOrder
 
 // ── Helpers ──
 function formatDate(value: string): string {

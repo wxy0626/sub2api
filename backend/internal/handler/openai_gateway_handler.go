@@ -3270,7 +3270,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				h.submitOpenAIUsageRecordTask(ctx, result, func(taskCtx context.Context) {
 					if err := h.gatewayService.RecordUsage(taskCtx, &service.OpenAIRecordUsageInput{
 						Result:              result,
-						APIKey:              apiKey,
+						APIKey:              turnBillingAPIKey,
 						User:                apiKey.User,
 						Account:             account,
 						Subscription:        subscription,

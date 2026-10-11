@@ -161,6 +161,7 @@ import { useClipboard } from '@/composables/useClipboard'
 import ModelIcon from '@/components/common/ModelIcon.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { allModels, getModelsByPlatform, restrictSyncedModels } from '@/composables/useModelWhitelist'
+import { supportsUpstreamModelSync } from '@/constants/platformCatalog'
 
 const { t } = useI18n()
 
@@ -213,8 +214,6 @@ const normalizedPlatforms = computed(() => {
   )
 })
 
-// 可向后端请求上游模型列表同步的平台集合，DeepSeek 使用同一 OpenAI-compatible 接口。
-const upstreamSyncPlatforms = new Set(['anthropic', 'openai', 'gemini', 'antigravity', 'grok', 'deepseek'])
 // latestSyncPlatforms 是后端最新模型目录支持查询的平台集合。
 // 可从定价目录同步最新模型的平台集合，DeepSeek 与现有账号模型限制共用此入口。
 const latestSyncPlatforms = new Set(['anthropic', 'openai', 'gemini', 'antigravity', 'grok', 'deepseek'])

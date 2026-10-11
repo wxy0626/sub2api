@@ -1356,20 +1356,14 @@ func (h *GatewayHandler) compositeAvailableModels(ctx context.Context, groupID *
 			models = append(models, model)
 		}
 	}
-	if groupID != nil {
-		// 复合路由的 exact 公共模型名本身就是该分组可直接调用的模型，
-		// 只是不一定出现在账号映射里。加入发现列表，避免桌面端误报未发现。
-		for _, model := range h.gatewayService.ListCompositeRoutePublicModels(ctx, *groupID) {
-			model = strings.TrimSpace(model)
-			if model == "" {
-				continue
+	// A route can expose a public ID that no account model mapping contains.
+	// On lookup failure, retain the existing account-derived catalog only.
+	if routeModels, err := h.gatewayService.GetCompositeRouteModels(ctx, groupID, endpoint, includeSystemOne); err == nil {
+		for _, model := range routeModels {
+			if _, ok := seen[model]; !ok {
+				seen[model] = struct{}{}
+				models = append(models, model)
 			}
-			key := strings.ToLower(model)
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			seen[key] = struct{}{}
-			models = append(models, model)
 		}
 	}
 	return models
@@ -1508,7 +1502,7 @@ func modelListingSource(platform string, availableModels, fallbackModels []strin
 func hasStaticDefaultModelCatalog(platform string) bool {
 	switch platform {
 	case service.PlatformAnthropic, service.PlatformOpenAI, service.PlatformGemini,
-		service.PlatformAntigravity, service.PlatformGrok, service.PlatformComposite:
+		service.PlatformAntigravity, service.PlatformGrok, service.PlatformComposite, service.PlatformTypeSafe:
 		return true
 	default:
 		return false

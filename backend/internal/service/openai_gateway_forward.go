@@ -181,6 +181,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		return s.forwardGrokResponses(ctx, c, account, body, originalModel, reqStream, startTime)
 	}
 
+	routingModel := upstreamRoutingModel(account, body, "")
+	if account.IsOpenCodeGo() && IsOpenCodeUnsupportedModel(routingModel) {
+		return nil, writeOpenCodeUnsupportedModelError(c, false, routingModel)
+	}
+
 	// 压缩请求不能走 Responses -> Chat fallback：完整历史与图片会被重新展开，
 	// 既无法完成原生 compact 协议，也会再次触发上游 context_length_exceeded。
 	// handler 已按 Responses 能力筛选账号；这里作为最终边界拒绝漏网账号，
