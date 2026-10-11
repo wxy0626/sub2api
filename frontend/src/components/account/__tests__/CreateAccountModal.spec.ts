@@ -178,7 +178,7 @@ async function submitApiKeyAccount(
     await selectButtonByText(wrapper, 'API Key')
   }
   await wrapper.get('form#create-account-form input[type="text"]').setValue(`${platform} account`)
-  await wrapper.get('form#create-account-form input[type="password"]').setValue('test-api-key')
+  await wrapper.get('form#create-account-form [data-testid="account-api-key-input"]').setValue('test-api-key')
   if (enableLongContextBilling) {
     await wrapper.get('[data-testid="openai-long-context-billing-toggle"]').trigger('click')
   }
@@ -236,8 +236,12 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     expect(form.attributes('autocomplete')).toBe('off')
     expect(form.attributes('data-form-type')).toBe('other')
 
-    const secretInput = form.get('input[type="password"]')
-    expect(secretInput.attributes('autocomplete')).toBe('new-password')
+    expect(form.find('input[type="password"]').exists()).toBe(false)
+
+    const secretInput = form.get('[data-testid="account-api-key-input"]')
+    expect(secretInput.attributes('type')).toBe('text')
+    expect(secretInput.classes()).toContain('secret-text-input')
+    expect(secretInput.attributes('autocomplete')).toBe('off')
     expect(secretInput.attributes('data-1p-ignore')).toBeDefined()
     expect(secretInput.attributes('data-lpignore')).toBe('true')
     expect(secretInput.attributes('data-bwignore')).toBe('true')
@@ -261,7 +265,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     await selectButtonByText(wrapper, 'OpenAI')
     await selectButtonByText(wrapper, 'API Key')
     await wrapper.get('form#create-account-form input[type="text"]').setValue('expiry account')
-    await wrapper.get('form#create-account-form input[type="password"]').setValue('test-api-key')
+    await wrapper.get('form#create-account-form [data-testid="account-api-key-input"]').setValue('test-api-key')
     const input = wrapper.get<HTMLInputElement>('input[type="datetime-local"]')
 
     for (const [label, expected] of [
@@ -286,7 +290,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     await selectButtonByText(wrapper, 'OpenAI')
     await selectButtonByText(wrapper, 'API Key')
     await wrapper.get('form#create-account-form input[type="text"]').setValue('custom expiry account')
-    await wrapper.get('form#create-account-form input[type="password"]').setValue('test-api-key')
+    await wrapper.get('form#create-account-form [data-testid="account-api-key-input"]').setValue('test-api-key')
     await selectButtonByText(wrapper, 'payment.oneMonth')
     await wrapper.get('input[type="datetime-local"]').setValue('2030-04-15T09:20')
 
@@ -339,7 +343,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
 
     await wrapper.get('[data-testid="account-image-base-url-input"]').setValue('  https://image.example.com/v1  ')
     await wrapper.get('form#create-account-form input[type="text"]').setValue('OpenAI image account')
-    await wrapper.get('form#create-account-form input[type="password"]').setValue('test-api-key')
+    await wrapper.get('form#create-account-form [data-testid="account-api-key-input"]').setValue('test-api-key')
     await wrapper.get('form#create-account-form').trigger('submit.prevent')
     await flushPromises()
 
@@ -399,7 +403,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     await selectButtonByText(wrapper, 'OpenAI')
     await selectButtonByText(wrapper, 'API Key')
     await wrapper.get('form#create-account-form input[type="text"]').setValue('openai account')
-    await wrapper.get('form#create-account-form input[type="password"]').setValue('test-api-key')
+    await wrapper.get('form#create-account-form [data-testid="account-api-key-input"]').setValue('test-api-key')
     await wrapper.get('[data-testid="upstream-request-id-header"]').setValue('  X-Oneapi-Request-Id  ')
     await wrapper.get('form#create-account-form').trigger('submit.prevent')
     await flushPromises()
@@ -420,7 +424,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     await selectButtonByText(wrapper, 'OpenAI')
     await selectButtonByText(wrapper, 'API Key')
     await wrapper.get('form#create-account-form input[type="text"]').setValue('openai account')
-    await wrapper.get('form#create-account-form input[type="password"]').setValue('test-api-key')
+    await wrapper.get('form#create-account-form [data-testid="account-api-key-input"]').setValue('test-api-key')
     await wrapper.get('[data-testid="openai-images-url-to-b64-json-toggle"]').trigger('click')
     await wrapper.get('form#create-account-form').trigger('submit.prevent')
     await flushPromises()
@@ -434,7 +438,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     await selectButtonByText(wrapper, 'OpenAI')
     await selectButtonByText(wrapper, 'API Key')
     await wrapper.get('form#create-account-form input[type="text"]').setValue('OpenCode account')
-    await wrapper.get('form#create-account-form input[type="password"]').setValue('test-api-key')
+    await wrapper.get('form#create-account-form [data-testid="account-api-key-input"]').setValue('test-api-key')
     await wrapper.get('[data-testid="model-whitelist-selector"]').trigger('click')
     await wrapper.get('form#create-account-form').trigger('submit.prevent')
     await flushPromises()
@@ -447,7 +451,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     const wrapper = mountModal()
     await selectButtonByText(wrapper, 'OpenAI')
     await selectButtonByText(wrapper, 'API Key')
-    await wrapper.get('form#create-account-form input[type="password"]').setValue('test-api-key')
+    await wrapper.get('form#create-account-form [data-testid="account-api-key-input"]').setValue('test-api-key')
     await wrapper.get('[data-testid="model-whitelist-selector"]').trigger('click')
     await flushPromises()
 
@@ -461,7 +465,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     await selectButtonByText(wrapper, 'OpenAI')
     await selectButtonByText(wrapper, 'API Key')
     await wrapper.get('form#create-account-form input[type="text"]').setValue('Mapped account')
-    await wrapper.get('form#create-account-form input[type="password"]').setValue('test-api-key')
+    await wrapper.get('form#create-account-form [data-testid="account-api-key-input"]').setValue('test-api-key')
     await selectButtonByText(wrapper, 'admin.accounts.modelMapping')
     await selectButtonByText(wrapper, 'admin.accounts.addMapping')
     await wrapper.get('input[placeholder="admin.accounts.requestModel"]').setValue('public-glm')
@@ -484,7 +488,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     await selectButtonByText(wrapper, 'OpenAI')
     await selectButtonByText(wrapper, 'API Key')
     await wrapper.get('form#create-account-form input[type="text"]').setValue('OpenCode account')
-    await wrapper.get('form#create-account-form input[type="password"]').setValue('test-api-key')
+    await wrapper.get('form#create-account-form [data-testid="account-api-key-input"]').setValue('test-api-key')
     await wrapper.get('[data-testid="model-whitelist-selector"]').trigger('click')
     await wrapper.get('form#create-account-form').trigger('submit.prevent')
     await flushPromises()
@@ -545,7 +549,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     const wrapper = mountModal()
     await selectButtonByText(wrapper, 'OpenCode')
     await wrapper.get('form#create-account-form input[type="text"]').setValue('oc')
-    await wrapper.get('form#create-account-form input[type="password"]').setValue('sk-opencode-zen')
+    await wrapper.get('form#create-account-form [data-testid="account-api-key-input"]').setValue('sk-opencode-zen')
 
     await wrapper.get('form#create-account-form').trigger('submit.prevent')
     await flushPromises()
@@ -575,7 +579,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     await selectButtonByText(wrapper, 'OpenCode')
     await selectButtonByText(wrapper, 'admin.accounts.opencodeGo.accountMode.go')
     await wrapper.get('form#create-account-form input[type="text"]').setValue('oc-go')
-    await wrapper.get('form#create-account-form input[type="password"]').setValue('sk-opencode-go')
+    await wrapper.get('form#create-account-form [data-testid="account-api-key-input"]').setValue('sk-opencode-go')
 
     await wrapper.get('form#create-account-form').trigger('submit.prevent')
     await flushPromises()
@@ -604,7 +608,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     const wrapper = mountModal()
     await selectButtonByText(wrapper, 'Kimi')
     await wrapper.get('form#create-account-form input[type="text"]').setValue('Kimi adaptive')
-    await wrapper.get('form#create-account-form input[type="password"]').setValue('sk-kimi')
+    await wrapper.get('form#create-account-form [data-testid="account-api-key-input"]').setValue('sk-kimi')
 
     await wrapper.get('form#create-account-form').trigger('submit.prevent')
     await flushPromises()
@@ -627,7 +631,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     await selectButtonByText(wrapper, 'Kimi')
     await selectButtonByText(wrapper, 'admin.accounts.cnProviders.accountMode.coding')
     await wrapper.get('form#create-account-form input[type="text"]').setValue('Kimi coding')
-    await wrapper.get('form#create-account-form input[type="password"]').setValue('sk-kimi-coding')
+    await wrapper.get('form#create-account-form [data-testid="account-api-key-input"]').setValue('sk-kimi-coding')
 
     await wrapper.get('form#create-account-form').trigger('submit.prevent')
     await flushPromises()
@@ -649,7 +653,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     const wrapper = mountModal()
     await selectButtonByText(wrapper, 'MiniMax')
     await wrapper.get('form#create-account-form input[type="text"]').setValue('MiniMax adaptive')
-    await wrapper.get('form#create-account-form input[type="password"]').setValue('sk-minimax')
+    await wrapper.get('form#create-account-form [data-testid="account-api-key-input"]').setValue('sk-minimax')
 
     await wrapper.get('form#create-account-form').trigger('submit.prevent')
     await flushPromises()
@@ -673,7 +677,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     await wrapper
       .get('[data-testid="cn-adaptive-base-url-chat_completions"]')
       .setValue('https://relay.example.com/v1')
-    await wrapper.get('form#create-account-form input[type="password"]').setValue('sk-relay')
+    await wrapper.get('form#create-account-form [data-testid="account-api-key-input"]').setValue('sk-relay')
 
     expect(wrapper.getComponent(ModelWhitelistSelectorStub).props('syncCredentials')).toMatchObject({
       platform: 'kimi',
@@ -755,7 +759,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
       .find((candidate) => candidate.attributes('placeholder') === 'https://cloudcode-pa.googleapis.com')
     expect(baseInput).toBeDefined()
     await baseInput?.setValue('https://relay.example')
-    await wrapper.get('form#create-account-form input[type="password"]').setValue('sk-upstream')
+    await wrapper.get('form#create-account-form [data-testid="account-upstream-api-key-input"]').setValue('sk-upstream')
     await wrapper.get('form#create-account-form').trigger('submit.prevent')
     await flushPromises()
 
@@ -829,7 +833,7 @@ describe('CreateAccountModal DeepSeek model mapping', () => {
     const wrapper = mountModal()
     await selectDeepSeekPlatform(wrapper)
     await wrapper.get('form#create-account-form input[type="text"]').setValue('DeepSeek account')
-    await wrapper.get('form#create-account-form input[type="password"]').setValue('test-api-key')
+    await wrapper.get('form#create-account-form [data-testid="account-api-key-input"]').setValue('test-api-key')
     await wrapper.get('form#create-account-form').trigger('submit.prevent')
     await flushPromises()
 
@@ -845,7 +849,7 @@ describe('CreateAccountModal DeepSeek model mapping', () => {
 
     await wrapper.get('[data-testid="select-deepseek-model"]').trigger('click')
     await wrapper.get('form#create-account-form input[type="text"]').setValue('DeepSeek account')
-    await wrapper.get('form#create-account-form input[type="password"]').setValue('test-api-key')
+    await wrapper.get('form#create-account-form [data-testid="account-api-key-input"]').setValue('test-api-key')
     await wrapper.get('form#create-account-form').trigger('submit.prevent')
     await flushPromises()
 

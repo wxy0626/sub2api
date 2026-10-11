@@ -346,8 +346,12 @@ describe('EditAccountModal', () => {
     expect(form.attributes('autocomplete')).toBe('off')
     expect(form.attributes('data-form-type')).toBe('other')
 
-    const secretInput = form.get('input[type="password"]')
-    expect(secretInput.attributes('autocomplete')).toBe('new-password')
+    expect(form.find('input[type="password"]').exists()).toBe(false)
+
+    const secretInput = form.get('[data-testid="account-api-key-input"]')
+    expect(secretInput.attributes('type')).toBe('text')
+    expect(secretInput.classes()).toContain('secret-text-input')
+    expect(secretInput.attributes('autocomplete')).toBe('off')
     expect(secretInput.attributes('data-1p-ignore')).toBeDefined()
     expect(secretInput.attributes('data-lpignore')).toBe('true')
     expect(secretInput.attributes('data-bwignore')).toBe('true')

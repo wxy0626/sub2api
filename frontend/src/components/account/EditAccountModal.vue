@@ -172,10 +172,11 @@
           <div class="relative">
             <input
               v-model="editApiKey"
-              :type="apiKeyVisible ? 'text' : 'password'"
-              class="input w-full pr-10 font-mono"
+              type="text"
+              class="input secret-text-input w-full pr-10 font-mono"
+              :class="{ 'is-visible': apiKeyVisible }"
               data-testid="account-api-key-input"
-              autocomplete="new-password"
+              autocomplete="off"
               data-1p-ignore
               data-lpignore="true"
               data-bwignore="true"
@@ -915,10 +916,11 @@
           <div class="relative">
             <input
               v-model="editApiKey"
-              :type="apiKeyVisible ? 'text' : 'password'"
-              class="input w-full pr-10 font-mono"
+              type="text"
+              class="input secret-text-input w-full pr-10 font-mono"
+              :class="{ 'is-visible': apiKeyVisible }"
               data-testid="account-api-key-input"
-              autocomplete="new-password"
+              autocomplete="off"
               data-1p-ignore
               data-lpignore="true"
               data-bwignore="true"

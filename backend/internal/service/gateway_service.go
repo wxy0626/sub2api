@@ -1413,6 +1413,37 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 	return models
 }
 
+// ListCompositeRoutePublicModels 返回分组内可直接调用的精确复合路由公共模型名。
+// 该列表只用于模型发现展示，不参与请求路由，也不改变账号归属判定。
+func (s *GatewayService) ListCompositeRoutePublicModels(ctx context.Context, groupID int64) []string {
+	if s == nil || s.compositeResolver == nil || s.compositeResolver.repo == nil || groupID <= 0 {
+		return nil
+	}
+	routes, err := s.compositeResolver.repo.ListByGroup(ctx, groupID, false)
+	if err != nil {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(routes))
+	models := make([]string, 0, len(routes))
+	for _, route := range routes {
+		if !route.Enabled || normalizeCompositeRouteMatchType(route.MatchType) != CompositeRouteMatchExact {
+			continue
+		}
+		publicModel := strings.TrimSpace(route.PublicModel)
+		if publicModel == "" {
+			continue
+		}
+		key := strings.ToLower(publicModel)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		models = append(models, publicModel)
+	}
+	sort.Strings(models)
+	return models
+}
+
 // ResolveAvailableModels 返回分组模型列表，并显式告知调用方是否可以回退到静态默认模型。
 // useStaticFallback=false 表示列表来自显式映射或实时上游目录，即使为空也必须按已确认结果展示，
 // 避免上游失败时伪造静态模型。

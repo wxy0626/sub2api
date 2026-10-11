@@ -1176,14 +1176,16 @@
           <div class="relative">
             <input
               v-model="upstreamApiKey"
-              :type="secretVisible.upstreamApiKey ? 'text' : 'password'"
-              autocomplete="new-password"
+              type="text"
+              class="input secret-text-input w-full pr-10 font-mono"
+              :class="{ 'is-visible': secretVisible.upstreamApiKey }"
+              autocomplete="off"
               data-1p-ignore
               data-lpignore="true"
               data-bwignore="true"
               data-form-type="other"
               required
-              class="input w-full pr-10 font-mono"
+              data-testid="account-upstream-api-key-input"
               placeholder="sk-..."
             />
             <button
@@ -1480,14 +1482,15 @@
           <div class="relative">
             <input
               v-model="apiKeyValue"
-              :type="secretVisible.apiKey ? 'text' : 'password'"
-              autocomplete="new-password"
+              type="text"
+              class="input secret-text-input w-full pr-10 font-mono"
+              :class="{ 'is-visible': secretVisible.apiKey }"
+              autocomplete="off"
               data-1p-ignore
               data-lpignore="true"
               data-bwignore="true"
               data-form-type="other"
               required
-              class="input w-full pr-10 font-mono"
               data-testid="account-api-key-input"
               :placeholder="apiKeyValuePlaceholder"
             />
@@ -1969,14 +1972,15 @@
             <div class="relative">
               <input
                 v-model="bedrockSecretAccessKey"
-                :type="secretVisible.bedrockSecretAccessKey ? 'text' : 'password'"
-                autocomplete="new-password"
+                type="text"
+                class="input secret-text-input w-full pr-10 font-mono"
+                :class="{ 'is-visible': secretVisible.bedrockSecretAccessKey }"
+                autocomplete="off"
                 data-1p-ignore
                 data-lpignore="true"
                 data-bwignore="true"
                 data-form-type="other"
                 required
-                class="input w-full pr-10 font-mono"
               />
               <button
                 type="button"
@@ -2000,13 +2004,14 @@
             <div class="relative">
               <input
                 v-model="bedrockSessionToken"
-                :type="secretVisible.bedrockSessionToken ? 'text' : 'password'"
-                autocomplete="new-password"
+                type="text"
+                class="input secret-text-input w-full pr-10 font-mono"
+                :class="{ 'is-visible': secretVisible.bedrockSessionToken }"
+                autocomplete="off"
                 data-1p-ignore
                 data-lpignore="true"
                 data-bwignore="true"
                 data-form-type="other"
-                class="input w-full pr-10 font-mono"
               />
               <button
                 type="button"
@@ -2034,14 +2039,15 @@
           <div class="relative">
             <input
               v-model="bedrockApiKeyValue"
-              :type="secretVisible.bedrockApiKey ? 'text' : 'password'"
-              autocomplete="new-password"
+              type="text"
+              class="input secret-text-input w-full pr-10 font-mono"
+              :class="{ 'is-visible': secretVisible.bedrockApiKey }"
+              autocomplete="off"
               data-1p-ignore
               data-lpignore="true"
               data-bwignore="true"
               data-form-type="other"
               required
-              class="input w-full pr-10 font-mono"
             />
             <button
               type="button"

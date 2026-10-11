@@ -175,6 +175,15 @@
     @apply disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-dark-900;
   }
 
+  /* 非登录密钥字段不能使用 type=password，否则 Chromium 会把 Base URL 与密钥识别成登录表单并触发保存密码。 */
+  .secret-text-input {
+    -webkit-text-security: disc;
+  }
+
+  .secret-text-input.is-visible {
+    -webkit-text-security: none;
+  }
+
   .dark .input[type='date'],
   .dark .input[type='time'],
   .dark .input[type='datetime-local'],
