@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
@@ -239,7 +240,7 @@ func TestForwardResponsesViaRawChatCompletions_NormalizesClaude55MinimalReasonin
 		},
 	}
 
-	result, err := svc.forwardResponsesViaRawChatCompletions(context.Background(), c, account, body)
+	result, err := svc.forwardResponsesViaRawChatCompletions(context.Background(), c, account, body, time.Now())
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.False(t, gjson.GetBytes(upstream.lastBody, "thinking").Exists())

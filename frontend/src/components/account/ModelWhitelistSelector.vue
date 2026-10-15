@@ -162,6 +162,7 @@ import ModelIcon from '@/components/common/ModelIcon.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { allModels, getModelsByPlatform, restrictSyncedModels } from '@/composables/useModelWhitelist'
 import { supportsUpstreamModelSync } from '@/constants/platformCatalog'
+import { extractApiErrorMessage } from '@/utils/apiError'
 
 const { t } = useI18n()
 
@@ -377,12 +378,34 @@ const syncUpstreamModels = async () => {
       return
     }
 
+    // 仅在创建账号的预览流程通知父组件，编辑账号时凭据已落库无需回传。
+    if (!props.accountId) {
+      emit('upstream-synced')
+    }
+
     // 以上游实时结果替换旧白名单，自动移除该账号已经不支持的模型。
     syncedModels.value = upstreamModels
     emit('update:modelValue', upstreamModels)
+
+    // 后端会返回能力元数据的同步结果：完全未更新时只提示警告，
+    // 部分更新时在成功提示后再补充一条警告，避免误报为完全成功。
+    const warnings = result.warnings ?? []
+    const hasIncompleteMetadata = warnings.some(
+      warning => warning.code === 'upstream_model_metadata_incomplete'
+    )
+    const hasPartialMetadata = warnings.some(
+      warning => warning.code === 'upstream_model_metadata_partial'
+    )
+    if (hasIncompleteMetadata) {
+      appStore.showWarning(t('admin.accounts.syncUpstreamModelsMetadataIncomplete'))
+      return
+    }
     appStore.showSuccess(t('admin.accounts.syncUpstreamModelsSuccess', { count: upstreamModels.length, total: upstreamModels.length }))
+    if (hasPartialMetadata) {
+      appStore.showWarning(t('admin.accounts.syncUpstreamModelsMetadataPartial'))
+    }
   } catch (error) {
-    const message = error instanceof Error ? error.message : t('admin.accounts.syncUpstreamModelsFailed')
+    const message = extractApiErrorMessage(error, t('admin.accounts.syncUpstreamModelsFailed'))
     appStore.showError(t('admin.accounts.syncUpstreamModelsError', { message }))
   } finally {
     isSyncingUpstream.value = false

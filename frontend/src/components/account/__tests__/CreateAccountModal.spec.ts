@@ -669,7 +669,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
       const wrapper = mountModal()
       await wrapper.get('[data-testid="platform-button-acme_router"]').trigger('click')
       await wrapper.get('form#create-account-form input[type="text"]').setValue('cc')
-      await wrapper.get('form#create-account-form input[type="password"]').setValue('sk-cc')
+      await wrapper.get('form#create-account-form [data-testid="account-api-key-input"]').setValue('sk-cc')
 
       await wrapper.get('form#create-account-form').trigger('submit.prevent')
       await flushPromises()
@@ -700,7 +700,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
       await wrapper.get('[data-testid="platform-button-acme_router"]').trigger('click')
       await wrapper.get('[data-testid="generic-account-mode"]').findAll('button')[1].trigger('click')
       await wrapper.get('form#create-account-form input[type="text"]').setValue('cc-team')
-      await wrapper.get('form#create-account-form input[type="password"]').setValue('sk-cc')
+      await wrapper.get('form#create-account-form [data-testid="account-api-key-input"]').setValue('sk-cc')
 
       await wrapper.get('form#create-account-form').trigger('submit.prevent')
       await flushPromises()
@@ -722,7 +722,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
       // 单一接入模式时不显示模式选择。
       expect(wrapper.find('[data-testid="generic-account-mode"]').exists()).toBe(false)
       await wrapper.get('form#create-account-form input[type="text"]').setValue('acme-chat')
-      await wrapper.get('form#create-account-form input[type="password"]').setValue('sk-acme-chat')
+      await wrapper.get('form#create-account-form [data-testid="account-api-key-input"]').setValue('sk-acme-chat')
 
       await wrapper.get('form#create-account-form').trigger('submit.prevent')
       await flushPromises()
@@ -742,7 +742,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
       await wrapper.get('[data-testid="platform-button-acme_router"]').trigger('click')
       await selectButtonByText(wrapper, 'Kimi')
       await wrapper.get('form#create-account-form input[type="text"]').setValue('kimi')
-      await wrapper.get('form#create-account-form input[type="password"]').setValue('sk-kimi')
+      await wrapper.get('form#create-account-form [data-testid="account-api-key-input"]').setValue('sk-kimi')
 
       await wrapper.get('form#create-account-form').trigger('submit.prevent')
       await flushPromises()
@@ -769,7 +769,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     // 积分与 ClinePass 共用同一个 Key，按模型计费，不需要选择账号类型。
     expect(wrapper.find('[data-testid="generic-account-mode"]').exists()).toBe(false)
     await wrapper.get('form#create-account-form input[type="text"]').setValue('cline')
-    await wrapper.get('form#create-account-form input[type="password"]').setValue('sk-cline')
+    await wrapper.get('form#create-account-form [data-testid="account-api-key-input"]').setValue('sk-cline')
 
     await wrapper.get('form#create-account-form').trigger('submit.prevent')
     await flushPromises()
@@ -1039,5 +1039,155 @@ describe('CreateAccountModal DeepSeek model mapping', () => {
     expect(createAccountMock.mock.calls[0]?.[0]?.credentials?.model_mapping).toEqual({
       'deepseek-v4-flash': 'deepseek-v4-flash'
     })
+  })
+})
+
+describe('CreateAccountModal gemini explicit cache upstream switch', () => {
+  beforeEach(() => {
+    authIsSimpleMode.value = true
+    createAccountMock.mockReset().mockResolvedValue({ id: 43, platform: 'gemini', type: 'apikey' })
+    probeUpstreamBillingMock.mockReset().mockResolvedValue({})
+    syncUpstreamModelsMock.mockReset().mockResolvedValue({ models: [], metadata: {} })
+  })
+
+  it('only offers the switch for a custom base url and sends it on create', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'Gemini')
+    await selectButtonByText(wrapper, 'admin.accounts.gemini.accountType.apiKeyTitle')
+    expect(wrapper.find('[data-testid="explicit-cache-upstream-section"]').exists()).toBe(false)
+
+    const baseUrlInput = wrapper
+      .findAll('form#create-account-form input[type="text"]')
+      .find((input) => (input.element as HTMLInputElement).value === 'https://generativelanguage.googleapis.com')
+    expect(baseUrlInput).toBeDefined()
+    await baseUrlInput!.setValue('https://upstream.example.com')
+    expect(wrapper.find('[data-testid="explicit-cache-upstream-section"]').exists()).toBe(true)
+
+    await wrapper.get('[data-testid="explicit-cache-upstream-toggle"]').trigger('click')
+    await wrapper.get('[data-testid="explicit-cache-upstream-max-ttl"]').setValue('1800')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('gemini upstream gateway')
+    await wrapper.get('form#create-account-form [data-testid="account-api-key-input"]').setValue('sk-upstream')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    expect(createAccountMock.mock.calls[0]?.[0]?.credentials).toMatchObject({
+      base_url: 'https://upstream.example.com',
+      explicit_cache_upstream: true,
+      explicit_cache_upstream_max_ttl_seconds: 1800
+    })
+  })
+
+  it('only offers the AI Studio tier for the official base url', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'Gemini')
+    await selectButtonByText(wrapper, 'admin.accounts.gemini.accountType.apiKeyTitle')
+    expect(wrapper.find('[data-testid="gemini-oauth-tier"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="gemini-apikey-note"]').exists()).toBe(true)
+    await wrapper.get('[data-testid="gemini-apikey-tier"]').setValue('aistudio_paid')
+
+    const baseUrlInput = wrapper
+      .findAll('form#create-account-form input[type="text"]')
+      .find((input) => (input.element as HTMLInputElement).value === 'https://generativelanguage.googleapis.com')
+    expect(baseUrlInput).toBeDefined()
+    await baseUrlInput!.setValue('https://upstream.example.com')
+    expect(wrapper.find('[data-testid="gemini-apikey-tier"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="gemini-apikey-note"]').exists()).toBe(false)
+
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('gemini relay')
+    await wrapper.get('form#create-account-form [data-testid="account-api-key-input"]').setValue('sk-upstream')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    const credentials = createAccountMock.mock.calls[0]?.[0]?.credentials
+    expect(credentials).toMatchObject({ base_url: 'https://upstream.example.com' })
+    expect(credentials).not.toHaveProperty('tier_id')
+  })
+
+  it('shows the OAuth tier fallback only on the OAuth form', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'Gemini')
+    await selectButtonByText(wrapper, 'admin.accounts.gemini.accountType.oauthTitle')
+    expect(wrapper.find('[data-testid="gemini-oauth-tier"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="gemini-apikey-note"]').exists()).toBe(false)
+  })
+
+  it('keeps the selected AI Studio tier for the official base url', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'Gemini')
+    await selectButtonByText(wrapper, 'admin.accounts.gemini.accountType.apiKeyTitle')
+    await wrapper.get('[data-testid="gemini-apikey-tier"]').setValue('aistudio_paid')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('gemini official')
+    await wrapper.get('form#create-account-form [data-testid="account-api-key-input"]').setValue('AIza-official')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    expect(createAccountMock.mock.calls[0]?.[0]?.credentials).toMatchObject({
+      base_url: 'https://generativelanguage.googleapis.com',
+      tier_id: 'aistudio_paid'
+    })
+  })
+})
+
+describe('CreateAccountModal Vertex API key auth', () => {
+  beforeEach(() => {
+    authIsSimpleMode.value = true
+    createAccountMock.mockReset().mockResolvedValue({ id: 44, platform: 'gemini', type: 'service_account' })
+    probeUpstreamBillingMock.mockReset().mockResolvedValue({})
+    syncUpstreamModelsMock.mockReset().mockResolvedValue({ models: [], metadata: {} })
+  })
+
+  async function openGeminiVertexApiKeyForm() {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'Gemini')
+    await selectButtonByText(wrapper, 'admin.accounts.vertexLabel')
+    await wrapper.get('[data-testid="vertex-auth-mode-apikey"]').setValue(true)
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('vertex api key account')
+    await wrapper.get('[data-testid="vertex-api-key-input"]').setValue(' vertex-key ')
+    return wrapper
+  }
+
+  it('creates a Gemini Vertex account with API key auth and no project for the express endpoint', async () => {
+    const wrapper = await openGeminiVertexApiKeyForm()
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    const payload = createAccountMock.mock.calls[0]?.[0]
+    expect(payload?.platform).toBe('gemini')
+    expect(payload?.type).toBe('service_account')
+    expect(payload?.credentials).toEqual({
+      auth_mode: 'apikey',
+      api_key: 'vertex-key',
+      location: 'global',
+      tier_id: 'vertex'
+    })
+  })
+
+  it('sends the project id when an API key account targets a project endpoint', async () => {
+    const wrapper = await openGeminiVertexApiKeyForm()
+    await wrapper.get('[data-testid="vertex-api-key-project-id-input"]').setValue(' my-project ')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createAccountMock.mock.calls[0]?.[0]?.credentials).toMatchObject({
+      auth_mode: 'apikey',
+      api_key: 'vertex-key',
+      project_id: 'my-project',
+      location: 'global'
+    })
+  })
+
+  it('keeps Anthropic Vertex accounts on Service Account JSON only', async () => {
+    // 本用例针对 Anthropic 平台：Vertex 只提供 Service Account JSON，
+    // 不渲染 API Key 认证方式开关与 API Key 输入框（该开关仅 Gemini 平台提供）。
+    // 本地默认平台为 openai，需先显式选择 Anthropic。
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'Anthropic')
+    await selectButtonByText(wrapper, 'admin.accounts.vertexLabel')
+    expect(wrapper.find('[data-testid="vertex-auth-mode-apikey"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="vertex-api-key-input"]').exists()).toBe(false)
   })
 })

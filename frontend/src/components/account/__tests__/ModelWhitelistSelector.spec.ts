@@ -1,40 +1,59 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ref } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
+import {
+  BUILTIN_PLATFORM_CATALOG,
+  resetPlatformCatalog,
+  setPlatformCatalog
+} from '@/constants/platformCatalog'
+
 import ModelWhitelistSelector from '../ModelWhitelistSelector.vue'
 
-const { syncPricingModelsMock, syncUpstreamModelsMock, showErrorMock, showSuccessMock, copyToClipboardMock } = vi.hoisted(() => ({
-  syncPricingModelsMock: vi.fn(),
-  syncUpstreamModelsMock: vi.fn(),
-  showErrorMock: vi.fn(),
-  showSuccessMock: vi.fn(),
-  copyToClipboardMock: vi.fn()
+const {
+  copyToClipboard,
+  showError,
+  showSuccess,
+  showInfo,
+  showWarning,
+  syncPricingModels,
+  syncUpstreamModels,
+  syncUpstreamModelsPreview
+} = vi.hoisted(() => ({
+  copyToClipboard: vi.fn().mockResolvedValue(true),
+  showError: vi.fn(),
+  showSuccess: vi.fn(),
+  showInfo: vi.fn(),
+  showWarning: vi.fn(),
+  syncPricingModels: vi.fn(),
+  syncUpstreamModels: vi.fn(),
+  syncUpstreamModelsPreview: vi.fn()
 }))
 
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
-    showError: showErrorMock,
-    showInfo: vi.fn(),
-    showSuccess: showSuccessMock
+    showError,
+    showSuccess,
+    showInfo,
+    showWarning
   })
 }))
 
 vi.mock('@/api/admin/accounts', () => ({
   accountsAPI: {
-    syncUpstreamModels: syncUpstreamModelsMock,
-    syncUpstreamModelsPreview: vi.fn()
+    syncUpstreamModels,
+    syncUpstreamModelsPreview
   },
   getAntigravityDefaultModelMapping: vi.fn()
 }))
 
 vi.mock('@/api/admin/channels', () => ({
-  syncPricingModels: syncPricingModelsMock
+  syncPricingModels
 }))
 
 vi.mock('@/composables/useClipboard', () => ({
   useClipboard: () => ({
     copied: ref(false),
-    copyToClipboard: copyToClipboardMock
+    copyToClipboard
   })
 }))
 
@@ -43,18 +62,34 @@ vi.mock('vue-i18n', async () => {
   return {
     ...actual,
     useI18n: () => ({
-      t: (key: string, params?: Record<string, string>) => key === 'common.copy' ? '复制' : key === 'admin.accounts.modelMappingConflict' ? `Model mapping conflict: ${params?.from} → ${params?.to}` : key
+      t: (key: string, params?: Record<string, string>) => key === 'common.copy' ? '复制' : key === 'admin.accounts.modelMappingConflict' ? `Model mapping conflict: ${params?.from} → ${params?.to}` : key === 'admin.accounts.syncUpstreamModelsError' ? `${key}: ${params?.message}` : key
     })
   }
 })
 
+
+function mountSelector(props: Record<string, unknown> = {}) {
+  return mount(ModelWhitelistSelector, {
+    props: {
+      modelValue: [],
+      platform: 'openai',
+      ...props
+    },
+    global: {
+      stubs: {
+        ModelIcon: true
+      }
+    }
+  })
+}
+
 describe('ModelWhitelistSelector', () => {
   beforeEach(() => {
-    syncPricingModelsMock.mockReset()
-    syncUpstreamModelsMock.mockReset()
-    showErrorMock.mockReset()
-    showSuccessMock.mockReset()
-    copyToClipboardMock.mockReset()
+    syncPricingModels.mockReset()
+    syncUpstreamModels.mockReset()
+    showError.mockReset()
+    showSuccess.mockReset()
+    copyToClipboard.mockReset()
   })
 
   afterEach(() => {
@@ -157,12 +192,12 @@ describe('ModelWhitelistSelector', () => {
     await copyButton.trigger('click')
     await flushPromises()
 
-    expect(copyToClipboardMock).toHaveBeenCalledWith('gpt-5.6-sol')
+    expect(copyToClipboard).toHaveBeenCalledWith('gpt-5.6-sol')
     expect(wrapper.emitted('update:modelValue')).toBeUndefined()
   })
 
-  it('同步最新支持模型会从实时目录替换旧值，并过滤不允许的系列', async () => {
-    syncPricingModelsMock.mockResolvedValue({
+  it('同步最新支持模型会从实时目录替换旧值，并只做非空去重', async () => {
+    syncPricingModels.mockResolvedValue({
       models: ['gpt-5.6-luna', 'gpt-5.7-preview', 'gpt-5.5', 'gpt-5.4', 'gpt-image-1.5', 'gpt-image-2', 'claude-sonnet-4-6']
     })
     const wrapper = mount(ModelWhitelistSelector, {
@@ -184,15 +219,16 @@ describe('ModelWhitelistSelector', () => {
     await latestSyncButton!.trigger('click')
     await flushPromises()
 
-    expect(syncPricingModelsMock).toHaveBeenCalledWith('openai')
+    expect(syncPricingModels).toHaveBeenCalledWith('openai')
+    // 前端不再按 GPT 系列过滤：OpenAI 兼容端点可能返回 Gemini、Claude 等合法模型。
     expect(wrapper.emitted('update:modelValue')?.[0]).toEqual([
-      ['gpt-5.6-luna', 'gpt-5.7-preview', 'gpt-image-2']
+      ['gpt-5.6-luna', 'gpt-5.7-preview', 'gpt-5.5', 'gpt-5.4', 'gpt-image-1.5', 'gpt-image-2', 'claude-sonnet-4-6']
     ])
-    expect(showSuccessMock).toHaveBeenCalled()
+    expect(showSuccess).toHaveBeenCalled()
   })
 
   it('同步上游支持模型会替换白名单，并移除上游已不支持的模型', async () => {
-    syncUpstreamModelsMock.mockResolvedValue({
+    syncUpstreamModels.mockResolvedValue({
       models: ['gpt-5.6-luna', 'gpt-5.5', 'gpt-image-1.5', 'gpt-image-2', 'gpt-5.4']
     })
     const wrapper = mount(ModelWhitelistSelector, {
@@ -215,14 +251,15 @@ describe('ModelWhitelistSelector', () => {
     await upstreamSyncButton!.trigger('click')
     await flushPromises()
 
-    expect(syncUpstreamModelsMock).toHaveBeenCalledWith(1)
+    expect(syncUpstreamModels).toHaveBeenCalledWith(1)
+    // 上游结果整体替换旧白名单，gpt-5.5-pro / gpt-5.6 / gpt-image-1 等不再支持的模型被移除。
     expect(wrapper.emitted('update:modelValue')?.[0]).toEqual([
-      ['gpt-5.6-luna', 'gpt-image-2']
+      ['gpt-5.6-luna', 'gpt-5.5', 'gpt-image-1.5', 'gpt-image-2', 'gpt-5.4']
     ])
   })
 
   it('DeepSeek 同步最新目录会保留上游模型并去重', async () => {
-    syncPricingModelsMock.mockResolvedValue({
+    syncPricingModels.mockResolvedValue({
       models: ['deepseek-v4-flash', 'deepseek-chat', 'deepseek-v4-flash', '', 'gpt-5.5']
     })
     const wrapper = mount(ModelWhitelistSelector, {
@@ -244,14 +281,14 @@ describe('ModelWhitelistSelector', () => {
     await latestSyncButton!.trigger('click')
     await flushPromises()
 
-    expect(syncPricingModelsMock).toHaveBeenCalledWith('deepseek')
+    expect(syncPricingModels).toHaveBeenCalledWith('deepseek')
     expect(wrapper.emitted('update:modelValue')?.[0]).toEqual([
       ['deepseek-v4-flash', 'deepseek-chat', 'gpt-5.5']
     ])
   })
 
-  it('多平台同步最新目录会分别过滤后合并结果', async () => {
-    syncPricingModelsMock
+  it('多平台同步最新目录会分别清理后合并并去重', async () => {
+    syncPricingModels
       .mockResolvedValueOnce({ models: ['gpt-5.6-luna', 'gpt-5.5', 'claude-sonnet-4-6'] })
       .mockResolvedValueOnce({ models: ['deepseek-v4-flash', 'deepseek-chat', 'deepseek-chat'] })
     const wrapper = mount(ModelWhitelistSelector, {
@@ -273,15 +310,15 @@ describe('ModelWhitelistSelector', () => {
     await latestSyncButton!.trigger('click')
     await flushPromises()
 
-    expect(syncPricingModelsMock).toHaveBeenNthCalledWith(1, 'openai')
-    expect(syncPricingModelsMock).toHaveBeenNthCalledWith(2, 'deepseek')
+    expect(syncPricingModels).toHaveBeenNthCalledWith(1, 'openai')
+    expect(syncPricingModels).toHaveBeenNthCalledWith(2, 'deepseek')
     expect(wrapper.emitted('update:modelValue')?.[0]).toEqual([
-      ['gpt-5.6-luna', 'deepseek-v4-flash', 'deepseek-chat']
+      ['gpt-5.6-luna', 'gpt-5.5', 'claude-sonnet-4-6', 'deepseek-v4-flash', 'deepseek-chat']
     ])
   })
 
   it('DeepSeek 同步上游模型会保留非 GPT 模型并去重', async () => {
-    syncUpstreamModelsMock.mockResolvedValue({
+    syncUpstreamModels.mockResolvedValue({
       models: ['deepseek-v4-flash', 'deepseek-chat', 'deepseek-chat', '']
     })
     const wrapper = mount(ModelWhitelistSelector, {
@@ -304,7 +341,7 @@ describe('ModelWhitelistSelector', () => {
     await upstreamSyncButton!.trigger('click')
     await flushPromises()
 
-    expect(syncUpstreamModelsMock).toHaveBeenCalledWith(2)
+    expect(syncUpstreamModels).toHaveBeenCalledWith(2)
     expect(wrapper.emitted('update:modelValue')?.[0]).toEqual([
       ['deepseek-v4-flash', 'deepseek-chat']
     ])
@@ -329,11 +366,11 @@ describe('ModelWhitelistSelector', () => {
     const upstreamSyncButton = wrapper.findAll('button')
       .find(button => button.text().includes('admin.accounts.syncUpstreamModels'))
     expect(upstreamSyncButton).toBeUndefined()
-    expect(syncUpstreamModelsMock).not.toHaveBeenCalled()
+    expect(syncUpstreamModels).not.toHaveBeenCalled()
   })
 
   it('Grok API Key 同步到动态模型后，动态模型仍出现在白名单选项中', async () => {
-    syncUpstreamModelsMock.mockResolvedValue({ models: ['grok-live-only', 'grok-4.5'] })
+    syncUpstreamModels.mockResolvedValue({ models: ['grok-live-only', 'grok-4.5'] })
     const wrapper = mount(ModelWhitelistSelector, {
       props: { modelValue: [], platform: 'grok', accountId: 60 },
       global: { stubs: { Icon: true, ModelIcon: true } }
@@ -352,7 +389,7 @@ describe('ModelWhitelistSelector', () => {
   })
 
   it('点击已选模型名复制模型名且不下拉展开列表', async () => {
-    copyToClipboardMock.mockResolvedValue(true)
+    copyToClipboard.mockResolvedValue(true)
     const wrapper = mount(ModelWhitelistSelector, {
       props: { modelValue: ['gpt-5.2'], platform: 'openai' },
       global: { stubs: { Icon: true, ModelIcon: true } }
@@ -363,7 +400,7 @@ describe('ModelWhitelistSelector', () => {
     expect(modelNameSpan).toBeDefined()
     await modelNameSpan!.trigger('click')
 
-    expect(copyToClipboardMock).toHaveBeenCalledWith('gpt-5.2')
+    expect(copyToClipboard).toHaveBeenCalledWith('gpt-5.2')
     expect(wrapper.find('[data-testid="model-option"]').exists()).toBe(false)
   })
 
@@ -424,6 +461,27 @@ describe('ModelWhitelistSelector', () => {
     expect(wrapper.emitted('update:modelValue')).toEqual([[['x-preview-f-free']]])
     expect(showWarning).toHaveBeenCalledWith('admin.accounts.syncUpstreamModelsMetadataIncomplete')
     expect(showSuccess).not.toHaveBeenCalled()
+  })
+
+  it('shows the backend message when upstream sync is rejected', async () => {
+    syncUpstreamModels.mockRejectedValue({
+      status: 400,
+      code: 'BAD_REQUEST',
+      message: 'Vertex API key accounts do not support upstream model listing'
+    })
+    const wrapper = mountSelector({ platform: 'gemini', accountId: 174 })
+
+    const syncButton = wrapper
+      .findAll('button')
+      .find(button => button.text() === 'admin.accounts.syncUpstreamModels')
+    expect(syncButton).toBeDefined()
+    await syncButton!.trigger('click')
+    await flushPromises()
+
+    // 本地约定：中文说明 + 后端返回的原始技术详情，技术字段保留英文便于排查。
+    expect(showError).toHaveBeenCalledWith(
+      'admin.accounts.syncUpstreamModelsError: 上游请求失败，请根据下方技术详情检查账号、模型、代理或上游服务。\n技术详情：Vertex API key accounts do not support upstream model listing'
+    )
   })
 
   it('shows success and a partial warning when some capabilities were saved', async () => {
