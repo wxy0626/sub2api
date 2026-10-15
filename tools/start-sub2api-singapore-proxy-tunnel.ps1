@@ -1,7 +1,7 @@
 # 隧道私钥路径：仅用于连接本人的 ECS，不会写入日志或状态文件。
 $私钥路径 = Join-Path $env:USERPROFILE '.ssh\sub2api_proxy_tunnel'
 # 项目日志目录：与日本隧道分离保存，避免状态混淆。
-$日志目录 = 'E:\AI\sun2api\.codex\log'
+$日志目录 = 'E:\AI\sub2api\.codex\log'
 # 新加坡专用本地 HTTP 代理监听地址。
 $本地代理地址 = '127.0.0.1'
 # 新加坡专用本地 HTTP 代理端口。

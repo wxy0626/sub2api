@@ -11,9 +11,9 @@ $ClashVerge数据目录 = Join-Path $env:APPDATA 'io.github.clash-verge-rev.clas
 # Mihomo 可执行文件：专用实例与 Clash Verge 全局实例使用同一版本，避免协议兼容差异。
 $Mihomo程序 = 'D:\VPN\Clash Verge\verge-mihomo.exe'
 # 项目日志目录：保存专用实例的启动、探测和运行日志。
-$日志目录 = 'E:\AI\sun2api\.codex\log'
+$日志目录 = 'E:\AI\sub2api\.codex\log'
 # 项目运行目录：生成的最小节点配置含订阅凭据，已被 Git 忽略。
-$运行目录 = 'E:\AI\sun2api\.codex\runtime'
+$运行目录 = 'E:\AI\sub2api\.codex\runtime'
 # 新加坡专用 HTTP 代理端口：不与 Clash Verge 全局 mixed-port 7897 冲突。
 $本地代理端口 = 17998
 # 新加坡专用 SOCKS 端口：保留给本机诊断，Sub2API 仅使用 HTTP 端口。

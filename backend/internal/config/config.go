@@ -1014,6 +1014,10 @@ type GatewayConfig struct {
 	OpenAIHighEffortFirstOutputTimeoutSeconds int `mapstructure:"openai_high_effort_first_output_timeout_seconds"`
 	// 请求体最大字节数，用于网关请求体大小限制
 	MaxBodySize int64 `mapstructure:"max_body_size"`
+	// UpstreamRequestBodyLimit 限制网关出站 AI 请求体大小（字节），0 表示不裁剪。
+	// 超过上限时按「最旧优先」把历史内联图片替换成占位图，保证长会话不会
+	// 因为上游请求体上限（例如 DeepSeek 的 413 Payload Too Large）整条失败。
+	UpstreamRequestBodyLimit int64 `mapstructure:"upstream_request_body_limit"`
 	// TextMaxBodySize limits endpoints that cannot carry inline image/video payloads.
 	TextMaxBodySize int64 `mapstructure:"text_max_body_size"`
 	// 非流式上游响应体读取上限（字节），用于防止无界读取导致内存放大
@@ -2544,6 +2548,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.antigravity_fallback_cooldown_minutes", 1)
 	viper.SetDefault("gateway.antigravity_extra_retries", 10)
 	viper.SetDefault("gateway.max_body_size", int64(256*1024*1024))
+	viper.SetDefault("gateway.upstream_request_body_limit", int64(0))
 	viper.SetDefault("gateway.text_max_body_size", int64(32*1024*1024))
 	viper.SetDefault("gateway.upstream_response_read_max_bytes", DefaultUpstreamResponseReadMaxBytes)
 	viper.SetDefault("gateway.models_list_read_max_bytes", DefaultModelsListReadMaxBytes)

@@ -32,12 +32,12 @@
   ```powershell
   & $buildx build --progress plain --load `
     --build-arg VERSION=<版本> --build-arg COMMIT=<提交> `
-    -t 'sub2api:<版本>' 'E:\AI\sun2api'
+    -t 'sub2api:<版本>' 'E:\AI\sub2api'
   ```
 - 构建后仅重建应用容器，禁止因版本更新删除或重建 PostgreSQL、Redis 容器及其数据卷：
   ```powershell
-  & $compose --env-file 'E:\AI\sun2api\deploy\.env' `
-    -f 'E:\AI\sun2api\deploy\docker-compose.local.yml' `
+  & $compose --env-file 'E:\AI\sub2api\deploy\.env' `
+    -f 'E:\AI\sub2api\deploy\docker-compose.local.yml' `
     up -d --no-deps --force-recreate sub2api
   ```
 - 若 Docker 凭据助手导致构建失败，可为当前命令设置临时 `DOCKER_CONFIG`，不得修改或删除用户原有 Docker 登录配置。

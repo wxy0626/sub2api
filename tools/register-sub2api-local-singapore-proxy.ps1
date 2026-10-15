@@ -14,7 +14,7 @@ $新加坡代理主机 = 'host.docker.internal'
 # 新加坡代理端口：必须与 start-sub2api-singapore-proxy.ps1 的 mixed-port 一致。
 $新加坡代理端口 = 17998
 # 新加坡代理登记日志：仅记录连通性状态和代理 ID，不记录数据库配置或任何凭据。
-$登记日志文件 = 'E:\AI\sun2api\.codex\log\sub2api-local-singapore-proxy-registration.log'
+$登记日志文件 = 'E:\AI\sub2api\.codex\log\sub2api-local-singapore-proxy-registration.log'
 
 # 写入新加坡代理登记日志：为本地启动和故障排查保留不含敏感信息的结果。
 function 写入新加坡代理登记日志 {

@@ -1459,6 +1459,9 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	// DeepSeek / Kimi 原生 Responses 端点为无状态实现：强制 store=false、清除
 	// previous_response_id，避免携带状态字段被上游拒绝。
 	body = normalizeDeepSeekResponsesRequestBody(account, body)
+	// 长会话整段重发时请求体可能超过上游硬上限（如 DeepSeek 约 50MB 直接 413）；
+	// 这里按配置上限裁剪最旧的历史截图，保证长任务不会整条线程卡死。
+	body = s.shrinkOversizeOpenAIRequestBody(account, body)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", targetURL, bytes.NewReader(body))
 	if err != nil {

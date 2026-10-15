@@ -1,7 +1,7 @@
 ﻿# =============================================================================
 # sub2api-postgres 定时逻辑备份脚本 (pg_dump)
 # 用途: 每日备份 sub2api 数据库, 防止 WAL/数据损坏后无法恢复。
-# 产物: E:\AI\sun2api\.workbuddy\backups\sub2api_YYYYMMDD_HHMM.dump (保留最近 30 份)
+# 产物: E:\AI\sub2api\.workbuddy\backups\sub2api_YYYYMMDD_HHMM.dump (保留最近 30 份)
 # 用法: pwsh -NoProfile -ExecutionPolicy Bypass -File tools\backup-sub2api-postgres.ps1
 # =============================================================================
 $ErrorActionPreference = 'Stop'
@@ -9,7 +9,7 @@ $ErrorActionPreference = 'Stop'
 # Docker CLI 完整路径 (本机 Docker Desktop 未加入 PATH)
 $DockerCli = 'C:\Users\Administrator\AppData\Local\Programs\DockerDesktop\resources\bin\docker.exe'
 # 备份输出目录 (项目内 .workbuddy, 按内容分类)
-$BackupDir = 'E:\AI\sun2api\.workbuddy\backups'
+$BackupDir = 'E:\AI\sub2api\.workbuddy\backups'
 # 保留份数
 $KeepCount = 30
 

@@ -2,7 +2,7 @@
 $私钥路径 = Join-Path $env:USERPROFILE '.ssh\sub2api_proxy_tunnel'
 
 # 日志目录：保留守护、断开和重连的排查信息。
-$日志目录 = 'E:\AI\sun2api\.codex\log'
+$日志目录 = 'E:\AI\sub2api\.codex\log'
 $标准输出日志 = Join-Path $日志目录 'sub2api-proxy-tunnel.out.log'
 $标准错误日志 = Join-Path $日志目录 'sub2api-proxy-tunnel.err.log'
 $状态日志 = Join-Path $日志目录 'sub2api-proxy-tunnel-launcher.log'

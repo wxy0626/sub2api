@@ -238,6 +238,10 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequestWithFirstOutputTimeoutAndSes
 	firstOutput *openAIFirstOutputWatchdog,
 	sessionID string,
 ) (*http.Response, error) {
+	// 出站请求体超限保护：Responses→Chat 降级后的历史图片同样会把请求体推到
+	// 上游硬上限（DeepSeek 约 50MB 直接 413），这里复用与
+	// buildUpstreamRequest 相同的裁剪逻辑，保证长会话不被上游直接拒绝。
+	body = s.shrinkOversizeOpenAIRequestBody(account, body)
 	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 	if firstOutput != nil {
 		upstreamCtx = firstOutput.arm(upstreamCtx, releaseUpstreamCtx)

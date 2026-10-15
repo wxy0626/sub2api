@@ -3,7 +3,7 @@ setlocal EnableExtensions
 chcp 65001 >nul
 
 :: 新加坡 SSH 反向隧道守护：把本机新加坡专用代理(17998) 反向转发到 ECS Docker 私网网关。
-set "LOGDIR=E:\AI\sun2api\.codex\log"
+set "LOGDIR=E:\AI\sub2api\.codex\log"
 set "STATE=%LOGDIR%\sub2api-singapore-proxy-tunnel-state.json"
 set "LOCK=%LOGDIR%\sub2api-proxy-tunnel-sg.lock"
 set "KEY=%USERPROFILE%\.ssh\sub2api_proxy_tunnel"

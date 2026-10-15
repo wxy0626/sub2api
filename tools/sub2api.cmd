@@ -3,7 +3,7 @@ setlocal EnableExtensions EnableDelayedExpansion
 chcp 65001 >nul
 
 :: ===== 基础路径与配置（项目内固定，按需修改）=====
-set "ROOT=E:\AI\sun2api"
+set "ROOT=E:\AI\sub2api"
 set "TOOLS=%ROOT%\tools"
 set "DEPLOY=%ROOT%\deploy"
 set "LOGDIR=%ROOT%\.codex\log"

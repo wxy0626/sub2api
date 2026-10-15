@@ -1,5 +1,5 @@
 ﻿# Sub2API Compose 部署目录。
-$部署目录 = 'E:\AI\sun2api\deploy'
+$部署目录 = 'E:\AI\sub2api\deploy'
 # Docker Desktop 程序路径。
 $Docker桌面程序 = 'C:\Users\Administrator\AppData\Local\Programs\DockerDesktop\Docker Desktop.exe'
 # 本地服务健康检查地址。
@@ -7,30 +7,29 @@ $健康检查地址 = 'http://127.0.0.1:8080/health'
 # 本地管理页面地址。
 $管理页面地址 = 'http://127.0.0.1:8080'
 # SSH 隧道守护脚本：随本地服务启动，并持续维持远端反向代理隧道。
-$SSH隧道守护脚本 = 'E:\AI\sun2api\tools\start-sub2api-proxy-tunnel.ps1'
+$SSH隧道守护脚本 = 'E:\AI\sub2api\tools\start-sub2api-proxy-tunnel.ps1'
 # SSH 隧道状态文件：由守护进程写入，供启动命令确认实际连接结果。
-$SSH隧道状态文件 = 'E:\AI\sun2api\.codex\log\sub2api-proxy-tunnel-state.json'
+$SSH隧道状态文件 = 'E:\AI\sub2api\.codex\log\sub2api-proxy-tunnel-state.json'
 # SSH 隧道详细日志：连接失败时直接提示该文件，避免只输出笼统错误。
-$SSH隧道错误日志 = 'E:\AI\sun2api\.codex\log\sub2api-proxy-tunnel.err.log'
+$SSH隧道错误日志 = 'E:\AI\sub2api\.codex\log\sub2api-proxy-tunnel.err.log'
 # SSH 隧道状态日志：记录守护重连和本地代理未监听等排查信息。
-$SSH隧道状态日志 = 'E:\AI\sun2api\.codex\log\sub2api-proxy-tunnel-launcher.log'
+$SSH隧道状态日志 = 'E:\AI\sub2api\.codex\log\sub2api-proxy-tunnel-launcher.log'
 # 本地 Mihomo HTTP 代理端口：仅用于区分等待代理与 SSH 建连失败。
 $本地代理端口 = 7897
 # 新加坡专用 Mihomo 启动器：独立实例固定选用已验证的新加坡节点。
-$新加坡代理启动脚本 = 'E:\AI\sun2api\tools\start-sub2api-singapore-proxy.ps1'
+$新加坡代理启动脚本 = 'E:\AI\sub2api\tools\start-sub2api-singapore-proxy.ps1'
 # 新加坡 SSH 隧道守护脚本：仅建立远端 17898 到本机 17998 的专用转发。
-$新加坡SSH隧道守护脚本 = 'E:\AI\sun2api\tools\start-sub2api-singapore-proxy-tunnel.ps1'
+$新加坡SSH隧道守护脚本 = 'E:\AI\sub2api\tools\start-sub2api-singapore-proxy-tunnel.ps1'
 # 新加坡 SSH 隧道状态文件：用于确认第二条隧道已独立建立。
-$新加坡SSH隧道状态文件 = 'E:\AI\sun2api\.codex\log\sub2api-singapore-proxy-tunnel-state.json'
+$新加坡SSH隧道状态文件 = 'E:\AI\sub2api\.codex\log\sub2api-singapore-proxy-tunnel-state.json'
 # 新加坡 SSH 隧道错误日志：连接失败时保留 SSH 原始技术详情。
-$新加坡SSH隧道错误日志 = 'E:\AI\sun2api\.codex\log\sub2api-singapore-proxy-tunnel.err.log'
+$新加坡SSH隧道错误日志 = 'E:\AI\sub2api\.codex\log\sub2api-singapore-proxy-tunnel.err.log'
 # 新加坡 SSH 隧道状态日志：记录守护重连与本地专用代理状态。
-$新加坡SSH隧道状态日志 = 'E:\AI\sun2api\.codex\log\sub2api-singapore-proxy-tunnel-launcher.log'
+$新加坡SSH隧道状态日志 = 'E:\AI\sub2api\.codex\log\sub2api-singapore-proxy-tunnel-launcher.log'
 # 新加坡专用本地 HTTP 代理端口。
 $新加坡本地代理端口 = 17998
 # 新加坡代理登记脚本：只在专用代理和 SSH 隧道确认后写入本地 Sub2API 代理列表。
-$新加坡代理登记脚本 = 'E:\AI\sun2api\tools\register-sub2api-local-singapore-proxy.ps1'
-
+$新加坡代理登记脚本 = 'E:\AI\sub2api\tools\register-sub2api-local-singapore-proxy.ps1'
 function 测试Docker引擎就绪 {
     docker info *> $null
     return $LASTEXITCODE -eq 0

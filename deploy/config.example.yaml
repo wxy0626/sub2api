@@ -236,6 +236,14 @@ gateway:
   # Max request body size in bytes (default: 256MB)
   # 请求体最大字节数（默认 256MB）
   max_body_size: 268435456
+  # Outbound AI request body cap in bytes (0 = disabled).
+  # When the prepared upstream body exceeds the cap, the gateway replaces the
+  # oldest inline history images with a 1x1 placeholder so long Codex sessions
+  # are not rejected by upstream body limits (e.g. DeepSeek returns 413 around
+  # 50MB). The newest images are always kept.
+  # 出站 AI 请求体上限（字节，0=关闭）。超限时按「最旧优先」把历史内联图片换成
+  # 占位图，避免长会话被上游请求体上限（如 DeepSeek 约 50MB 的 413）打断。
+  upstream_request_body_limit: 0
   # Pure-text endpoint body limit (embeddings and alpha/search), default 32 MiB.
   # 纯文本端点请求体上限（embeddings、alpha/search），默认 32 MiB。
   text_max_body_size: 33554432
