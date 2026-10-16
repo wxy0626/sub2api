@@ -28,6 +28,12 @@ func (r *accountTestLoggingRepo) GetByID(context.Context, int64) (*Account, erro
 	return r.account, nil
 }
 
+// 测试同步 defer 在断言前就会调用 SetError/ClearError/SetSchedulable；
+// 嵌入接口为 nil 会导致空指针 panic，这里提供 no-op 实现。
+func (r *accountTestLoggingRepo) SetError(context.Context, int64, string) error     { return nil }
+func (r *accountTestLoggingRepo) ClearError(context.Context, int64) error           { return nil }
+func (r *accountTestLoggingRepo) SetSchedulable(context.Context, int64, bool) error { return nil }
+
 func TestAccountTestFailureLogAttribution(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, background := range []bool{false, true} {

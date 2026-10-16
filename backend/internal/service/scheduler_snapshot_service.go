@@ -838,6 +838,19 @@ func schedulerBucketsForGroup(groupID int64) []SchedulerBucket {
 	return schedulerCanonicalBuckets(groupID)
 }
 
+// schedulerCanonicalBucketCount 返回单分组的 canonical bucket 总数（Single+Forced 各平台，
+// Anthropic/Gemini 额外 Mixed），供测试与预分配容量推导，避免新增平台后硬编码过期。
+func schedulerCanonicalBucketCount() int {
+	count := 0
+	for _, platform := range schedulerSnapshotPlatforms() {
+		count += 2
+		if platform == PlatformAnthropic || platform == PlatformGemini {
+			count++
+		}
+	}
+	return count
+}
+
 func schedulerCanonicalBuckets(groupID int64) []SchedulerBucket {
 	buckets := make([]SchedulerBucket, 0, 15)
 	for _, platform := range schedulerSnapshotPlatforms() {

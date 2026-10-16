@@ -319,6 +319,8 @@ func TestClassifyNoAccountError_GPT55Retirement(t *testing.T) {
 }
 
 func TestGPT55RetirementEmptyListingDoesNotUseDefaults(t *testing.T) {
-	require.Empty(t, modelListingSource(service.PlatformOpenAI, []string{}, []string{"gpt-5.5"}))
-	require.Equal(t, []string{"gpt-5.5"}, modelListingSource(service.PlatformOpenAI, nil, []string{"gpt-5.5"}))
+	// 本地 4 参数签名：availableModels 为空且 useStaticFallback=false 时不回退静态默认目录。
+	require.Empty(t, modelListingSource(service.PlatformOpenAI, []string{}, []string{"gpt-5.5"}, false))
+	// useStaticFallback=true 时 nil 目录回落到 fallbackModels，与本地调用方语义一致。
+	require.Equal(t, []string{"gpt-5.5"}, modelListingSource(service.PlatformOpenAI, nil, []string{"gpt-5.5"}, true))
 }

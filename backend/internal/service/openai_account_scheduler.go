@@ -580,11 +580,15 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		return nil, true, nil
 	}
 	result, acquireErr := s.service.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
-	if acquireErr != nil {
+	if acquireErr != nil && req.DisableStickyEscape {
 		return nil, false, acquireErr
 	}
-	if result != nil && result.Acquired {
-		_ = s.service.refreshStickySessionTTL(ctx, req.GroupID, sessionHash, s.service.openAIWSSessionStickyTTL())
+	if acquireErr == nil && result != nil && result.Acquired {
+		// PreserveStickyBinding 的调用方（视频查询等）必须原样保留绑定键：
+		// 此类请求不得刷新所有权 TTL，避免查询侧改写或续期绑定（上游 fa4587041）。
+		if !req.PreserveStickyBinding {
+			_ = s.service.refreshStickySessionTTL(ctx, req.GroupID, sessionHash, s.service.openAIWSSessionStickyTTL())
+		}
 		return attachSelectionProfitGate(ctx, &AccountSelectionResult{
 			Account:     account,
 			Acquired:    true,
@@ -592,6 +596,8 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		}), false, nil
 	}
 
+	cfg := s.service.schedulingConfig()
+	// WaitPlan.MaxConcurrency 使用 Concurrency（非 EffectiveLoadFactor），因为 WaitPlan 控制的是 Redis 实际并发槽位等待。
 	if s.service.concurrencyService != nil {
 		if escapeCfg.enabled && !req.DisableStickyEscape && acquireErr == nil && result != nil && !result.Acquired {
 			errorRate, ttft, _ := s.stats.snapshot(accountID)
@@ -603,8 +609,18 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 			)
 			return nil, true, nil
 		}
-		// 粘性账号满载时回退到负载调度，避免把请求继续排在已满账号上。
-		return nil, false, nil
+		// 粘性账号满载时交还 WaitPlan：由 handler 进入有界等待队列（排队满返回
+		// 429、超时放弃），而不是静默回退负载调度——对绑定了视频任务所有权的
+		// 查询请求，回退等于把任务路由到别的账号，返回伪 404。
+		return attachSelectionProfitGate(ctx, &AccountSelectionResult{
+			Account: account,
+			WaitPlan: &AccountWaitPlan{
+				AccountID:      accountID,
+				MaxConcurrency: account.Concurrency,
+				Timeout:        cfg.StickySessionWaitTimeout,
+				MaxWaiting:     cfg.StickySessionMaxWaiting,
+			},
+		}), false, nil
 	}
 	return nil, false, nil
 }

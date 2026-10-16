@@ -23,7 +23,15 @@ const accountTestSuppressCompletionContextKey = "account_test_suppress_completio
 // native Responses endpoints. Endpoints the provider profile does not offer are
 // skipped.
 func (s *AccountTestService) testCNProviderAdaptiveConnection(c *gin.Context, account *Account, modelID string, prompt string) error {
-	testModelID := resolveAccountTestModelWithDefault(account, modelID, openai.DefaultTestModel)
+	// 默认模型兜底链与上游一致：供应商 profile 默认 → openai.DefaultTestModel。
+	testModelID := strings.TrimSpace(modelID)
+	if testModelID == "" {
+		testModelID = account.providerDefaultTestModel()
+	}
+	if testModelID == "" {
+		testModelID = openai.DefaultTestModel
+	}
+	testModelID = account.GetMappedModel(testModelID)
 
 	authToken := strings.TrimSpace(account.GetOpenAIProtocolAPIKey())
 	if authToken == "" {

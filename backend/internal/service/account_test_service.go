@@ -428,6 +428,9 @@ func resolveAccountTestModelWithDefault(account *Account, modelID, defaultModelI
 // mode is optional - "responses" forces API Key accounts through /v1/responses once,
 // while "compact" routes OpenAI accounts to the /responses/compact probe path.
 func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int64, modelID string, prompt string, mode string, opts ...AccountTestOptions) (err error) {
+	// 上游 5ef517d0f：先绑定归因字段（account_id/test_id/test_source 等），
+	// 供 sendErrorAndEnd 的 account_test.failed 结构化日志使用。
+	initAccountTestLogger(c, accountID, modelID, mode)
 	ctx := c.Request.Context()
 	testOpts := firstAccountTestOptions(opts)
 
@@ -436,6 +439,8 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Account not found")
 	}
+	// 上游 5ef517d0f：绑定 platform/account_type 归因字段。
+	bindAccountTestPlatform(c, account)
 	// 用量记录使用映射后的模型；请求模型仍交给分支做一次映射，保持与转发一致。
 	finishTestUsage := s.startAccountTestUsage(c, account, resolveAccountTestModelID(account, modelID), mode)
 	defer func() { finishTestUsage(err) }()
@@ -467,7 +472,10 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 	}()
 
 	// Route to platform-specific test method
-	if account.IsCNProvider() {
+	// 按入站协议分流的多协议供应商（国产厂商与 cline 等单模式 profile 平台）：
+	// RoutesProtocolByInbound 覆盖 profile.Routing != ByModel 的全部供应商，
+	// IsCNProvider 保持对无 profile 场景的兼容判断。
+	if account.IsCNProvider() || account.RoutesProtocolByInbound() {
 		// 显式选择 Responses 诊断的 DeepSeek 账号优先进入 deepseek 专用流程：
 		// CN 协议分发会按 credentials.api_protocol 把默认协议账号送去
 		// Chat Completions 测试并丢弃 mode，导致强制 /responses 诊断失效。
@@ -568,7 +576,16 @@ func (s *AccountTestService) testModelRoutedResponsesConnection(c *gin.Context, 
 }
 
 func (s *AccountTestService) testCNProviderChatCompletionsConnection(c *gin.Context, account *Account, modelID string, prompt string) error {
-	testModelID := resolveAccountTestModelWithDefault(account, modelID, openai.DefaultTestModel)
+	// 默认模型兜底链与上游一致：供应商 profile 默认（cline 用 deepseek/deepseek-v4-flash、
+	// ClinePass 订阅用订阅模型）→ openai.DefaultTestModel → 账号级映射。
+	testModelID := strings.TrimSpace(modelID)
+	if testModelID == "" {
+		testModelID = account.providerDefaultTestModel()
+	}
+	if testModelID == "" {
+		testModelID = openai.DefaultTestModel
+	}
+	testModelID = account.GetMappedModel(testModelID)
 
 	authToken := strings.TrimSpace(account.GetOpenAIProtocolAPIKey())
 	if authToken == "" {
@@ -3688,8 +3705,11 @@ func (s *AccountTestService) sendEvent(c *gin.Context, event TestEvent) {
 
 // sendErrorAndEnd sends an error event and ends the stream
 func (s *AccountTestService) sendErrorAndEnd(c *gin.Context, errorMsg string) error {
+	// 本地特性：清理本次账号测试错误中的运行时凭据（usage capture 捕获的动态密钥）。
 	errorMsg = redactAccountTestErrorForContext(c, errorMsg)
-	log.Printf("Account test error: %s", errorMsg)
+	// 上游 5ef517d0f：结构化归因日志（account_test.failed，自带静态凭据脱敏），
+	// 供管理员按 request_id/test_id 追踪测试失败；合并两者，缺一会丢归因或泄凭据。
+	logAccountTestError(c, errorMsg)
 	s.sendEvent(c, TestEvent{Type: "error", Error: errorMsg})
 	return fmt.Errorf("%s", errorMsg)
 }
